@@ -174,6 +174,8 @@ fn request_body_for_trace(req: &Request) -> String {
 impl HttpTransport for ReqwestTransport {
     async fn execute(&self, req: Request) -> Result<Response, TransportError> {
         self.trace_request(&req);
+        let observer = crate::observation::transport_observer()
+            .filter(|observer| observer.observes_request(req.method.as_str(), &req.url));
 
         let url = req.url.clone();
         let response_body_limit_bytes = req.response_body_limit_bytes;
@@ -185,6 +187,12 @@ impl HttpTransport for ReqwestTransport {
             Some(max_bytes) => bounded_response_bytes(resp, max_bytes).await,
             None => resp.bytes().await.map_err(Self::map_error),
         };
+        if let Some(observer) = observer {
+            match &bytes {
+                Ok(bytes) => observer.body("http", bytes),
+                Err(error) => observer.error("http", &error.to_string()),
+            }
+        }
         if !status.is_success() {
             let body = match bytes {
                 Ok(bytes) => String::from_utf8(bytes.to_vec()).ok(),
@@ -214,6 +222,8 @@ impl HttpTransport for ReqwestTransport {
 
     async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError> {
         self.trace_request(&req);
+        let observer = crate::observation::transport_observer()
+            .filter(|observer| observer.observes_request(req.method.as_str(), &req.url));
 
         let url = req.url.clone();
         let response_body_limit_bytes = req.response_body_limit_bytes;
@@ -243,6 +253,9 @@ impl HttpTransport for ReqwestTransport {
                     body => body.ok(),
                 },
             };
+            if let (Some(observer), Some(body)) = (&observer, &body) {
+                observer.body("http", body.as_bytes());
+            }
             return Err(TransportError::Http {
                 status,
                 url: Some(url),
@@ -258,6 +271,15 @@ impl HttpTransport for ReqwestTransport {
                     .map(|result| result.map_err(Self::map_error)),
             ),
         };
+        let bytes = Box::pin(bytes.map(move |result| {
+            if let Some(observer) = &observer {
+                match &result {
+                    Ok(bytes) => observer.body("http", bytes),
+                    Err(error) => observer.error("http", &error.to_string()),
+                }
+            }
+            result
+        }));
         Ok(StreamResponse {
             status,
             headers,

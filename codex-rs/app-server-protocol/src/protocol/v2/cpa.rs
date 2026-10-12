@@ -1,4 +1,4 @@
-//! Opt-in CPA IPC v3. No request may enter the agent/tool execution pipeline.
+//! Opt-in CPA IPC v4. Native model execution without an agent/tool execution pipeline.
 use crate::JsonSchema;
 use crate::TS;
 use serde::Deserialize;
@@ -22,6 +22,7 @@ pub struct CpaCapabilitiesReadResponse {
     pub upstream_logs: bool,
     pub upstream_body_logs: bool,
     pub execution_mode: String,
+    pub native_model_execution: bool,
     /// Responses byte-stream transport (`bodyBase64`), not parsed IPC events.
     pub raw_body: bool,
     /// Known response identity fields are restored to caller values. Other payloads are opaque.
@@ -81,6 +82,10 @@ pub struct CpaInferenceBodyNotification {
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceCompletedNotification {
     pub request_id: String,
+    /// Final business bytes and native success are delivered atomically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub body_base64: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -156,10 +161,14 @@ pub struct CpaAuthLoginStatusResponse {
 pub enum CpaInferenceUpstreamNotification {
     Request {
         request_id: String,
+        transport: String,
         url: String,
         method: String,
         headers: BTreeMap<String, Vec<String>>,
         body: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        body_base64: Option<String>,
         access_token_sha256: Option<String>,
         #[serde(rename = "oaiLbNode")]
         #[ts(rename = "oaiLbNode")]
@@ -167,6 +176,7 @@ pub enum CpaInferenceUpstreamNotification {
     },
     Response {
         request_id: String,
+        transport: String,
         status_code: u16,
         headers: BTreeMap<String, Vec<String>>,
         body: Option<String>,
@@ -176,6 +186,13 @@ pub enum CpaInferenceUpstreamNotification {
     },
     Error {
         request_id: String,
+        transport: String,
         message: String,
+    },
+    /// Actual attempt bytes for diagnostics, independent of successful delivery.
+    Body {
+        request_id: String,
+        transport: String,
+        body_base64: String,
     },
 }

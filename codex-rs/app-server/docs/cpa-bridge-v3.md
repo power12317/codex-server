@@ -1,5 +1,7 @@
 # Codex Server inference protocol v3
 
+> This document describes the stable v3 prepared-body transport. The `codex/native-model-runtime` experiment uses [native model execution and IPC v4](cpa-native-model-runtime.md).
+
 Contract identifier: **V3-SEP-20260927**. This is the inference-only contract for
 Codex Server clients, including CPA. The historical `cpa/*` methods, endpoint path
 and environment variables remain wire-compatible; they do not require CPA.

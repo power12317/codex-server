@@ -187,6 +187,7 @@ struct ResponsesWebsocketTimingLogContext {
 
 pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
+    endpoint: String,
     // TODO (pakrym): is this the right place for timeout?
     idle_timeout: Duration,
     server_reasoning_included: bool,
@@ -209,6 +210,7 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
 impl ResponsesWebsocketConnection {
     fn new(
         stream: WsStream,
+        endpoint: String,
         idle_timeout: Duration,
         server_reasoning_included: bool,
         server_model: Option<String>,
@@ -216,6 +218,7 @@ impl ResponsesWebsocketConnection {
     ) -> Self {
         Self {
             stream: Arc::new(Mutex::new(Some(stream))),
+            endpoint,
             idle_timeout,
             server_reasoning_included,
             server_model,
@@ -247,6 +250,7 @@ impl ResponsesWebsocketConnection {
             mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(1600);
         let (tx_interrupt, rx_interrupt) = oneshot::channel();
         let stream = Arc::clone(&self.stream);
+        let endpoint = self.endpoint.clone();
         let idle_timeout = self.idle_timeout;
         let server_reasoning_included = self.server_reasoning_included;
         let server_model = self.server_model.clone();
@@ -279,7 +283,9 @@ impl ResponsesWebsocketConnection {
         let request_text = serialize_websocket_request(&request)?;
 
         let current_span = Span::current();
+        let observation = crate::observation::ObservationContext::capture();
         tokio::spawn(
+            observation.scope(
             #[expect(
                 clippy::await_holding_invalid_type,
                 reason = "the guard serializes exclusive use of the websocket stream for the lifetime of the response stream"
@@ -315,6 +321,7 @@ impl ResponsesWebsocketConnection {
                         biased;
                         result = run_websocket_response_stream(
                             ws_stream,
+                            &endpoint,
                             tx_event.clone(),
                             request_text,
                             idle_timeout,
@@ -338,7 +345,7 @@ impl ResponsesWebsocketConnection {
                     let _ = tx_event.send(Err(err)).await;
                 }
             }
-            .instrument(current_span),
+            .instrument(current_span)),
         );
 
         Ok(ResponseStream {
@@ -500,14 +507,25 @@ async fn connect_websocket(
         .map_err(|err| ApiError::Stream(format!("failed to build websocket request: {err}")))?;
     request.headers_mut().extend(headers);
 
+    let observer = codex_http_client::observation::transport_observer();
+    if let Some(observer) = &observer {
+        observer.request("websocket", "GET", url.as_str(), request.headers(), &[]);
+    }
+
     let response = connector.connect(request, websocket_config()).await;
 
     let (stream, response) = match response {
         Ok((stream, response)) => {
+            if let Some(observer) = &observer {
+                observer.response("websocket", response.status().as_u16(), response.headers());
+            }
             info!("successfully connected to websocket: {url}");
             (stream, response)
         }
         Err(err) => {
+            if let Some(observer) = &observer {
+                observer.error("websocket", &err.to_string());
+            }
             error!("failed to connect to websocket: {err}, url: {url}");
             return Err(map_ws_error(err, &url));
         }
@@ -665,6 +683,7 @@ fn map_wrapped_websocket_error_event(
 #[allow(clippy::too_many_arguments)]
 async fn run_websocket_response_stream(
     ws_stream: &mut WsStream,
+    endpoint: &str,
     tx_event: mpsc::Sender<std::result::Result<ResponseEvent, ApiError>>,
     request_text: String,
     idle_timeout: Duration,
@@ -677,6 +696,7 @@ async fn run_websocket_response_stream(
     let mut safety_buffering_treatment = SafetyBufferingTreatment::default();
     send_websocket_request(
         ws_stream,
+        endpoint,
         request_text,
         idle_timeout,
         telemetry.as_ref(),
@@ -696,6 +716,7 @@ async fn run_websocket_response_stream(
             Ok(()) = &mut interrupt, if response_id.is_some() => {
                 send_websocket_request(
                     ws_stream,
+                    endpoint,
                     serde_json::json!({
                         "type": "response.interrupt",
                         "response_id": response_id,
@@ -729,6 +750,9 @@ async fn run_websocket_response_stream(
 
         match message {
             Message::Text(text) => {
+                if let Some(observer) = codex_http_client::observation::transport_observer() {
+                    observer.body("websocket", text.as_bytes());
+                }
                 if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
@@ -816,7 +840,10 @@ async fn run_websocket_response_stream(
                         "response event consumer dropped".to_string(),
                     ));
                 }
-                match process_responses_event(event) {
+                let observed_kind = event.kind().to_owned();
+                let processed = process_responses_event(event);
+                crate::observation::observe_processed_event(&observed_kind, &text, &processed);
+                match processed {
                     Ok(Some(event)) => {
                         if let ResponseEvent::Created { response_id: id } = &event {
                             response_id.clone_from(id);
@@ -893,12 +920,22 @@ fn safety_buffering_for_event(
 
 async fn send_websocket_request(
     ws_stream: &mut WsStream,
+    endpoint: &str,
     request_text: String,
     idle_timeout: Duration,
     telemetry: Option<&Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
 ) -> Result<(), ApiError> {
     let request_start = Instant::now();
+    if let Some(observer) = codex_http_client::observation::transport_observer() {
+        observer.request(
+            "websocket",
+            "response.create",
+            endpoint,
+            &HeaderMap::new(),
+            request_text.as_bytes(),
+        );
+    }
     let result = tokio::time::timeout(
         idle_timeout,
         ws_stream.send(Message::Text(request_text.into())),

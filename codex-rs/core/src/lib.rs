@@ -227,13 +227,13 @@ pub use attestation::AttestationProvider;
 pub use attestation::GenerateAttestationFuture;
 pub use client::InferenceIdentity;
 pub use client::InferenceMapping;
+pub use client::InferenceObserver;
 pub use client::InferenceSession;
 pub use client::ModelClient;
 pub use client::ModelClientSession;
 pub use client::X_CODEX_INSTALLATION_ID_HEADER;
 pub use client::X_CODEX_ROUTING_HINT_HEADER;
 pub use client::X_CODEX_TURN_METADATA_HEADER;
-pub use client::prepare_inference_request;
 pub use client_common::Prompt;
 pub use client_common::ResponseEvent;
 pub use client_common::ResponseStream;
@@ -255,3 +255,6 @@ pub mod otel_init;
 // Captured environment bindings can be passed back to ThreadManager by internal reviewers.
 pub use environment_selection::TurnEnvironmentSnapshot;
 pub use environment_selection::validate_environment_ids_and_cwds;
+
+#[cfg(test)]
+mod native_model_blackbox_tests;

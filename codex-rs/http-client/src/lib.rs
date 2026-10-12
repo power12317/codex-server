@@ -66,6 +66,7 @@ pub use crate::retry_after::RetryAfter;
 pub use crate::route_aware_client_pool::RouteAwareClientPool;
 pub use crate::route_aware_client_pool::RouteAwareClientPoolError;
 pub use crate::route_aware_client_pool::RouteAwareRequestError;
+pub mod observation;
 pub use crate::transport::ByteStream;
 pub use crate::transport::HttpTransport;
 pub use crate::transport::ReqwestTransport;

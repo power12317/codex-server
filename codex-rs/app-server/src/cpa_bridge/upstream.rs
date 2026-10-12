@@ -1,150 +1,204 @@
-//! Log the same prepared inference request that is handed to the HTTP transport.
-use crate::outgoing_message::ConnectionId;
-use crate::outgoing_message::OutgoingMessageSender;
+//! Read-only observations of actual native attempts and accepted model events.
 use axum::http::HeaderMap;
 use base64::Engine;
-use codex_api::ReqwestTransport;
-use codex_api::TransportError;
+use codex_api::observation::ResponsesObserver;
 use codex_app_server_protocol::CpaInferenceUpstreamNotification;
-use codex_app_server_protocol::ServerNotification;
-use codex_http_client::HttpClientFactory;
-use codex_http_client::HttpTransport;
-use codex_http_client::Request;
-use codex_http_client::Response;
-use codex_http_client::StreamResponse;
+use codex_core::InferenceObserver;
+use codex_http_client::observation::TransportObserver;
 use serde_json::Value;
 use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::Mutex;
+use tokio::sync::mpsc::UnboundedSender;
 
-pub(super) struct UpstreamTransport {
-    pub(super) inner: ReqwestTransport,
-    pub(super) factory: HttpClientFactory,
-    pub(super) outgoing: Arc<OutgoingMessageSender>,
-    pub(super) connection_id: ConnectionId,
+#[derive(Default)]
+struct Observed {
+    business: Vec<u8>,
+    raw_body: Vec<u8>,
+    headers: HeaderMap,
+    node: Option<String>,
+}
+
+pub(super) struct NativeObservation {
     pub(super) request_id: String,
     pub(super) credential_id: String,
+    pub(super) sender: UnboundedSender<CpaInferenceUpstreamNotification>,
+    observed: Mutex<Observed>,
 }
 
-impl UpstreamTransport {
-    async fn notify(
-        &self,
-        notification: CpaInferenceUpstreamNotification,
-    ) -> Result<(), TransportError> {
-        // stderr is inherited by the master and remains visible with RUST_LOG unset.
+impl NativeObservation {
+    pub(super) fn new(
+        request_id: String,
+        credential_id: String,
+        sender: UnboundedSender<CpaInferenceUpstreamNotification>,
+    ) -> Self {
+        Self {
+            request_id,
+            credential_id,
+            sender,
+            observed: Mutex::new(Observed::default()),
+        }
+    }
+
+    fn notify(&self, notification: CpaInferenceUpstreamNotification) {
         let mut details = serde_json::to_value(&notification).unwrap_or(Value::Null);
         if let Some(details) = details.as_object_mut() {
-            // Full payloads remain in the existing upstream notification. Expose the
-            // upstream structured failure so docker logs identifies invalid input too.
-            if let Some(error) = details
-                .get("body")
-                .and_then(Value::as_str)
-                .and_then(|body| serde_json::from_str::<Value>(body).ok())
-                .and_then(|body| body.get("error").cloned())
-            {
-                details.insert(
-                    "error".into(),
-                    serde_json::json!({
-                        "code": error["code"], "type": error["type"], "message": error["message"],
-                    }),
-                );
-            }
             details.remove("body");
+            details.remove("bodyBase64");
         }
-        let event = if details["kind"] == "response" {
-            "cpa.request.upstream.response"
+        record(
+            &self.credential_id,
+            &self.request_id,
+            "cpa.request.upstream",
+            details,
+        );
+        let _ = self.sender.send(notification);
+    }
+
+    pub(super) fn result(&self, images: bool) -> (HeaderMap, Vec<u8>) {
+        let mut state = self
+            .observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let body = if images {
+            std::mem::take(&mut state.raw_body)
         } else {
-            "cpa.request.upstream"
+            std::mem::take(&mut state.business)
         };
-        record(&self.credential_id, &self.request_id, event, details);
-        if self
-            .outgoing
-            .send_server_notification_to_connection_and_wait(
-                self.connection_id,
-                ServerNotification::CpaInferenceUpstream(notification),
-            )
-            .await
-        {
-            Ok(())
-        } else {
-            Err(TransportError::Network("CPA connection closed".into()))
-        }
+        (state.headers.clone(), body)
     }
 }
 
-impl HttpTransport for UpstreamTransport {
-    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
-        self.inner.execute(req).await
+impl TransportObserver for NativeObservation {
+    fn observes_request(&self, _method: &str, url: &str) -> bool {
+        let Ok(url) = url.parse::<url::Url>() else {
+            return false;
+        };
+        [
+            "/responses",
+            "/responses/lite",
+            "/images/generations",
+            "/images/edits",
+        ]
+        .iter()
+        .any(|path| url.path().ends_with(path))
     }
-
-    async fn stream(&self, mut req: Request) -> Result<StreamResponse, TransportError> {
-        // Defaults and the shared cookie jar are applied to the actual request,
-        // rather than reconstructed separately for the log after dispatch.
-        for (name, value) in &codex_login::default_client::default_headers() {
-            req.headers.entry(name.clone()).or_insert(value.clone());
-        }
-        if !req.headers.contains_key(axum::http::header::COOKIE)
-            && let Ok(uri) = req.url.parse()
-            && let Some(cookie) = self.factory.chatgpt_cookie_header(&uri)
-        {
-            req.headers.insert(axum::http::header::COOKIE, cookie);
-        }
-        let prepared = req.prepare_body_for_send().map_err(TransportError::Build)?;
-        let access_token_sha256 = req
-            .headers
+    fn request(&self, transport: &str, method: &str, url: &str, headers: &HeaderMap, body: &[u8]) {
+        let access_token_sha256 = headers
             .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|token| format!("{:x}", Sha256::digest(token.as_bytes())));
-        // Keep the node from this exact outbound request, not a later cookie-jar read.
-        let request_node = prepared
-            .headers
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(|value| format!("{:x}", Sha256::digest(value.as_bytes())));
+        let node = headers
             .get_all(axum::http::header::COOKIE)
             .iter()
             .filter_map(|value| value.to_str().ok())
             .flat_map(|value| value.split(';'))
             .find_map(oai_lb_cookie)
             .and_then(oai_lb_node);
+        {
+            let mut state = self
+                .observed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.raw_body.clear();
+            if method != "response.create" {
+                state.node = node.clone();
+            }
+        }
+        // Preserve encoded/compressed bytes exactly; do not change native compression for logs.
         self.notify(CpaInferenceUpstreamNotification::Request {
             request_id: self.request_id.clone(),
-            url: req.url.clone(),
-            method: req.method.to_string(),
-            headers: log_headers(&prepared.headers),
-            body: String::from_utf8_lossy(&prepared.body_bytes()).into_owned(),
+            transport: transport.into(),
+            url: url.into(),
+            method: method.into(),
+            headers: log_headers(headers),
+            body: std::str::from_utf8(body)
+                .unwrap_or("[encoded native request body]")
+                .into(),
+            body_base64: Some(base64::engine::general_purpose::STANDARD.encode(body)),
             access_token_sha256,
-            oai_lb_node: request_node.clone(),
-        })
-        .await?;
-        let result = self.inner.stream(req).await;
-        let notification = match &result {
-            Ok(response) => CpaInferenceUpstreamNotification::Response {
-                request_id: self.request_id.clone(),
-                status_code: response.status.as_u16(),
-                headers: log_headers(&response.headers),
-                body: None,
-                oai_lb_node: response_oai_lb_node(Some(&response.headers), request_node.as_deref()),
-            },
-            Err(TransportError::Http {
-                status,
-                headers,
-                body,
-                ..
-            }) => CpaInferenceUpstreamNotification::Response {
-                request_id: self.request_id.clone(),
-                status_code: status.as_u16(),
-                headers: headers.as_ref().map(log_headers).unwrap_or_default(),
-                body: body.clone(),
-                oai_lb_node: response_oai_lb_node(headers.as_ref(), request_node.as_deref()),
-            },
-            Err(error) => CpaInferenceUpstreamNotification::Error {
-                request_id: self.request_id.clone(),
-                message: error.to_string(),
-            },
+            oai_lb_node: node,
+        });
+    }
+
+    fn response(&self, transport: &str, status: u16, headers: &HeaderMap) {
+        let node = {
+            let mut state = self
+                .observed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.headers = headers.clone();
+            state.raw_body.clear();
+            state.node = response_oai_lb_node(Some(headers), state.node.as_deref());
+            state.node.clone()
         };
-        self.notify(notification).await?;
-        result
+        self.notify(CpaInferenceUpstreamNotification::Response {
+            request_id: self.request_id.clone(),
+            transport: transport.into(),
+            status_code: status,
+            headers: log_headers(headers),
+            body: None,
+            oai_lb_node: node,
+        });
+    }
+
+    fn body(&self, transport: &str, bytes: &[u8]) {
+        self.observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .raw_body
+            .extend_from_slice(bytes);
+        self.notify(CpaInferenceUpstreamNotification::Body {
+            request_id: self.request_id.clone(),
+            transport: transport.into(),
+            body_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        });
+    }
+
+    fn error(&self, transport: &str, message: &str) {
+        self.notify(CpaInferenceUpstreamNotification::Error {
+            request_id: self.request_id.clone(),
+            transport: transport.into(),
+            message: message.into(),
+        });
+    }
+}
+
+impl ResponsesObserver for NativeObservation {
+    fn accepted_event(&self, payload: &str) {
+        let mut state = self
+            .observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for line in payload.split('\n') {
+            state.business.extend_from_slice(b"data: ");
+            state.business.extend_from_slice(line.as_bytes());
+            state.business.push(b'\n');
+        }
+        state.business.push(b'\n');
+    }
+}
+
+impl InferenceObserver for NativeObservation {
+    fn start_attempt(&self) {
+        let mut state = self
+            .observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.business.clear();
+        state.raw_body.clear();
+        state.headers.clear();
+    }
+    fn recovery(&self, message: &str) {
+        record(
+            &self.credential_id,
+            &self.request_id,
+            "cpa.request.native_recovery",
+            serde_json::json!({"message":message}),
+        );
     }
 }
 
@@ -226,4 +280,49 @@ pub(crate) fn record(credential_id: &str, request_id: &str, event: &str, details
         "fields": {"event.name": event, "credentialId": credential_id,
         "rpcRequestId": request_id, "details": details}});
     let _ = writeln!(std::io::stderr().lock(), "{record}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_observation_preserves_actual_node_and_redacts_sensitive_headers() {
+        let (sender, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+        let observer = NativeObservation::new("r".into(), "credential".into(), sender);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"host":"chat.gateway.fixture.api.openai.com"}"#);
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer test-secret".parse().unwrap());
+        headers.insert(
+            "cookie",
+            format!("__oailb=e30.{payload}.sig").parse().unwrap(),
+        );
+        observer.request(
+            "http",
+            "POST",
+            "http://fixture/v1/responses",
+            &headers,
+            b"{}",
+        );
+        observer.response("http", 200, &HeaderMap::new());
+        let request = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
+        let response = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
+        assert_eq!(request["oaiLbNode"], "fixture");
+        assert_eq!(response["oaiLbNode"], "fixture");
+        assert_eq!(
+            request["headers"]["authorization"],
+            serde_json::json!(["[REDACTED]"])
+        );
+        assert_eq!(
+            request["headers"]["cookie"],
+            serde_json::json!(["[REDACTED]"])
+        );
+        assert!(!observer.observes_request("POST", "https://auth.example/oauth/token"));
+        assert!(observer.observes_request("POST", "https://api.example/v1/responses"));
+        let mut deleted = HeaderMap::new();
+        deleted.insert("set-cookie", "__oailb=; Max-Age=0".parse().unwrap());
+        observer.response("http", 401, &deleted);
+        let response = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
+        assert!(response["oaiLbNode"].is_null());
+    }
 }

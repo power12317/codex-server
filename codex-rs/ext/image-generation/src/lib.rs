@@ -1,5 +1,5 @@
 mod artifact;
-mod backend;
+pub mod backend;
 mod extension;
 mod tool;
 

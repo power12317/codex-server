@@ -145,7 +145,9 @@ pub struct InferenceMapping {
 
 /// A caller turn's native client and first upstream routing state. No tool runtime.
 pub struct InferenceSession {
-    pub(super) session: ModelClientSession,
+    pub(super) session: tokio::sync::Mutex<ModelClientSession>,
+    pub(super) client: ModelClient,
+    pub(super) turn_state: Arc<OnceLock<String>>,
     pub(super) metadata: CodexResponsesMetadata,
 }
 
@@ -185,18 +187,36 @@ impl InferenceSession {
         });
         let client = ModelClient::new(
             Some(auth),
-            AgentIdentityAuthPolicy::JwtOnly,
+            if config
+                .features
+                .enabled(codex_features::Feature::UseAgentIdentity)
+            {
+                AgentIdentityAuthPolicy::ChatGptAuth
+            } else {
+                AgentIdentityAuthPolicy::JwtOnly
+            },
             ThreadId::from_string(&mapped.thread_id)?,
             config.model_provider.clone(),
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,
-            /*content_item_kinds_enabled*/ false,
-            /*reasoning_effort_override_enabled*/ false,
-            /*enable_request_compression*/ false,
-            /*include_timing_metrics*/ false,
-            /*beta_features_header*/ None,
-            /*concurrent_reasoning_summaries_enabled*/ false,
+            config
+                .features
+                .enabled(codex_features::Feature::ContentItemKinds),
+            config
+                .features
+                .enabled(codex_features::Feature::ReasoningEffortOverride)
+                && !source.is_title(),
+            config
+                .features
+                .enabled(codex_features::Feature::EnableRequestCompression),
+            config
+                .features
+                .enabled(codex_features::Feature::RuntimeMetrics),
+            crate::session::session::Session::build_model_client_beta_features_header(config),
+            config
+                .features
+                .enabled(codex_features::Feature::ConcurrentReasoningSummaries),
             /*attestation_provider*/ None,
             config.http_client_factory(),
             config.workspace_routing_context(),
@@ -232,8 +252,11 @@ impl InferenceSession {
         metadata.subagent_header = subagent;
         metadata.agent_name.clone_from(&source.agent_name);
         metadata.request_kind = Some(CodexResponsesRequestKind::Turn);
+        let session = client.new_session();
         Ok(Self {
-            session: client.new_session(),
+            turn_state: session.turn_state.clone(),
+            session: tokio::sync::Mutex::new(session),
+            client,
             metadata,
         })
     }
@@ -251,6 +274,19 @@ impl InferenceSession {
     }
 
     pub fn turn_state(&self) -> Option<&str> {
-        self.session.turn_state.get().map(String::as_str)
+        self.turn_state.get().map(String::as_str)
+    }
+
+    pub fn model_client(&self) -> ModelClient {
+        self.client.clone()
+    }
+
+    /// Reuse session-scoped native fallback/auth state while creating a new turn.
+    pub fn with_model_client(mut self, client: ModelClient) -> Self {
+        let session = client.new_session();
+        self.turn_state = session.turn_state.clone();
+        self.session = tokio::sync::Mutex::new(session);
+        self.client = client;
+        self
     }
 }

@@ -1,6 +1,7 @@
-//! CPA IPC v3 boundary. This module deliberately has no ThreadManager or tool runtime.
+//! CPA IPC v4 boundary. This module deliberately has no ThreadManager or tool runtime.
 mod contexts;
 mod identity_response;
+mod images;
 mod login;
 mod response_stream;
 mod upstream;
@@ -8,36 +9,30 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
 use base64::Engine;
-use codex_api::ApiError;
-use codex_api::ReqwestTransport;
-use codex_api::ResponsesClient;
-use codex_api::TransportError;
 use codex_app_server_protocol::*;
 use codex_core::config::Config;
-use codex_http_client::ClientRouteClass;
-use codex_http_client::HttpClientBuilder;
-use codex_http_client::StreamResponse;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::SharedModelProvider;
-use codex_model_provider::auth_provider_from_auth;
 use codex_model_provider::create_model_provider;
-use futures::StreamExt;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 pub(crate) use upstream::record as record_request;
 
 const UPSTREAM: &str = "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
+type InferenceResponse = (BTreeMap<String, Vec<String>>, Vec<u8>);
+
+struct NativeOutcome {
+    result: BridgeResult<InferenceResponse>,
+    diagnostics: tokio::task::JoinHandle<()>,
+}
 
 pub(crate) struct CpaBridge {
     credential_id: Option<String>,
@@ -183,7 +178,6 @@ impl CpaBridge {
         })?;
         let bridge = self.clone();
         tokio::spawn(async move {
-            let started = AtomicBool::new(/*v*/ false);
             let mut auth_changes = bridge.auth.auth_change_receiver();
             let result = tokio::select! {
                 biased;
@@ -193,7 +187,17 @@ impl CpaBridge {
                         if auth_changes.changed().await.is_err() || bridge.bound_auth().is_err() { break; }
                     }
                 } => Err(failure(/*status*/ 401, "Managed account changed")),
-                result = bridge.run(&id, &params, &started, &session) => result,
+                result = bridge.run(&id, &params, &session) => result,
+            };
+            let result = match result {
+                Ok(outcome) => {
+                    // Delivery cannot turn an already settled native result into cancellation.
+                    if let Err(error) = outcome.diagnostics.await {
+                        tracing::warn!(%error, "native diagnostic delivery task stopped");
+                    }
+                    outcome.result
+                }
+                Err(error) => Err(error),
             };
             let succeeded = result.is_ok();
             upstream::record(
@@ -208,52 +212,42 @@ impl CpaBridge {
                     "turnState": session.turn_state(),
                     "turnStateLength": session.turn_state().map(str::len)}),
             );
-            if let Err(mut error) = result {
-                identity_response::IdentityResponse::new(
-                    codex_core::InferenceIdentity::from_request(&params.request),
-                    session.mapping(),
-                )
-                .failure(&mut error);
-                if started.load(Ordering::Acquire) {
+            match result {
+                Err(mut error) => {
+                    identity_response::IdentityResponse::new(
+                        codex_core::InferenceIdentity::from_request(&params.request),
+                        session.mapping(),
+                    )
+                    .failure(&mut error);
+                    bridge.outgoing.send_error(id.clone(), error).await;
+                }
+                Ok((headers, body)) => {
+                    bridge
+                        .outgoing
+                        .send_response(
+                            id.clone(),
+                            CpaInferenceStartResponse {
+                                request_id: params.request_id.clone(),
+                                status_code: 200,
+                                headers,
+                            },
+                        )
+                        .await;
                     bridge
                         .outgoing
                         .send_server_notification_to_connections(
                             &[id.connection_id],
-                            ServerNotification::CpaInferenceError(CpaInferenceErrorNotification {
-                                request_id: params.request_id.clone(),
-                                http_status: error
-                                    .data
-                                    .as_ref()
-                                    .and_then(|d| d["httpStatus"].as_u64())
-                                    .unwrap_or(502)
-                                    as u16,
-                                body: error
-                                    .data
-                                    .as_ref()
-                                    .and_then(|data| data["body"].as_str().map(str::to_owned)),
-                                headers: error.data.as_ref().and_then(|data| {
-                                    serde_json::from_value(data["headers"].clone()).ok()
-                                }),
-                                message: error.message,
-                            }),
+                            ServerNotification::CpaInferenceCompleted(
+                                CpaInferenceCompletedNotification {
+                                    request_id: params.request_id.clone(),
+                                    body_base64: Some(
+                                        base64::engine::general_purpose::STANDARD.encode(body),
+                                    ),
+                                },
+                            ),
                         )
                         .await;
-                } else {
-                    bridge.outgoing.send_error(id.clone(), error).await;
                 }
-            }
-            if succeeded {
-                bridge
-                    .outgoing
-                    .send_server_notification_to_connections(
-                        &[id.connection_id],
-                        ServerNotification::CpaInferenceCompleted(
-                            CpaInferenceCompletedNotification {
-                                request_id: params.request_id.clone(),
-                            },
-                        ),
-                    )
-                    .await;
             }
             bridge
                 .active
@@ -274,32 +268,23 @@ impl CpaBridge {
         Ok(auth)
     }
 
-    async fn open(
+    async fn run(
         &self,
         id: &ConnectionRequestId,
         params: &CpaInferenceStartParams,
         session: &codex_core::InferenceSession,
-    ) -> BridgeResult<StreamResponse> {
+    ) -> BridgeResult<NativeOutcome> {
         self.auth.reload().await;
         self.config_manager
             .check_thread_model_provider(&self.config)
             .await
-            .map_err(|error| failure(/*status*/ 502, &error.to_string()))?;
-        // Only AuthManager acquires/refreshes credentials. No tokens cross IPC.
-        let (auth, factory) = tokio::time::timeout(
-            Duration::from_secs(/*secs*/ 30),
-            self.auth.auth_with_http_client_factory(),
-        )
-        .await
-        .map_err(|_| failure(/*status*/ 504, "Managed authentication timed out"))?
-        .ok_or_else(|| failure(/*status*/ 401, "Managed ChatGPT login required"))?;
+            .map_err(|error| failure(502, &error.to_string()))?;
         self.bound_auth()?;
-        // Reject custom credential providers; the bridge has exactly one auth owner.
-        let model_provider = self
+        let provider = self
             .provider
             .as_ref()
-            .ok_or_else(|| failure(/*status*/ 404, "CPA bridge is disabled"))?;
-        let info = model_provider.info();
+            .ok_or_else(|| failure(404, "CPA bridge is disabled"))?;
+        let info = provider.info();
         if !info.is_openai()
             || !info.requires_openai_auth
             || info.auth.is_some()
@@ -307,256 +292,122 @@ impl CpaBridge {
             || info.experimental_bearer_token.is_some()
             || info.aws.is_some()
         {
-            return Err(failure(
-                /*status*/ 400,
-                "CPA requires the managed OpenAI provider",
-            ));
+            return Err(failure(400, "CPA requires the managed OpenAI provider"));
         }
-        let revision = *self.auth.auth_change_receiver().borrow();
-        let image_endpoint = params.image_api == Some(CpaImageApi::Images);
-        let mut provider = if image_endpoint {
-            model_provider
-                .api_provider()
-                .await
-                .map_err(|_| failure(502, "Unable to resolve managed image provider"))?
-        } else {
-            model_provider
-                .responses_api_provider(&self.config.workspace_routing_context())
-                .await
-                .map_err(|_| failure(502, "Unable to resolve managed provider"))?
-                .provider
-        };
-        if *self.auth.auth_change_receiver().borrow() != revision {
-            return Err(failure(
-                /*status*/ 409,
-                "Authentication changed during request setup; retry",
-            ));
-        }
-        self.bound_auth()?;
-        // A failed stream must never cause another inference attempt.
-        // RetryPolicy counts retries after the initial attempt. Zero means one POST.
-        provider.retry.max_attempts = 0;
-        let client = HttpClientBuilder::new()
-            .with_chatgpt_cloudflare_cookie_store()
-            .without_request_logging()
-            .without_redirects()
-            .build_respecting_outbound_proxy_policy(
-                &factory,
-                &provider.url_for_path(if image_endpoint {
-                    &params.operation
-                } else {
-                    "responses"
-                }),
-                ClientRouteClass::Api,
-            )
-            .map_err(|_| {
-                failure(
-                    /*status*/ 502,
-                    "Unable to construct managed HTTP client",
-                )
-            })?;
-        let transport = upstream::UpstreamTransport {
-            inner: ReqwestTransport::from_http_client(client),
-            factory,
-            outgoing: self.outgoing.clone(),
-            connection_id: id.connection_id,
-            request_id: params.request_id.clone(),
-            credential_id: params.credential_id.clone(),
-        };
-        if image_endpoint {
-            let operation = match params.operation.as_str() {
-                "images/generations" => codex_api::ImageOperation::Generate,
-                "images/edits" => codex_api::ImageOperation::Edit,
-                _ => unreachable!("validated image operation"),
-            };
-            let request: codex_api::ImageInferenceRequest =
-                serde_json::from_value(Value::Object(params.request.clone())).map_err(|error| {
-                    failure(400, &format!("Invalid native image request: {error}"))
-                })?;
-            let mapping = session.mapping();
-            let mut headers =
-                codex_api::build_session_headers(Some(mapping.session_id), Some(mapping.thread_id));
-            if let Some(turn_id) = mapping.turn_id {
-                headers.insert(
-                    "x-codex-image-turn-id",
-                    turn_id
-                        .parse()
-                        .map_err(|_| failure(400, "Invalid image turn id"))?,
-                );
-            }
-            return codex_api::ImagesClient::new(
-                transport,
-                provider,
-                auth_provider_from_auth(&auth),
-            )
-            .inference(operation, &request, headers)
-            .await
-            .map_err(|error| match error {
-                ApiError::InvalidRequest { message } => failure(400, &message),
-                error => api_failure(error),
-            });
-        }
-        let model = params
-            .request
-            .get("model")
-            .and_then(Value::as_str)
-            .ok_or_else(|| failure(/*status*/ 400, "model is required"))?;
-        let model_info = self
-            .models
-            .get_model_info(model, &self.config.to_models_manager_config())
-            .await;
-        let (body, options) =
-            codex_core::prepare_inference_request(session, &model_info, &params.request)
-                .await
-                .map_err(|error| failure(/*status*/ 400, &format!("{error:#}")))?;
-        let source = codex_core::InferenceIdentity::from_request(&params.request);
-        upstream::record(
-            &params.credential_id,
-            &params.request_id,
-            "cpa.request.mapping",
-            json!({
-                "source": source,
-                "worker": {"session_id": body["client_metadata"]["session_id"],
-                    "thread_id": body["client_metadata"]["thread_id"], "turn_id": body["client_metadata"]["turn_id"]},
-                "promptCacheKey": body["prompt_cache_key"],
-                "identityPolicy": "session-root-and-thread-hierarchy",
-                "requestPurpose": if source.is_title() { "thread_title" } else { "conversation" },
-                "syntheticTurn": source.turn_id.is_none(),
-                "transportSessionId": options.session_id, "transportThreadId": options.thread_id,
-                "turnStateSent": options.extra_headers.get("x-codex-turn-state").and_then(|value| value.to_str().ok()),
-            }),
-        );
-        ResponsesClient::new(transport, provider, auth_provider_from_auth(&auth))
-            .stream_prepared_body(body, options)
-            .await
-            .map_err(api_failure)
-    }
-
-    async fn run(
-        &self,
-        id: &ConnectionRequestId,
-        params: &CpaInferenceStartParams,
-        started: &AtomicBool,
-        session: &codex_core::InferenceSession,
-    ) -> BridgeResult<()> {
-        let mut recovery = self.auth.unauthorized_recovery();
-        let mut stream = loop {
-            match self.open(id, params, session).await {
-                Ok(stream) => break stream,
-                Err(error)
-                    if error.data.as_ref().is_some_and(|d| d["httpStatus"] == 401)
-                        && recovery.has_next() =>
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let observation = Arc::new(upstream::NativeObservation::new(
+            params.request_id.clone(),
+            params.credential_id.clone(),
+            sender,
+        ));
+        let outgoing = self.outgoing.clone();
+        let connection_id = id.connection_id;
+        let diagnostics = tokio::spawn(async move {
+            while let Some(notification) = receiver.recv().await {
+                if !outgoing
+                    .send_server_notification_to_connection_and_wait(
+                        connection_id,
+                        ServerNotification::CpaInferenceUpstream(notification),
+                    )
+                    .await
                 {
-                    tokio::time::timeout(Duration::from_secs(/*secs*/ 30), recovery.next())
-                        .await
-                        .map_err(|_| {
-                            failure(/*status*/ 504, "Managed authentication timed out")
-                        })?
-                        .map_err(|_| {
-                            failure(
-                                /*status*/ 401,
-                                "Managed authentication recovery failed",
-                            )
-                        })?;
+                    break;
                 }
-                Err(error) => return Err(error),
             }
-        };
-        let identities = identity_response::IdentityResponse::new(
-            codex_core::InferenceIdentity::from_request(&params.request),
-            session.mapping(),
-        );
-        // Only explicit public identity projections are added to the existing allowlist.
-        // Cookies, bearer credentials and opaque routing state remain private headers.
-        let mut headers = BTreeMap::new();
-        for name in [
-            "content-type",
-            "x-request-id",
-            "retry-after",
-            "openai-model",
-            "openai-processing-ms",
-            "x-codex-imagegen-request-id",
-            "session-id",
-            "thread-id",
-            "x-codex-parent-thread-id",
-            "x-codex-window-id",
-            "x-codex-turn-metadata",
-        ] {
-            let values: Vec<_> = stream
-                .headers
-                .get_all(name)
-                .iter()
-                .filter_map(|v| v.to_str().ok().map(str::to_owned))
-                .collect();
-            if !values.is_empty() {
-                headers.insert(name.to_owned(), values);
-            }
-        }
-        let mut translated_headers =
-            serde_json::to_value(&headers).map_err(|error| failure(502, &error.to_string()))?;
-        if let Some(fields) = translated_headers.as_object_mut() {
-            identities.fields(fields);
-        }
-        let headers = serde_json::from_value(translated_headers)
-            .map_err(|error| failure(502, &error.to_string()))?;
-        let content_type = stream
-            .headers
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("text/event-stream");
-        let mut response = response_stream::ResponseStream::new(identities, content_type);
-        self.outgoing
-            .send_response(
-                id.clone(),
-                CpaInferenceStartResponse {
-                    request_id: params.request_id.clone(),
-                    status_code: stream.status.as_u16(),
-                    headers,
-                },
+        });
+        let image_endpoint = params.image_api == Some(CpaImageApi::Images);
+        let result = if image_endpoint {
+            codex_http_client::observation::observe_transport(
+                observation.clone(),
+                images::execute(provider.clone(), &self.config, params, session),
             )
-            .await;
-        started.store(true, Ordering::Release);
-        while let Some(chunk) = stream.bytes.next().await {
-            let bytes = chunk.map_err(|error| api_failure(ApiError::Transport(error)))?;
-            let translated = if params.image_api.is_some() {
-                bytes.to_vec()
-            } else {
-                response.push(&bytes)
-            };
-            self.send_body(id, &params.request_id, &translated).await?;
-        }
-        self.send_body(id, &params.request_id, &response.finish())
-            .await?;
-        Ok(())
-    }
-    async fn send_body(
-        &self,
-        id: &ConnectionRequestId,
-        request_id: &str,
-        bytes: &[u8],
-    ) -> BridgeResult<()> {
-        for bytes in bytes.chunks(64 * 1024) {
-            if !self
-                .outgoing
-                .send_server_notification_to_connection_and_wait(
-                    id.connection_id,
-                    ServerNotification::CpaInferenceBody(CpaInferenceBodyNotification {
-                        request_id: request_id.to_owned(),
-                        body_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-                    }),
+            .await
+        } else {
+            let model = params
+                .request
+                .get("model")
+                .and_then(Value::as_str)
+                .ok_or_else(|| failure(400, "model is required"))?;
+            let model_info = self
+                .models
+                .get_model_info(model, &self.config.to_models_manager_config())
+                .await;
+            upstream::record(
+                &params.credential_id,
+                &params.request_id,
+                "cpa.request.mapping",
+                json!({"source":codex_core::InferenceIdentity::from_request(&params.request),
+                    "worker":session.mapping(),"identityPolicy":"session-root-and-thread-hierarchy"}),
+            );
+            session
+                .execute(
+                    &self.config,
+                    &model_info,
+                    &params.request,
+                    observation.clone(),
                 )
                 .await
-            {
-                return Err(failure(499, "Connection closed"));
+                .map_err(|error| native_failure(&error))
+        };
+        let (upstream_headers, body) = observation.result(image_endpoint);
+        drop(observation);
+        let result = result.and_then(|()| {
+            let identities = identity_response::IdentityResponse::new(
+                codex_core::InferenceIdentity::from_request(&params.request),
+                session.mapping(),
+            );
+            let mut headers = BTreeMap::new();
+            for name in [
+                "x-request-id",
+                "retry-after",
+                "openai-model",
+                "openai-processing-ms",
+                "x-codex-imagegen-request-id",
+                "session-id",
+                "thread-id",
+                "x-codex-parent-thread-id",
+                "x-codex-window-id",
+                "x-codex-turn-metadata",
+            ] {
+                let values: Vec<String> = upstream_headers
+                    .get_all(name)
+                    .iter()
+                    .filter_map(|value| value.to_str().ok().map(str::to_owned))
+                    .collect();
+                if !values.is_empty() {
+                    headers.insert(name.to_owned(), values);
+                }
             }
-        }
-        Ok(())
+            let content_type = if image_endpoint {
+                "application/json"
+            } else {
+                "text/event-stream"
+            };
+            headers.insert("content-type".into(), vec![content_type.into()]);
+            let mut headers =
+                serde_json::to_value(headers).map_err(|error| failure(502, &error.to_string()))?;
+            if let Some(fields) = headers.as_object_mut() {
+                identities.fields(fields);
+            }
+            let mut response = response_stream::ResponseStream::new(identities, content_type);
+            let mut translated = response.push(&body);
+            translated.extend(response.finish());
+            Ok((
+                serde_json::from_value(headers)
+                    .map_err(|error| failure(502, &error.to_string()))?,
+                translated,
+            ))
+        });
+        Ok(NativeOutcome {
+            result,
+            diagnostics,
+        })
     }
 }
 
 pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
     CpaCapabilitiesReadResponse {
-        protocol_version: 3,
+        protocol_version: 4,
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         upstream_revision: UPSTREAM.into(),
         manual_oauth: true,
@@ -565,6 +416,7 @@ pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
         raw_body: true,
         response_identity_mapping: true,
         execution_mode: "inference-only".into(),
+        native_model_execution: true,
         operations: vec![
             "responses".into(),
             "images/generations".into(),
@@ -577,40 +429,41 @@ fn failure(status: u16, message: &str) -> JSONRPCErrorError {
     JSONRPCErrorError {
         code: -32000,
         message: message.into(),
-        data: Some(json!({"httpStatus": status})),
+        data: Some(
+            json!({"httpStatus": status, "body": json!({"error":{"message":message,"type":"native_model_error"}}).to_string(), "headers": {}}),
+        ),
     }
 }
 
-fn api_failure(error: ApiError) -> JSONRPCErrorError {
-    if let ApiError::Transport(TransportError::Http {
-        status,
-        headers,
-        body,
-        ..
-    }) = error
-    {
-        return JSONRPCErrorError {
-            code: -32000,
-            message: "Upstream inference failed".into(),
-            data: Some(
-                json!({"httpStatus":status.as_u16(),"body":body,"headers":headers.as_ref().map(upstream::log_headers)}),
-            ),
-        };
+fn native_failure(error: &codex_protocol::error::CodexErr) -> JSONRPCErrorError {
+    use codex_protocol::error::CodexErrorDetails;
+    let status = error
+        .http_status_code_value()
+        .unwrap_or_else(|| match error.details() {
+            CodexErrorDetails::InvalidRequest(_)
+            | CodexErrorDetails::InvalidImageRequest()
+            | CodexErrorDetails::InvalidPrompt { .. }
+            | CodexErrorDetails::UnsupportedOperation(_)
+            | CodexErrorDetails::ContextWindowExceeded
+            | CodexErrorDetails::ContentFilter => 400,
+            CodexErrorDetails::UsageLimitReached(_)
+            | CodexErrorDetails::QuotaExceeded
+            | CodexErrorDetails::RateLimitExceeded(_) => 429,
+            CodexErrorDetails::RefreshTokenFailed(_) => 401,
+            CodexErrorDetails::TurnAborted | CodexErrorDetails::Interrupted => 499,
+            _ => 502,
+        });
+    let mut result = failure(status, &error.to_string());
+    if let Some(data) = result.data.as_mut() {
+        data["nativeError"] = json!(error.to_codex_protocol_error());
+        if let CodexErrorDetails::UnexpectedStatus(details) = error.details() {
+            data["body"] = json!(details.body);
+            if let Some(request_id) = &details.request_id {
+                data["headers"] = json!({"x-request-id":[request_id]});
+            }
+        }
     }
-    let (status, message) = match error {
-        ApiError::Transport(TransportError::Http { status, .. }) | ApiError::Api { status, .. } => {
-            (status.as_u16(), "Upstream inference failed")
-        }
-        ApiError::Transport(TransportError::Policy(_)) => (502, "Upstream transport policy denied"),
-        ApiError::Transport(TransportError::Build(_)) => {
-            (502, "Unable to prepare upstream request")
-        }
-        ApiError::Transport(
-            TransportError::Connection(_) | TransportError::Network(_) | TransportError::Timeout,
-        ) => (502, "Upstream network failure"),
-        _ => (502, "Upstream inference failed"),
-    };
-    failure(status, message)
+    result
 }
 
 fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
@@ -656,9 +509,6 @@ fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
             /*status*/ 400,
             "Persistent sessions, generation control, storage and background responses are unsupported",
         ));
-    }
-    if r.get("stream") != Some(&Value::Bool(true)) {
-        return Err(failure(/*status*/ 400, "stream=true is required"));
     }
     // Caller transport/auth/device metadata is sanitized during native request preparation.
     // Business Responses fields remain available to the worker-owned request builder.

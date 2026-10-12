@@ -9,7 +9,7 @@ use std::time::Instant;
 const TURN_TTL: Duration = Duration::from_secs(3600);
 const MAX_CONTEXTS: usize = 1024;
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 struct Key {
     scope: String,
     session: Option<String>,
@@ -18,7 +18,7 @@ struct Key {
     provenance: Provenance,
 }
 
-#[derive(Default, Hash, PartialEq, Eq)]
+#[derive(Clone, Default, Hash, PartialEq, Eq, serde::Serialize)]
 struct Provenance {
     parent_thread: Option<String>,
     thread_source: Option<String>,
@@ -87,7 +87,11 @@ impl<T> Cache<T> {
     }
 }
 
-pub(super) type Contexts = Cache<InferenceSession>;
+#[derive(Default)]
+pub(super) struct Contexts {
+    turns: Cache<InferenceSession>,
+    clients: HashMap<String, (Instant, codex_core::ModelClient)>,
+}
 
 impl Contexts {
     pub(super) fn get(
@@ -115,6 +119,16 @@ impl Contexts {
             },
         };
         let title = source.is_title();
+        let mapped = source.map(&scope)?;
+        let client_key = serde_json::to_string(&(
+            &scope,
+            &mapped.thread_id,
+            &key.provenance.parent_thread,
+            &key.provenance.thread_source,
+            &key.provenance.subagent_kind,
+            &key.provenance.subagent_header,
+            &key.provenance.agent_name,
+        ))?;
         let mut create = || {
             source
                 .turn_id
@@ -131,7 +145,25 @@ impl Contexts {
         if title {
             return create().map(Arc::new);
         }
-        self.get_or_insert(key, Instant::now(), create)
+        let now = Instant::now();
+        self.clients
+            .retain(|_, (last_used, _)| now.duration_since(*last_used) < TURN_TTL);
+        let existing = self
+            .clients
+            .get_mut(&client_key)
+            .map(|(last_used, client)| {
+                *last_used = now;
+                client.clone()
+            });
+        let value = self.turns.get_or_insert(key, now, || {
+            let value = create()?;
+            Ok(match existing {
+                Some(client) => value.with_model_client(client),
+                None => value,
+            })
+        })?;
+        self.clients.insert(client_key, (now, value.model_client()));
+        Ok(value)
     }
 }
 

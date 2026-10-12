@@ -1,5 +1,7 @@
 # Codex Server deployment
 
+> On `codex/native-model-runtime`, use the isolated `ghcr.io/power12317/codex-server-native-runtime` image and a v4-capable client. See the [experimental native model contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md); the stable package described below remains separate.
+
 Pushes to main publish `ghcr.io/power12317/codex-server:latest`.
 Use the service standalone or alongside CPA; a source checkout is not required
 on a deployment host. The `deploy/cpa-runtime` directory name and compatibility

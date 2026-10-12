@@ -166,7 +166,31 @@ impl TransportClient {
     ) -> Result<reqwest::Response, reqwest::Error> {
         apply_default_headers(request.headers_mut(), &self.default_headers);
         request.headers_mut().extend(trace_headers());
-        self.inner.execute(request).await
+        let observer = crate::observation::transport_observer().filter(|observer| {
+            observer.observes_request(request.method().as_str(), request.url().as_str())
+        });
+        if let Some(observer) = &observer {
+            observer.request(
+                "http",
+                request.method().as_str(),
+                request.url().as_str(),
+                request.headers(),
+                request
+                    .body()
+                    .and_then(reqwest::Body::as_bytes)
+                    .unwrap_or_default(),
+            );
+        }
+        let result = self.inner.execute(request).await;
+        if let Some(observer) = &observer {
+            match &result {
+                Ok(response) => {
+                    observer.response("http", response.status().as_u16(), response.headers())
+                }
+                Err(error) => observer.error("http", &error.to_string()),
+            }
+        }
+        result
     }
 
     pub(crate) fn log_response(&self, method: &Method, url: &str, response: &reqwest::Response) {

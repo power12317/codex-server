@@ -1630,15 +1630,59 @@ async fn run_sampling_request(
         Arc::clone(&step_context),
         Arc::clone(&turn_diff_tracker),
     );
-    let max_retries = turn_context.provider.info().stream_max_retries();
-    let mut retry_state = ResponsesStreamRetryState::default();
-    let mut initial_input = Some(input);
-    let mut original_input = None;
-    let mut executed_tool_calls_by_output = HashMap::new();
-    loop {
+    crate::responses_retry::execute_response_attempts(
+        client_session,
+        &mut SamplingOperation {
+            sess,
+            step_context,
+            turn_store,
+            turn_diff_tracker,
+            tool_runtime,
+            base_instructions,
+            initial_input: Some(input),
+            original_input: None,
+            executed_tool_calls_by_output: HashMap::new(),
+            cancellation_token,
+            preempt,
+        },
+    )
+    .await
+}
+
+struct SamplingOperation {
+    sess: Arc<Session>,
+    step_context: Arc<StepContext>,
+    turn_store: Arc<codex_extension_api::ExtensionData>,
+    turn_diff_tracker: SharedTurnDiffTracker,
+    tool_runtime: ToolCallRuntime,
+    base_instructions: codex_protocol::models::BaseInstructions,
+    initial_input: Option<Vec<ResponseItem>>,
+    original_input: Option<Vec<ResponseItem>>,
+    executed_tool_calls_by_output: HashMap<
+        (std::mem::Discriminant<ResponseItem>, String),
+        Vec<codex_protocol::models::ExecutedToolCall>,
+    >,
+    cancellation_token: CancellationToken,
+    preempt: CancellationToken,
+}
+
+impl crate::responses_retry::ResponsesStreamOperation for SamplingOperation {
+    type Output = (SamplingRequestResult, Vec<ResponseItem>);
+
+    async fn attempt(
+        &mut self,
+        client_session: &mut ModelClientSession,
+    ) -> CodexResult<Self::Output> {
+        let sess = &self.sess;
+        let step_context = &self.step_context;
+        let turn_context = &step_context.turn;
+        let turn_store = &self.turn_store;
+        let turn_diff_tracker = &self.turn_diff_tracker;
+        let tool_runtime = &self.tool_runtime;
+        let cancellation_token = &self.cancellation_token;
         // Running code-mode cells can request review while this response is in flight.
         // Keep the latest received ID until response.created replaces it.
-        let prompt_input = if let Some(input) = initial_input.take() {
+        let prompt_input = if let Some(input) = self.initial_input.take() {
             input
         } else {
             sess.clone_history()
@@ -1648,12 +1692,12 @@ async fn run_sampling_request(
         let mut prompt_input = prompt_input;
         sess.services
             .executed_tool_calls
-            .attach_to_prompt(&mut prompt_input, &mut executed_tool_calls_by_output);
+            .attach_to_prompt(&mut prompt_input, &mut self.executed_tool_calls_by_output);
         let mut prompt = build_prompt(
             prompt_input,
             step_context.as_ref(),
-            base_instructions.clone(),
-            sess.current_window_uses_incremental_tools(&step_context)
+            self.base_instructions.clone(),
+            sess.current_window_uses_incremental_tools(step_context)
                 .await,
         );
         let responses_metadata = sess
@@ -1661,7 +1705,7 @@ async fn run_sampling_request(
             .await;
         if crate::guardian::is_basic_session_source(&turn_context.session_source) {
             crate::guardian::prepare_guardian_prompt(
-                &sess,
+                sess,
                 &mut prompt,
                 step_context.as_ref(),
                 &responses_metadata,
@@ -1670,29 +1714,29 @@ async fn run_sampling_request(
         }
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
-            Arc::clone(&sess),
-            Arc::clone(&step_context),
-            Arc::clone(&turn_store),
+            Arc::clone(sess),
+            Arc::clone(step_context),
+            Arc::clone(turn_store),
             client_session,
             &responses_metadata,
-            Arc::clone(&turn_diff_tracker),
+            Arc::clone(turn_diff_tracker),
             &prompt,
             cancellation_token.child_token(),
         )
         .await
         {
             Ok(output) => {
-                return Ok((output, original_input.unwrap_or(prompt.input)));
+                return Ok((output, self.original_input.take().unwrap_or(prompt.input)));
             }
             Err(err) => match err.details() {
                 CodexErrorDetails::ContextWindowExceeded => {
-                    sess.set_total_tokens_full(&turn_context).await;
+                    sess.set_total_tokens_full(turn_context).await;
                     return Err(err);
                 }
                 CodexErrorDetails::UsageLimitReached(e) => {
                     let rate_limits = e.rate_limits.clone();
                     if let Some(rate_limits) = rate_limits {
-                        sess.update_rate_limits(&turn_context, *rate_limits).await;
+                        sess.update_rate_limits(turn_context, *rate_limits).await;
                     }
                     return Err(err);
                 }
@@ -1700,34 +1744,52 @@ async fn run_sampling_request(
             },
         };
 
-        let original_input = original_input.get_or_insert(prompt.input);
+        self.original_input.get_or_insert(prompt.input);
+        Err(err)
+    }
 
+    async fn recover(
+        &mut self,
+        retry_state: &mut ResponsesStreamRetryState,
+        err: CodexErr,
+        client_session: &mut ModelClientSession,
+    ) -> CodexResult<std::ops::ControlFlow<Self::Output>> {
+        // These errors already performed their native side effects in `attempt`
+        // and historically returned without entering the recovery/cancel path.
+        if matches!(
+            err.details(),
+            CodexErrorDetails::ContextWindowExceeded | CodexErrorDetails::UsageLimitReached(_)
+        ) {
+            return Err(err);
+        }
+        let turn_context = &self.step_context.turn;
         let retry = handle_response_stream_error(
-            &mut retry_state,
-            max_retries,
+            retry_state,
+            turn_context.provider.info().stream_max_retries(),
             err,
             client_session,
-            &sess,
-            &step_context,
+            &self.sess,
+            &self.step_context,
             ResponsesStreamRequest::Sampling,
         )
-        .or_cancel(&preempt)
-        .or_cancel(&cancellation_token)
+        .or_cancel(&self.preempt)
+        .or_cancel(&self.cancellation_token)
         .await?;
-        if cancellation_token.is_cancelled() {
+        if self.cancellation_token.is_cancelled() {
             return Err(CodexErr::TurnAborted);
         }
-        if preempt.is_cancelled() {
-            return Ok((
+        if self.preempt.is_cancelled() {
+            return Ok(std::ops::ControlFlow::Break((
                 SamplingRequestResult {
                     needs_follow_up: true,
                     last_agent_message: None,
                 },
-                std::mem::take(original_input),
-            ));
+                self.original_input.take().unwrap_or_default(),
+            )));
         }
         retry??;
         turn_context.turn_timing_state.record_sampling_retry();
+        Ok(std::ops::ControlFlow::Continue(()))
     }
 }
 

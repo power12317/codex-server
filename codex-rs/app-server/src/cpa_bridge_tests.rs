@@ -36,13 +36,12 @@ fn request_semantics_are_preserved_and_unsupported_state_is_rejected() {
         ("generate", json!(false)),
         ("background", json!(true)),
         ("store", json!(true)),
-        ("stream", json!(false)),
     ] {
         let mut changed = params.clone();
         changed.request.insert(key.into(), value);
         assert_eq!(
-            validate(&changed).unwrap_err().data,
-            Some(json!({"httpStatus":400}))
+            validate(&changed).unwrap_err().data.unwrap()["httpStatus"],
+            json!(400)
         );
     }
 }

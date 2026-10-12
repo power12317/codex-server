@@ -5,4 +5,4 @@
 /**
  * Actual inference transport exchanges, including attempts made during auth recovery.
  */
-export type CpaInferenceUpstreamNotification = { "kind": "request", requestId: string, url: string, method: string, headers: { [key in string]?: Array<string> }, body: string, accessTokenSha256: string | null, oaiLbNode: string | null, } | { "kind": "response", requestId: string, statusCode: number, headers: { [key in string]?: Array<string> }, body: string | null, oaiLbNode: string | null, } | { "kind": "error", requestId: string, message: string, };
+export type CpaInferenceUpstreamNotification = { "kind": "request", requestId: string, transport: string, url: string, method: string, headers: { [key in string]?: Array<string> }, body: string, bodyBase64?: string, accessTokenSha256: string | null, oaiLbNode: string | null, } | { "kind": "response", requestId: string, transport: string, statusCode: number, headers: { [key in string]?: Array<string> }, body: string | null, oaiLbNode: string | null, } | { "kind": "error", requestId: string, transport: string, message: string, } | { "kind": "body", requestId: string, transport: string, bodyBase64: string, };

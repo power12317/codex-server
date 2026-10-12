@@ -613,6 +613,18 @@ impl ContextManager {
         Arc::unwrap_or_clone(self.items)
     }
 
+    /// Native history preparation without synthesizing results for caller-owned tools.
+    pub(crate) fn for_inference_prompt(
+        mut self,
+        input_modalities: &[InputModality],
+    ) -> Vec<ResponseItem> {
+        self.normalize_history_for_tools(input_modalities, false);
+        Arc::unwrap_or_clone(self.items)
+            .into_iter()
+            .map(ResponseItemEnvelope::into_item)
+            .collect()
+    }
+
     /// Iterates over raw response items without exposing their history envelopes.
     pub(crate) fn raw_items(
         &self,
@@ -961,10 +973,20 @@ impl ContextManager {
     /// 2. every output has a corresponding call entry or names an external tool event
     /// 3. unsupported image and audio content is stripped from messages and tool outputs
     fn normalize_history(&mut self, input_modalities: &[InputModality]) {
+        self.normalize_history_for_tools(input_modalities, true);
+    }
+
+    fn normalize_history_for_tools(
+        &mut self,
+        input_modalities: &[InputModality],
+        synthesize_aborted_outputs: bool,
+    ) {
         let items = Arc::make_mut(&mut self.items);
 
         // all function/tool calls must have a corresponding output
-        normalize::ensure_call_outputs_present(items);
+        if synthesize_aborted_outputs {
+            normalize::ensure_call_outputs_present(items);
+        }
 
         // Paired outputs must have a corresponding call; named external outputs stand alone.
         normalize::remove_orphan_outputs(items);

@@ -24,7 +24,7 @@ LABEL org.opencontainers.image.title="Codex Server" \
     org.opencontainers.image.description="Native Codex inference service with credential workers and a streaming API" \
     org.opencontainers.image.revision=${FORK_REVISION} \
     org.opencontainers.image.source="https://github.com/power12317/codex-server" \
-    io.codex.cpa.protocol-version="3" \
+    io.codex.cpa.protocol-version="4" \
     io.codex.cpa.execution-mode="inference-only"
 # Keep /etc/localtime a regular bind-mount target. Following Debian's default
 # symlink would mount host data over the image's Etc/UTC zoneinfo file instead.

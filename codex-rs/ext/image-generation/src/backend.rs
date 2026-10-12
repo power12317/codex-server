@@ -16,7 +16,7 @@ use http::HeaderValue;
 
 const X_CODEX_IMAGE_TURN_ID_HEADER: &str = "x-codex-image-turn-id";
 
-pub(crate) struct ImageBackendError {
+pub struct ImageBackendError {
     message: String,
     codex_error: CodexErr,
     imagegen_request_id: Option<String>,
@@ -41,21 +41,21 @@ impl ImageBackendError {
         }
     }
 
-    pub(crate) fn message(&self) -> &str {
+    pub fn message(&self) -> &str {
         &self.message
     }
 
-    pub(crate) fn codex_error(&self) -> &CodexErr {
+    pub fn codex_error(&self) -> &CodexErr {
         &self.codex_error
     }
 
-    pub(crate) fn imagegen_request_id(&self) -> Option<&str> {
+    pub fn imagegen_request_id(&self) -> Option<&str> {
         self.imagegen_request_id.as_deref()
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct CodexImagesBackend {
+pub struct CodexImagesBackend {
     provider: SharedModelProvider,
     http_client_factory: HttpClientFactory,
     originator: Option<String>,
@@ -63,7 +63,7 @@ pub(crate) struct CodexImagesBackend {
 
 impl CodexImagesBackend {
     /// Creates a backend that sends image requests through the active model provider.
-    pub(crate) fn new(
+    pub fn new(
         provider: SharedModelProvider,
         http_client_factory: HttpClientFactory,
         originator: Option<String>,
@@ -97,7 +97,7 @@ impl CodexImagesBackend {
     }
 
     /// Sends a standalone image generation request through the configured Images client.
-    pub(crate) async fn generate(
+    pub async fn generate(
         &self,
         request: ImageGenerationRequest,
         turn_id: &str,
@@ -113,7 +113,7 @@ impl CodexImagesBackend {
     }
 
     /// Sends a standalone image edit request through the configured Images client.
-    pub(crate) async fn edit(
+    pub async fn edit(
         &self,
         request: ImageEditRequest,
         turn_id: &str,

@@ -13,6 +13,12 @@
         "body": {
           "type": "string"
         },
+        "body_base64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "headers": {
           "additionalProperties": {
             "items": {
@@ -40,6 +46,9 @@
         "request_id": {
           "type": "string"
         },
+        "transport": {
+          "type": "string"
+        },
         "url": {
           "type": "string"
         }
@@ -50,6 +59,7 @@
         "kind",
         "method",
         "request_id",
+        "transport",
         "url"
       ],
       "type": "object"
@@ -90,13 +100,17 @@
           "format": "uint16",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "transport": {
+          "type": "string"
         }
       },
       "required": [
         "headers",
         "kind",
         "request_id",
-        "status_code"
+        "status_code",
+        "transport"
       ],
       "type": "object"
     },
@@ -113,12 +127,43 @@
         },
         "request_id": {
           "type": "string"
+        },
+        "transport": {
+          "type": "string"
         }
       },
       "required": [
         "kind",
         "message",
-        "request_id"
+        "request_id",
+        "transport"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Actual attempt bytes for diagnostics, independent of successful delivery.",
+      "properties": {
+        "body_base64": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "body"
+          ],
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "body_base64",
+        "kind",
+        "request_id",
+        "transport"
       ],
       "type": "object"
     }

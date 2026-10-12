@@ -27,8 +27,9 @@
 
 mod inference;
 mod inference_context;
+mod inference_execution;
 mod inference_tools;
-pub use inference::prepare_inference_request;
+pub use inference_execution::InferenceObserver;
 mod inference_session;
 pub use inference_session::InferenceIdentity;
 pub use inference_session::InferenceMapping;
@@ -215,7 +216,6 @@ struct ModelClientState {
     auth_env_telemetry: AuthEnvTelemetry,
     session_source: SessionSource,
     originator: String,
-    model_verbosity: Option<VerbosityConfig>,
     content_item_kinds_enabled: bool,
     reasoning_effort_override_enabled: bool,
     enable_request_compression: bool,
@@ -275,6 +275,7 @@ impl RequestRouteTelemetry {
 #[derive(Debug, Clone)]
 pub struct ModelClient {
     state: Arc<ModelClientState>,
+    model_verbosity: Option<VerbosityConfig>,
     agent_identity_policy: AgentIdentityAuthPolicy,
     prompt_cache_key_override: Option<String>,
     codex_responses_headers: Option<Arc<CodexResponsesHeaders>>,
@@ -530,7 +531,6 @@ impl ModelClient {
                 auth_env_telemetry,
                 session_source,
                 originator,
-                model_verbosity,
                 content_item_kinds_enabled,
                 reasoning_effort_override_enabled,
                 enable_request_compression,
@@ -544,6 +544,7 @@ impl ModelClient {
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
                 last_inference_tools: StdMutex::new(None),
             }),
+            model_verbosity,
             agent_identity_policy,
             prompt_cache_key_override: None,
             codex_responses_headers: None,
@@ -566,6 +567,13 @@ impl ModelClient {
         self.state.reasoning_effort_override_enabled
             && self.state.provider.info().is_openai()
             && model_info.supports_reasoning_effort_updates
+    }
+
+    /// Select native verbosity on this client view while retaining session-scoped
+    /// authentication, socket cache and fallback state in the shared client state.
+    pub fn with_model_verbosity(mut self, verbosity: Option<VerbosityConfig>) -> Self {
+        self.model_verbosity = verbosity;
+        self
     }
 
     pub(crate) fn with_restored_history(mut self, restored_history: bool) -> Self {
@@ -969,9 +977,9 @@ impl ModelClient {
         });
         let include = vec!["reasoning.encrypted_content".to_string()];
         let verbosity = if model_info.support_verbosity {
-            self.state.model_verbosity.or(model_info.default_verbosity)
+            self.model_verbosity.or(model_info.default_verbosity)
         } else {
-            if self.state.model_verbosity.is_some() {
+            if self.model_verbosity.is_some() {
                 warn!(
                     "model_verbosity is set but ignored as the model does not support verbosity: {}",
                     model_info.slug
@@ -2294,6 +2302,10 @@ impl ModelClientSession {
                 .await
             }
         }
+    }
+
+    pub(crate) fn responses_websocket_enabled(&self) -> bool {
+        self.client.responses_websocket_enabled()
     }
 
     /// Permanently disables WebSockets for this Codex session and resets WebSocket state.

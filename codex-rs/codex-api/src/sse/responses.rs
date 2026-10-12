@@ -71,7 +71,8 @@ pub fn spawn_response_stream(
         let _ = turn_state.set(header_value.to_string());
     }
     let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent, ApiError>>(1600);
-    tokio::spawn(async move {
+    let observation = crate::observation::ObservationContext::capture();
+    tokio::spawn(observation.scope(async move {
         if let Some(model) = server_model {
             let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
         }
@@ -95,7 +96,7 @@ pub fn spawn_response_stream(
             /*raw_events*/ None,
         )
         .await;
-    });
+    }));
 
     ResponseStream {
         rx_event,
@@ -689,7 +690,9 @@ pub(super) async fn process_sse_with_treatment(
                 Some("response.completed" | "response.incomplete" | "response.failed" | "error")
             )
         });
+        let observed_kind = event.kind().to_owned();
         let processed = process_responses_event(event);
+        crate::observation::observe_processed_event(&observed_kind, &sse.data, &processed);
         if let (Some(sender), Some(raw)) = (&raw_events, raw)
             && sender.send(Ok(raw)).await.is_err()
         {

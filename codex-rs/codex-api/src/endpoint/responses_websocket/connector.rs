@@ -37,9 +37,10 @@ impl ResponsesWebsocketClient {
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
         self.auth.add_auth_headers(&mut headers);
         let (stream, _status, server_reasoning_included, server_model) =
-            connect_websocket(ws_url, headers, connector, turn_state).await?;
+            connect_websocket(ws_url.clone(), headers, connector, turn_state).await?;
         Ok(ResponsesWebsocketConnection::new(
             stream,
+            ws_url.to_string(),
             self.provider.stream_idle_timeout,
             server_reasoning_included,
             server_model,

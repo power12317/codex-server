@@ -1,5 +1,7 @@
 # Codex Server inference validation record
 
+> The validation below records the stable v3 implementation. Experimental native execution has a separate [v4 contract and validation boundary](cpa-native-model-runtime.md).
+
 ## 2026-10-13 upstream stable 0.162.1 merge
 
 Fork baseline: `7acdea942f41748653c4d3e81a4a98f21f7fe8ae`. The actual upstream

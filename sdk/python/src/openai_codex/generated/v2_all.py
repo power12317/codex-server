@@ -1165,6 +1165,13 @@ class CpaInferenceCompletedNotification(BaseModel):
         extra="forbid",
         populate_by_name=True,
     )
+    body_base64: Annotated[
+        str | None,
+        Field(
+            alias="bodyBase64",
+            description="Final business bytes and native success are delivered atomically.",
+        ),
+    ] = None
     request_id: Annotated[str, Field(alias="requestId")]
 
 
@@ -1186,11 +1193,13 @@ class CpaInferenceUpstreamNotification1(BaseModel):
     )
     access_token_sha256: str | None = None
     body: str
+    body_base64: str | None = None
     headers: dict[str, list[str]]
     kind: Literal["request"]
     method: str
     oai_lb_node: Annotated[str | None, Field(alias="oaiLbNode")] = None
     request_id: str
+    transport: str
     url: str
 
 
@@ -1204,6 +1213,7 @@ class CpaInferenceUpstreamNotification2(BaseModel):
     oai_lb_node: Annotated[str | None, Field(alias="oaiLbNode")] = None
     request_id: str
     status_code: Annotated[int, Field(ge=0)]
+    transport: str
 
 
 class CpaInferenceUpstreamNotification3(BaseModel):
@@ -1213,6 +1223,17 @@ class CpaInferenceUpstreamNotification3(BaseModel):
     kind: Literal["error"]
     message: str
     request_id: str
+    transport: str
+
+
+class CpaInferenceUpstreamNotification4(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    body_base64: str
+    kind: Literal["body"]
+    request_id: str
+    transport: str
 
 
 class CpaInferenceUpstreamNotification(
@@ -1220,6 +1241,7 @@ class CpaInferenceUpstreamNotification(
         CpaInferenceUpstreamNotification1
         | CpaInferenceUpstreamNotification2
         | CpaInferenceUpstreamNotification3
+        | CpaInferenceUpstreamNotification4
     ]
 ):
     model_config = ConfigDict(
@@ -1228,7 +1250,8 @@ class CpaInferenceUpstreamNotification(
     root: Annotated[
         CpaInferenceUpstreamNotification1
         | CpaInferenceUpstreamNotification2
-        | CpaInferenceUpstreamNotification3,
+        | CpaInferenceUpstreamNotification3
+        | CpaInferenceUpstreamNotification4,
         Field(
             description="Actual inference transport exchanges, including attempts made during auth recovery.",
             title="CpaInferenceUpstreamNotification",
