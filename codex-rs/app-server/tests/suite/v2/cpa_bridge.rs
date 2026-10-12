@@ -212,6 +212,10 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
     .await?;
     let caps = receive(&mut ws, "id", json!(1)).await?;
     assert_eq!(caps["result"]["protocolVersion"], json!(3));
+    assert_eq!(
+        caps["result"]["runtimeVersion"],
+        json!(env!("CARGO_PKG_VERSION"))
+    );
     assert_eq!(caps["result"]["upstreamBodyLogs"], json!(true));
     let mut wrong = start(request.clone());
     wrong["params"]["credentialId"] = json!("wrong");

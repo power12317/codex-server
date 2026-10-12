@@ -66,6 +66,33 @@ dependencies = ["codex-app 0.0.0"]
         packages = tomllib.loads(self.lock.read_text())["package"]
         self.assertEqual(packages[-1]["version"], "0.161.0")
 
+    def test_stable_tag_manifest_with_development_lockfile(self):
+        self.manifest.write_text(self.manifest.read_text().replace('"0.0.0"', '"0.162.1"'))
+        implicit = self.root / "codex-rs/app/tests/common"
+        implicit.mkdir(parents=True)
+        (implicit / "Cargo.toml").write_text('[package]\nname = "app_test_support"\nversion.workspace = true\n')
+        with self.lock.open("a") as lock:
+            lock.write('[[package]]\nname = "app_test_support"\nversion = "0.0.0"\ndependencies = ["codex-app 0.0.0"]\n')
+        prepare_release(self.root, "0.162.1")
+        packages = tomllib.loads(self.lock.read_text())["package"]
+        self.assertEqual(packages[0]["version"], "0.162.1")
+        self.assertEqual(packages[1]["version"], "0.0.0")
+        self.assertEqual(packages[1]["checksum"], "unchanged")
+        self.assertEqual(packages[2]["dependencies"], ["codex-app 0.162.1"])
+        self.assertEqual(packages[-1]["version"], "0.162.1")
+        self.assertEqual(packages[-1]["dependencies"], ["codex-app 0.162.1"])
+        before = self.manifest.read_bytes(), self.lock.read_bytes()
+        prepare_release(self.root, "0.162.1")
+        self.assertEqual(before, (self.manifest.read_bytes(), self.lock.read_bytes()))
+
+    def test_stable_tag_rejects_unexpected_lockfile_version_without_writing(self):
+        self.manifest.write_text(self.manifest.read_text().replace('"0.0.0"', '"0.162.1"'))
+        self.lock.write_text(self.lock.read_text().replace('"0.0.0"', '"0.160.0"', 1))
+        before = self.manifest.read_bytes(), self.lock.read_bytes()
+        with self.assertRaises(ValueError):
+            prepare_release(self.root, "0.162.1")
+        self.assertEqual(before, (self.manifest.read_bytes(), self.lock.read_bytes()))
+
 
 if __name__ == "__main__":
     unittest.main()

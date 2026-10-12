@@ -17,6 +17,9 @@ def prepare_release(root: Path, version: str) -> None:
     previous = workspace["package"]["version"]
     if previous not in ("0.0.0", version):
         raise ValueError(f"Unexpected workspace version {previous!r}")
+    # Official stable tags stamp Cargo.toml but can retain development versions
+    # in Cargo.lock. Normalize those local packages without resolving dependencies.
+    source_versions = {"0.0.0", previous, version}
 
     # Only workspace-inherited path packages change; registry/git packages keep
     # their exact versions, checksums and dependency resolution.
@@ -34,7 +37,7 @@ def prepare_release(root: Path, version: str) -> None:
     for index in range(1, len(blocks)):
         package = tomllib.loads("[[package]]" + blocks[index])["package"][0]
         if package["name"] in names and "source" not in package:
-            if package["version"] not in (previous, version):
+            if package["version"] not in source_versions:
                 raise ValueError(f"Unexpected lockfile version for {package['name']}")
             blocks[index] = re.sub(
                 r'^version = "[^"]+"$', f'version = "{version}"',
@@ -42,7 +45,8 @@ def prepare_release(root: Path, version: str) -> None:
             )
     lock_text = "[[package]]".join(blocks)
     for name in names:
-        lock_text = lock_text.replace(f'"{name} {previous}"', f'"{name} {version}"')
+        for source_version in source_versions - {version}:
+            lock_text = lock_text.replace(f'"{name} {source_version}"', f'"{name} {version}"')
     text, count = re.subn(
         r'(\[workspace\.package\]\s*\nversion\s*=\s*")[^"]+(")',
         lambda match: match[1] + version + match[2],

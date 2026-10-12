@@ -10,8 +10,8 @@ WORKDIR /src
 COPY . .
 WORKDIR /src/codex-rs
 ENV CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_BUILD_JOBS=2
-# Keep main's Cargo version at 0.0.0; stamp only this disposable build copy so
-# native version headers and User-Agent use the same official release version.
+# Synchronize the workspace and lockfile in this disposable build copy. Stable
+# source tags may already carry the release version in the workspace manifest.
 RUN python3 ../deploy/cpa-runtime/prepare-release.py
 # Codex Server uses the native request builder, OAuth library and streaming
 # bridge. It does not execute tools or need the CLI, V8 host or sandbox helpers.

@@ -188,6 +188,22 @@ Use `codex-server:local` in Compose for that build. The existing
 guard and image labels point to `power12317/codex-server`. Runtime executable,
 credential filenames, state locations and protocol v3 identifiers are unchanged.
 
+## Runtime release identity
+
+The current upstream release base is `rust-v0.162.1` at
+`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. Existing fork changes and previously
+integrated upstream commits remain in the merge history. This is a fork build,
+not an unmodified official release archive.
+
+`release-version` selects the official client version used for the executable,
+version header and User-Agent. The current stable-source workspace and local
+Cargo.lock packages are synchronized to `0.162.1`. `prepare-release.py` also
+accepts official stable manifests whose local lockfile packages still use
+`0.0.0`, including implicit workspace members; it does not resolve or upgrade
+third-party dependencies. Docker runs this synchronization again in its build
+copy. `cpa/capabilities/read` reports the compiled runtime version and selected
+upstream release commit; protocol v3 and the client identity names are unchanged.
+
 ## Runtime timezone
 
 The supplied Compose configurations bind the deployment host's `/etc/localtime`

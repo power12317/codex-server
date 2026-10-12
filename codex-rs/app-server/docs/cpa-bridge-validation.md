@@ -1,5 +1,70 @@
 # Codex Server inference validation record
 
+## 2026-10-13 upstream stable 0.162.1 merge
+
+Fork baseline: `7acdea942f41748653c4d3e81a4a98f21f7fe8ae`. The actual upstream
+merge target is `rust-v0.162.1`, commit
+`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. The latest development main snapshot
+`97239fd052db455bd08c41afcdab738e0fe83b87` is not a merge target. Existing fork
+features and the previously integrated official main commits remain preserved.
+
+Most 0.162.0 features were already present. This stable merge adds default instant
+interruption, fixes multiline asynchronous questions and their links, and limits
+shared-daemon feature compatibility checks to explicit CLI overrides. Related
+upstream test changes are included. It does not add a local agent loop to CPA.
+
+The workspace, 161 local lockfile package versions and deployment release stamp
+are synchronized to `0.162.1`. Third-party lockfile packages are unchanged.
+Release preparation now accepts official stable manifests with development
+lockfile versions and normalizes implicit workspace members and qualified local
+dependency references. It still rejects unexpected versions before writing.
+The capability revision now identifies the actual stable merge target rather
+than the obsolete initial fork base. Protocol v3 and client identity names remain
+unchanged; the compiled version drives version headers and User-Agent.
+
+Validation of this merged stable source:
+
+- `cargo build --locked -p codex-app-server --bin codex-app-server` passed;
+  the executable reports `codex-app-server 0.162.1`.
+- CPA unit and real master/worker integration: **70/70 passed**, including
+  capability/runtime version, native User-Agent, images/Responses, shared-token
+  refresh, logs, cancellation, identity/turn-state and timezone regressions.
+- API, protocol, login and feature suites: **571/571 passed**, including native
+  image request construction and schema/export consistency.
+- Stable-fix coverage: **10/10 CLI daemon-startup**, **47/47 selected TUI unit**,
+  **1/1 TUI daemon compatibility**, and **2/2 Python SDK turn-control** tests passed.
+- Core interruption/compaction/retained-context coverage: **66 distinct cases
+  passed**. The first run passed 62 of 65 cases; three existing Code Mode cases
+  timed out because the clean target directory lacked `codex-code-mode-host`.
+  After building that test helper, all three passed along with the separately
+  selected Guardian heartbeat case (**4/4**). Their test bodies were unchanged
+  from the fork base; no production logic, assertions or wait limits were changed
+  to obtain the passing result.
+- Release preparation: **5/5 passed**, including stable-tag lockfile mismatch,
+  implicit members, idempotence and rejection without writes.
+- Strict production-library Clippy passed for API, core, app-server, protocol,
+  login, features and TUI with `-D warnings`. Relevant Rust formatting,
+  documentation examples and diff whitespace checks passed.
+- CPA compatibility was independently tested using a clean export of its existing
+  committed main `70ca1592`, without merging CPA upstream or modifying its working
+  tree. `TestCodexRuntimeImagesRealWorker` passed with Go `-race` against the binary
+  below: six basic image combinations and six public HTTP combinations, native
+  normalization/streaming, ordinary Responses, hosted images, summary/compaction,
+  failures, cancellation and mixed-account routing. Model HTTP counts remained
+  **CPA = 0, worker = 1** in the basic image cases. Evidence:
+  `/private/tmp/cpa-codex-01621-real-worker-race.log`.
+
+The macOS arm64 development binary is
+`/private/tmp/codex-stable-01621/codex-app-server-0.162.1`, SHA-256
+`401eb27b38b5be890b3ede705f274c3498925ae9ea41a38cacb89b86c28f4f70`.
+Local logs and the artifact manifest are under `/private/tmp/codex-stable-01621/`.
+These checks use mock upstream services and synthetic credentials; they do not
+establish live model behavior or Linux Docker execution. No full-workspace suite
+was run.
+
+No CPA source changes, SIWC integration or additional credential locks are part
+of this Codex merge. No remote push, tag or image publication is performed.
+
 ## 2026-10-09 standalone image operations and native normalization correction
 
 Audit and fetched main baseline: `1ddf40146790e805a9b3a488ffde36364b17b29c`.
