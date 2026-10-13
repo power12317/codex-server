@@ -1124,10 +1124,11 @@
       ],
       "type": "object"
     },
-    "CpaInferenceBodyNotification": {
+    "CpaInferenceCompletedNotification": {
       "additionalProperties": false,
       "properties": {
         "bodyBase64": {
+          "description": "Final business bytes and native success are delivered atomically.",
           "type": "string"
         },
         "requestId": {
@@ -1140,27 +1141,9 @@
       ],
       "type": "object"
     },
-    "CpaInferenceCompletedNotification": {
-      "additionalProperties": false,
-      "properties": {
-        "bodyBase64": {
-          "description": "Final business bytes and native success are delivered atomically.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "requestId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "requestId"
-      ],
-      "type": "object"
-    },
     "CpaInferenceErrorNotification": {
       "additionalProperties": false,
+      "description": "Supervisor transport failure after the start RPC has already succeeded. Native model failures and cancellation use the start RPC error instead.",
       "properties": {
         "body": {
           "type": [
@@ -7302,26 +7285,6 @@
         "params"
       ],
       "title": "Cpa/inference/upstreamNotification",
-      "type": "object"
-    },
-    {
-      "properties": {
-        "method": {
-          "enum": [
-            "cpa/inference/body"
-          ],
-          "title": "Cpa/inference/bodyNotificationMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/CpaInferenceBodyNotification"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ],
-      "title": "Cpa/inference/bodyNotification",
       "type": "object"
     },
     {

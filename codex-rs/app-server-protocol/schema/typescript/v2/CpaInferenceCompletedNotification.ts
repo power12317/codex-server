@@ -6,4 +6,4 @@ export type CpaInferenceCompletedNotification = { requestId: string,
 /**
  * Final business bytes and native success are delivered atomically.
  */
-bodyBase64?: string, };
+bodyBase64: string, };

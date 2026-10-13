@@ -1,6 +1,6 @@
 # CPA bridge v2 (historical)
 
-Superseded by [v3](cpa-bridge-v3.md). The current image does not use this startup or ownership contract.
+Superseded by the [native model contract](cpa-native-model-runtime.md). The current image does not use this startup or ownership contract.
 
 This is the shared-file successor to v1. It requires CPA IPC major version 2 and
 keeps v1 inference request fields, raw events, cancellation and single-response

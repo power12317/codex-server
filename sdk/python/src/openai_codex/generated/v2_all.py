@@ -1151,27 +1151,18 @@ class CpaImageApi(Enum):
     responses = "responses"
 
 
-class CpaInferenceBodyNotification(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        populate_by_name=True,
-    )
-    body_base64: Annotated[str, Field(alias="bodyBase64")]
-    request_id: Annotated[str, Field(alias="requestId")]
-
-
 class CpaInferenceCompletedNotification(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         populate_by_name=True,
     )
     body_base64: Annotated[
-        str | None,
+        str,
         Field(
             alias="bodyBase64",
             description="Final business bytes and native success are delivered atomically.",
         ),
-    ] = None
+    ]
     request_id: Annotated[str, Field(alias="requestId")]
 
 
@@ -4478,23 +4469,6 @@ class CpaInferenceUpstreamServerNotification(BaseModel):
         Literal["cpa/inference/upstream"], Field(title="Cpa/inference/upstreamNotificationMethod")
     ]
     params: CpaInferenceUpstreamNotification
-
-
-class CpaInferenceBodyServerNotification(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    emitted_at_ms: Annotated[
-        int | None,
-        Field(
-            alias="emittedAtMs",
-            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
-        ),
-    ] = None
-    method: Annotated[
-        Literal["cpa/inference/body"], Field(title="Cpa/inference/bodyNotificationMethod")
-    ]
-    params: CpaInferenceBodyNotification
 
 
 class CpaInferenceCompletedServerNotification(BaseModel):
@@ -13249,7 +13223,6 @@ class ServerNotification(
     RootModel[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
-        | CpaInferenceBodyServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification
         | ThreadStartedServerNotification
@@ -13343,7 +13316,6 @@ class ServerNotification(
     root: Annotated[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
-        | CpaInferenceBodyServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification
         | ThreadStartedServerNotification

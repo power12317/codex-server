@@ -120,7 +120,6 @@ export type { ConsumeAccountRateLimitResetCreditParams } from "./ConsumeAccountR
 export type { ConsumeAccountRateLimitResetCreditResponse } from "./ConsumeAccountRateLimitResetCreditResponse";
 export type { ContextCompactedNotification } from "./ContextCompactedNotification";
 export type { CpaImageApi } from "./CpaImageApi";
-export type { CpaInferenceBodyNotification } from "./CpaInferenceBodyNotification";
 export type { CpaInferenceCompletedNotification } from "./CpaInferenceCompletedNotification";
 export type { CpaInferenceErrorNotification } from "./CpaInferenceErrorNotification";
 export type { CpaInferenceUpstreamNotification } from "./CpaInferenceUpstreamNotification";

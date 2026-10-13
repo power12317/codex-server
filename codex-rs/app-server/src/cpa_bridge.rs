@@ -240,9 +240,8 @@ impl CpaBridge {
                             ServerNotification::CpaInferenceCompleted(
                                 CpaInferenceCompletedNotification {
                                     request_id: params.request_id.clone(),
-                                    body_base64: Some(
-                                        base64::engine::general_purpose::STANDARD.encode(body),
-                                    ),
+                                    body_base64: base64::engine::general_purpose::STANDARD
+                                        .encode(body),
                                 },
                             ),
                         )
@@ -416,7 +415,6 @@ pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
         raw_body: true,
         response_identity_mapping: true,
         execution_mode: "inference-only".into(),
-        native_model_execution: true,
         operations: vec![
             "responses".into(),
             "images/generations".into(),

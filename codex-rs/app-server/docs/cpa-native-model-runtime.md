@@ -1,7 +1,7 @@
 # Experimental native model execution (IPC v4)
 
-This document applies to `codex/native-model-runtime`. The stable branch's v3
-prepared-body transport is not the execution contract of this experiment.
+This document describes the sole model execution path and IPC v4 contract on
+`codex/native-model-runtime`.
 
 The fixed native reference is Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. The client identity, originator and
@@ -37,19 +37,25 @@ across turn contexts. Each turn serializes access to its own native client sessi
 Independent contexts remain concurrent. Existing credential isolation, synthetic
 turn lifetime and title-request ephemerality remain in force.
 
-## Capability negotiation and delivery
+## IPC contract and delivery
 
-Clients must require both `protocolVersion: 4` and `nativeModelExecution: true`.
-Version 4 prevents a v3 client from accepting completion notifications whose final
-body it would ignore. There is no fallback to the v3 transport or CPA direct model
-requests when versions differ.
+The IPC contract is `protocolVersion: 4`: successful completion carries the final
+business body, and upstream diagnostics carry their actual transport. Native
+model execution is the only implementation; there is no execution capability
+switch, legacy sender or CPA direct model fallback.
 
 A successful invocation returns `cpa/inference/start` with public response headers,
 followed by `cpa/inference/completed` containing `requestId` and `bodyBase64`.
+`bodyBase64` is required, including when the final byte sequence is empty.
 The completion frame carries the final business bytes and native success together.
 EOF or HTTP 200 alone cannot produce this notification. Native final errors use
 the authoritative RPC error's `httpStatus`, `body` and `headers`; diagnostic errors
 from earlier attempts must not overwrite that result.
+
+If a worker exits after the start reply but before the completion frame, the
+supervisor sends `cpa/inference/error` for the interrupted IPC transfer. This
+notification reports worker loss only; model failure and cancellation use the
+start RPC error. It does not trigger replay or choose another execution path.
 
 Accepted events are buffered per attempt and released after native model success.
 This delays first-byte delivery until that success. It is not real-time token
@@ -142,7 +148,7 @@ Connect to `ws://127.0.0.1:38317/cpa/v1/ws`, send `initialize`, then the
 {"id":2,"method":"cpa/capabilities/read","params":{}}
 ```
 
-After verifying v4 and native execution, submit a request for an enabled credential
+After checking the v4 message contract, submit a request for an enabled credential
 file already managed by the service:
 
 ```json

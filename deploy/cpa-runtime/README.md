@@ -137,7 +137,7 @@ OAuth uses the linked `codex-login` library. Enabled children retain applicable
 native background activities. Refresh runs on credential access/401 recovery;
 no independent account heartbeat or synthetic analytics event is added.
 
-See the [third-party API](../../docs/codex-server-api.md), [v3 contract](../../codex-rs/app-server/docs/cpa-bridge-v3.md) and
+See the [third-party API](../../docs/codex-server-api.md), [native contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md) and
 [validation record](../../codex-rs/app-server/docs/cpa-bridge-validation.md).
 
 Pushes to `main` run `.github/workflows/cpa-runtime-image.yml`.
@@ -188,7 +188,7 @@ docker build -f deploy/cpa-runtime/Dockerfile \
 Use `codex-server:local` in Compose for that build. The existing
 `.github/workflows/cpa-runtime-image.yml` filename is retained; its repository
 guard and image labels point to `power12317/codex-server`. Runtime executable,
-credential filenames, state locations and protocol v3 identifiers are unchanged.
+credential filenames, state locations and protocol v4 identifiers are unchanged.
 
 ## Runtime release identity
 
@@ -204,7 +204,15 @@ accepts official stable manifests whose local lockfile packages still use
 `0.0.0`, including implicit workspace members; it does not resolve or upgrade
 third-party dependencies. Docker runs this synchronization again in its build
 copy. `cpa/capabilities/read` reports the compiled runtime version and selected
-upstream release commit; protocol v3 and the client identity names are unchanged.
+upstream release commit; protocol v4 and the client identity names are unchanged.
+
+The official release contains two distinct targets: the `codex-cli` package
+builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds
+`codex-app-server` (`codex-app-server 0.162.1`). The image uses the latter official
+target; it is not a renamed CLI. The supervisor's `initialize` response uses
+native client identity generation rather than a fork-specific User-Agent name.
+See [the official identity audit](../../codex-rs/app-server/docs/cpa-official-identity.md)
+for release artifact checks and the comparison command.
 
 ## Runtime timezone
 

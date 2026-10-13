@@ -53,16 +53,16 @@ scenario comparisons are not additional Rust unit tests.
 | Native context history tests | 91 passed |
 | Inference input, time and tool adapter tests | 14 passed |
 | Real master/worker IPC integration | 15 passed |
-| Bridge unit tests | 14 passed |
+| Bridge unit tests | 16 passed |
 | Master credential scanning and large-message IPC | 2 passed |
-| Native API library | 199 distinct tests passed |
+| Native API library | 193 passed; six unit tests for deleted bypass senders were removed with their implementation |
 | Native HTTP-client library | 115 distinct tests passed |
 | Protocol library and regenerated schema/export consistency | 320 passed; 1 intended generator test ignored |
 | Python generated-contract tests | 5 passed |
 | Release version preparation | 5 passed |
 | Strict Clippy for core/API/HTTP/app-server/image extension libraries and binaries | Passed |
 | Final binary build and actual request identity | Passed; `codex-tui`, version `0.162.1`, original User-Agent |
-| CPA real-worker HTTP, WebSocket and native-fallback matrices against the final binary | All 3 passed with Go `-race` |
+| CPA real-worker HTTP, WebSocket and native-fallback matrices against the final binary | All 3 passed with Go `-race`; 114 leaf cases |
 | Experimental image workflow | `actionlint` passed |
 | Rust formatting and diff whitespace checks | Passed |
 
@@ -127,13 +127,40 @@ native errors and cancellation. The corresponding `-race` test requires zero
 CPA model egress and zero server-side client-tool execution.
 
 The final local worker is `codex-app-server 0.162.1`, SHA256
-`6a19b9f60647fd5fe2a2a04b31644e1fc775b1ae3437183e6467b5801fef3f64`.
+`902df54637d8820621d78cb782b6d7bdc0ad9e08c6b9fe03c9e8eec292e9287c`.
 All three CPA matrices passed against this exact binary after the final worker
 changes. These tests use the matching experimental CPA IPC v4 implementation.
 
+## Single implementation cleanup
+
+Native model execution is unconditional. The extra execution capability field,
+the retired business-chunk notification and both unused fork HTTP bypass senders
+were removed with their registrations, generated exports and obsolete tests.
+The Responses endpoint source now matches the fixed official commit byte-for-byte.
+The remaining native model/observer tests cover the actual execution path.
+
+IPC v4 describes the atomic completion and actual-transport diagnostic message
+structure. Completion requires `bodyBase64`, including an empty byte sequence;
+there is no legacy empty-completion form. Native failures and cancellation use
+the start RPC error. The supervisor retains only the necessary asynchronous
+failure notification for worker loss after a successful start reply and before
+the completion frame. Neither that notification nor protocol versioning selects
+an alternate model implementation.
+
+The authorized main identity correction from `c56e646d` is included separately,
+without merging other main changes. The master uses native initialize identity
+APIs, while the worker retains official `codex-tui` and `0.162.1` identity. The
+updated third-party example passed a real master/worker invocation against the
+local mock upstream using the sole completion-body path.
+
+Cleanup evidence is recorded in `/private/tmp/codex-native-runtime/single-path-checks.json`,
+`single-path-comparison.json`, and `/private/tmp/cpa-native-only-real-worker.log`.
+The worker artifact is
+`/private/tmp/codex-native-runtime/artifacts/codex-app-server-single-path-final`.
+
 ## Compatibility and delivery limits
 
-- IPC v4 and `nativeModelExecution: true` are required on both sides. The final
+- IPC v4 defines the message structure. The final
   successful body is in `cpa/inference/completed.bodyBase64`; diagnostics cannot
   substitute for an authoritative native result.
 - Business bytes are buffered until native success, so token delivery is delayed.

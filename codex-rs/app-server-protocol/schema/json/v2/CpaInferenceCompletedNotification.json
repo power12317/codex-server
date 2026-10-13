@@ -4,16 +4,14 @@
   "properties": {
     "bodyBase64": {
       "description": "Final business bytes and native success are delivered atomically.",
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "requestId": {
       "type": "string"
     }
   },
   "required": [
+    "bodyBase64",
     "requestId"
   ],
   "title": "CpaInferenceCompletedNotification",

@@ -75,7 +75,10 @@ async fn local_bridge_accepts_messages_larger_than_default_limits() -> anyhow::R
         let padding = "x".repeat((64 << 20) + 1);
         socket
             .send(ClientMessage::Text(
-                json!({"id":1,"method":"initialize","params":{"padding":padding}})
+                json!({"id":1,"method":"initialize","params":{
+                    "clientInfo":{"name":"codex_app_server_daemon","version":env!("CARGO_PKG_VERSION")},
+                    "padding":padding
+                }})
                     .to_string()
                     .into(),
             ))
@@ -87,6 +90,11 @@ async fn local_bridge_accepts_messages_larger_than_default_limits() -> anyhow::R
         let response: Value = serde_json::from_str(response.to_text()?)?;
         assert_eq!(response["id"], json!(1));
         assert!(response.get("result").is_some());
+        assert_eq!(
+            response["result"]["userAgent"],
+            json!(get_codex_user_agent())
+        );
+        assert!(response["result"].get("serverInfo").is_none());
         socket
             .send(ClientMessage::Text(
                 json!({"id":2,"method":"cpa/capabilities/read","params":{}})

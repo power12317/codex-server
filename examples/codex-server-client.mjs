@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Codex Server v3: one request per connection, with no external dependencies.
+// Codex Server IPC v4: one request per connection, with no external dependencies.
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 
@@ -87,13 +87,13 @@ try {
   send({ method: "initialized" });
   const capabilities = await rpc(2, "cpa/capabilities/read", {});
   if (
-    capabilities.protocolVersion !== 3 ||
+    capabilities.protocolVersion !== 4 ||
     capabilities.executionMode !== "inference-only" ||
     !capabilities.rawBody ||
     !capabilities.operations?.includes("responses")
   ) {
     throw new Error(
-      "Server does not support the required v3 inference transport",
+      "Server does not support the required v4 message contract",
     );
   }
   if (capabilitiesOnly) {
@@ -139,7 +139,7 @@ try {
         throw new Error(JSON.stringify(message.error));
       }
       if (message.params?.requestId !== requestId) continue;
-      if (message.method === "cpa/inference/body") {
+      if (message.method === "cpa/inference/completed") {
         if (
           !process.stdout.write(
             Buffer.from(message.params.bodyBase64, "base64"),
@@ -147,7 +147,6 @@ try {
         ) {
           await once(process.stdout, "drain");
         }
-      } else if (message.method === "cpa/inference/completed") {
         break;
       } else if (message.method === "cpa/inference/error") {
         throw new Error(JSON.stringify(message.params));

@@ -40,13 +40,10 @@ async fn exchange(ws: &mut Socket, request: Value) -> Result<Exchange> {
                     )?;
                     return Ok(exchange);
                 }
-                Some("cpa/inference/body") => {
-                    anyhow::bail!("business bytes escaped before native success")
-                }
                 Some("cpa/inference/error") => {
                     anyhow::bail!("unexpected non-RPC final error: {message}")
                 }
-                _ => {}
+                _ => anyhow::bail!("unexpected inference notification: {message}"),
             }
         }
         anyhow::bail!("connection closed before native outcome")

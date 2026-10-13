@@ -103,10 +103,7 @@ impl Worker {
                         None => {}
                     }
                 } else if let Some(request_id) = message["params"]["requestId"].as_str() {
-                    let terminal = matches!(
-                        message["method"].as_str(),
-                        Some("cpa/inference/completed" | "cpa/inference/error")
-                    );
+                    let terminal = message["method"] == "cpa/inference/completed";
                     let client = {
                         let mut streams = streams.lock().await;
                         if terminal {
@@ -140,6 +137,8 @@ impl Worker {
                 }
             }
             let streams = std::mem::take(&mut *streams.lock().await);
+            // Only requests whose start reply already succeeded remain here.
+            // A dead worker cannot deliver their atomic completed frame.
             for (request_id, client) in streams {
                 let _ = client.send(json!({"method":"cpa/inference/error","params":{
                     "requestId":request_id,"httpStatus":503,"message":"Account runtime stopped","body":null,"headers":null

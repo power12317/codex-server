@@ -4667,26 +4667,6 @@
           "properties": {
             "method": {
               "enum": [
-                "cpa/inference/body"
-              ],
-              "title": "Cpa/inference/bodyNotificationMethod",
-              "type": "string"
-            },
-            "params": {
-              "$ref": "#/definitions/v2/CpaInferenceBodyNotification"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ],
-          "title": "Cpa/inference/bodyNotification",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "method": {
-              "enum": [
                 "cpa/inference/completed"
               ],
               "title": "Cpa/inference/completedNotificationMethod",
@@ -10859,11 +10839,12 @@
         ],
         "type": "string"
       },
-      "CpaInferenceBodyNotification": {
+      "CpaInferenceCompletedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
         "properties": {
           "bodyBase64": {
+            "description": "Final business bytes and native success are delivered atomically.",
             "type": "string"
           },
           "requestId": {
@@ -10874,33 +10855,13 @@
           "bodyBase64",
           "requestId"
         ],
-        "title": "CpaInferenceBodyNotification",
-        "type": "object"
-      },
-      "CpaInferenceCompletedNotification": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "additionalProperties": false,
-        "properties": {
-          "bodyBase64": {
-            "description": "Final business bytes and native success are delivered atomically.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "requestId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "requestId"
-        ],
         "title": "CpaInferenceCompletedNotification",
         "type": "object"
       },
       "CpaInferenceErrorNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
+        "description": "Supervisor transport failure after the start RPC has already succeeded. Native model failures and cancellation use the start RPC error instead.",
         "properties": {
           "body": {
             "type": [

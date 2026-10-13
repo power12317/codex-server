@@ -34,6 +34,10 @@ let child;
 let socket;
 let logs = '';
 try {
+  const versionResult = binary
+    ? await execute(binary, ['--version'])
+    : await execute('docker', ['run', '--rm', image, '--version']);
+  assert.equal(versionResult.stdout, `codex-app-server ${version}\n`);
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const url = `http://127.0.0.1:${upstream.address().port}`;
@@ -106,7 +110,10 @@ chatgpt_base_url = "${url}"
     }
     throw new Error(`No reply to ${method}`);
   }
-  await rpc(1, 'initialize', { clientInfo: { name: 'release-check', version: '1' }, capabilities: { experimentalApi: true } });
+  const initialized = await rpc(1, 'initialize', { clientInfo: { name: 'release-check', version: '1' }, capabilities: { experimentalApi: true } });
+  assert(initialized.userAgent.startsWith(`release-check/${version} (`), initialized.userAgent);
+  assert(initialized.userAgent.endsWith('(release-check; 1)'), initialized.userAgent);
+  assert.equal(initialized.serverInfo, undefined);
   socket.send(JSON.stringify({ method: 'initialized' }));
   await rpc(2, 'cpa/inference/start', {
     requestId: 'identity-check', credentialId: 'identity.json', operation: 'responses',
@@ -119,7 +126,7 @@ chatgpt_base_url = "${url}"
   assert.equal(headers.version, version);
   assert(headers['user-agent'].startsWith(`codex-tui/${version} (`), headers['user-agent']);
   assert(headers['user-agent'].endsWith(`(codex-tui; ${version})`), headers['user-agent']);
-  console.log(JSON.stringify({ originator: headers.originator, version: headers.version, userAgent: headers['user-agent'] }));
+  console.log(JSON.stringify({ executableVersion: versionResult.stdout.trimEnd(), initializeUserAgent: initialized.userAgent, originator: headers.originator, version: headers.version, userAgent: headers['user-agent'] }));
 } catch (error) {
   console.error(logs);
   throw error;

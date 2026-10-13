@@ -123,5 +123,3 @@ pub use crate::telemetry::SseTelemetry;
 pub use crate::telemetry::WebsocketTelemetry;
 pub use codex_protocol::protocol::RealtimeAudioFrame;
 pub use codex_protocol::protocol::RealtimeEvent;
-
-pub use crate::sse::raw_responses::RawResponseStream;

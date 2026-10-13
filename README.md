@@ -5,7 +5,7 @@
 Codex Server exposes native Codex inference through a long-running service for
 third-party applications. A master process accepts requests and supervises one
 worker per enabled credential. Workers rebuild native requests, map session and
-thread identities, and stream model responses back to the caller.
+thread identities, and return completed model responses to the caller.
 
 CPA is one integration. Any application that implements the documented WebSocket
 protocol can connect without running CPA.
@@ -18,7 +18,7 @@ protocol can connect without running CPA.
   transport, including supported function, custom, namespace and web-search tools.
 - Logical session/thread hierarchies, bounded turn routing state and selective
   restoration of source identities in responses.
-- Streaming response bytes, cancellation, manual OAuth and credential reload.
+- Atomic response delivery, cancellation, manual OAuth and credential reload.
 - A Linux amd64/arm64 image containing the app-server executable and its runtime
   dependencies. The image does not include the CLI or a local tool execution host.
 
@@ -32,7 +32,7 @@ contain full request/response payloads; clients decide whether to retain them.
 1. [Install and start the service](docs/install.md).
 2. [Connect a third-party application](docs/codex-server-api.md).
 3. [Deploy with containers or integrate with CPA](deploy/cpa-runtime/README.md).
-4. [Read the identity and request-mapping contract](codex-rs/app-server/docs/cpa-bridge-v3.md).
+4. [Read the identity and request-mapping contract](codex-rs/app-server/docs/cpa-native-model-runtime.md).
 
 The default endpoints are:
 
@@ -41,7 +41,7 @@ The default endpoints are:
 | `GET http://127.0.0.1:38317/readyz` | Listener readiness; not an account-health check. |
 | `ws://127.0.0.1:38317/cpa/v1/ws`    | JSON-RPC-style control and inference stream.     |
 
-Protocol version **3** retains the `cpa/*` method names, `/cpa/v1/ws` path,
+Protocol version **4** retains the `cpa/*` method names, `/cpa/v1/ws` path,
 `CODEX_CPA_*` settings and credential-file format for compatibility. These names
 do not require the CPA application. The executable remains `codex-app-server`.
 This listener does not expose an HTTP `POST /v1/responses` endpoint or native

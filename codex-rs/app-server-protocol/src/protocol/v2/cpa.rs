@@ -22,7 +22,6 @@ pub struct CpaCapabilitiesReadResponse {
     pub upstream_logs: bool,
     pub upstream_body_logs: bool,
     pub execution_mode: String,
-    pub native_model_execution: bool,
     /// Responses byte-stream transport (`bodyBase64`), not parsed IPC events.
     pub raw_body: bool,
     /// Known response identity fields are restored to caller values. Other payloads are opaque.
@@ -73,23 +72,16 @@ pub struct CpaInferenceCancelResponse {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export_to = "v2/")]
-pub struct CpaInferenceBodyNotification {
+pub struct CpaInferenceCompletedNotification {
     pub request_id: String,
+    /// Final business bytes and native success are delivered atomically.
     pub body_base64: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export_to = "v2/")]
-pub struct CpaInferenceCompletedNotification {
-    pub request_id: String,
-    /// Final business bytes and native success are delivered atomically.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub body_base64: Option<String>,
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export_to = "v2/")]
+/// Supervisor transport failure after the start RPC has already succeeded.
+/// Native model failures and cancellation use the start RPC error instead.
 pub struct CpaInferenceErrorNotification {
     pub body: Option<String>,
     pub headers: Option<BTreeMap<String, Vec<String>>>,

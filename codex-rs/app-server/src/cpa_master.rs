@@ -7,6 +7,11 @@ use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::routing::get;
+use codex_app_server_protocol::InitializeParams;
+use codex_app_server_protocol::InitializeResponse;
+use codex_login::default_client::USER_AGENT_SUFFIX;
+use codex_login::default_client::get_codex_user_agent;
+use codex_login::default_client::set_default_originator;
 use futures::SinkExt;
 use futures::StreamExt;
 use serde_json::Value;
@@ -131,6 +136,32 @@ fn router(master: Arc<Master>) -> Router {
 }
 
 impl Master {
+    fn initialize_response(&self, params: InitializeParams) -> anyhow::Result<InitializeResponse> {
+        let name = params.client_info.name;
+        anyhow::ensure!(
+            axum::http::HeaderValue::from_str(&name).is_ok(),
+            "Invalid clientInfo.name: '{name}'. Must be a valid HTTP header value."
+        );
+        // Match the native initialize processor's originating-client rules. The
+        // supervisor has no account/Agent state, but must use native identity APIs.
+        if !matches!(name.as_str(), "codex_app_server_daemon" | "codex-backend") {
+            if let Err(codex_login::default_client::SetOriginatorError::InvalidHeaderValue) =
+                set_default_originator(name.clone())
+            {
+                anyhow::bail!("Invalid clientInfo.name: '{name}'");
+            }
+            if let Ok(mut suffix) = USER_AGENT_SUFFIX.lock() {
+                *suffix = Some(format!("{name}; {}", params.client_info.version));
+            }
+        }
+        Ok(InitializeResponse {
+            user_agent: get_codex_user_agent(),
+            codex_home: self.state.clone().try_into()?,
+            platform_family: std::env::consts::FAMILY.into(),
+            platform_os: std::env::consts::OS.into(),
+        })
+    }
+
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "Serialize process creation and reaping so one credential cannot acquire two runtimes"
@@ -210,11 +241,27 @@ impl Master {
             };
             match message["method"].as_str() {
                 Some("initialize") => {
+                    let params =
+                        serde_json::from_value::<InitializeParams>(message["params"].clone());
+                    let response = match params {
+                        Ok(params) => self.initialize_response(params),
+                        Err(error) => Err(error.into()),
+                    };
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) => {
+                            let _ = client
+                                .send(json!({"id":message["id"],"error":{
+                                    "code":-32600,"message":error.to_string()
+                                }}))
+                                .await;
+                            continue;
+                        }
+                    };
                     initialized = true;
-                    let _ = client.send(json!({"id":message["id"],"result":{
-                        "userAgent":concat!("codex-cpa-master/", env!("CARGO_PKG_VERSION")),
-                        "codexHome":self.state,"platformFamily":std::env::consts::FAMILY,"platformOs":std::env::consts::OS
-                    }})).await;
+                    let _ = client
+                        .send(json!({"id":message["id"],"result":response}))
+                        .await;
                 }
                 Some("initialized") => {}
                 _ if !initialized => {

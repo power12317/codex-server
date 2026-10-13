@@ -4,7 +4,7 @@ Codex Server is a long-running inference service. A master process accepts clien
 connections and supervises one native worker per enabled credential. Any client
 can implement this protocol; CPA is one existing integration, not a dependency.
 
-This guide describes the implemented **v3 inference-only API**. Historical names
+This guide describes the implemented **v4 native model API**. Historical names
 such as `cpa/inference/start`, `CODEX_CPA_AUTH_DIR` and `/cpa/v1/ws` are retained
 for compatibility. They are not placeholders for new `server/*` methods.
 
@@ -66,7 +66,7 @@ shape (version strings below are illustrative):
 {
   "id": 2,
   "result": {
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "runtimeVersion": "...",
     "upstreamRevision": "...",
     "manualOAuth": true,
@@ -80,8 +80,8 @@ shape (version strings below are illustrative):
 }
 ```
 
-Require protocol version 3, `executionMode: "inference-only"` and the
-`responses` operation. `rawBody` means the `bodyBase64` byte-stream transport;
+Use protocol version 4 and the `responses` operation. Native model execution
+is the only implementation. `rawBody` describes the final `bodyBase64` payload;
 `responseIdentityMapping` announces selective identity restoration. Ignore
 unrecognized additive capability fields. `runtimeVersion` is the native package
 version; use the container revision label for the exact fork commit.
@@ -184,16 +184,16 @@ name with one available to the account:
 | `operation`    | `responses`, `images/generations` or `images/edits`.                                                                                                                                       |
 | `sourceFormat` | Nonempty label, at most 256 bytes, without control characters; `openai-response` is used here. It does not convert Chat/Claude envelopes.                                                  |
 | `sessionId`    | Nonempty caller isolation scope, at most 256 bytes, without control characters. Keep it stable across requests belonging to the same logical scope.                                        |
-| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string and `stream: true`; image operations use the contract below.                                          |
+| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; `stream` is a downstream delivery preference. Image operations use the contract below.                                          |
 
 For `operation: "responses"`, pass all required history in `request.input`. `previous_response_id`,
 `conversation` and `generate` are rejected even if null. If supplied, `store`
-and `background` must be exactly `false`. Nonstreaming requests are rejected;
-a client needing a final JSON result can collect and parse the SSE stream itself.
+and `background` must be exactly `false`. A client needing a final JSON result
+can parse the complete SSE payload delivered after native success.
 
 Supported tools include native `function`, `custom`, `namespace`, `web_search`,
 `tool_search` and hosted `image_generation`, with the detailed field policy in the
-[v3 contract](../codex-rs/app-server/docs/cpa-bridge-v3.md#native-request-mapping).
+[native input contract](../codex-rs/app-server/docs/cpa-native-model-runtime.md#supported-input).
 Client-side function/custom tools execute in the calling application. Preserve
 their call IDs and send results plus required history in subsequent requests.
 There is no local tool loop. Native web search and image generation run at the
@@ -218,44 +218,29 @@ representation. It is not valid on the ordinary `responses` operation.
   continues to convert those events into its image API response.
 
 The caller completes protocol conversion, model mapping and its payload rules
-before sending `request`. The worker then performs native construction and owns
-the final upstream representation. Images represented as Responses use the same
-`prepare_inference_request` pipeline as ordinary Responses, including message
-normalization, native defaults, model-selected Lite layout, time context and
-worker identity. For example, missing message `type` becomes `message`, string
-content becomes `input_text` content, and native `stream: true` / `store: false`
-are not overwritten by the caller's raw fields. Native output is never trimmed
-back to the set of fields supplied by the caller.
+before sending `request`. The worker maps supported business fields to native
+model inputs and delegates execution, recovery and completion to the native
+model client. Unsupported fields fail explicitly. There is no final wire overlay
+or alternate sender.
 
-Direct Images requests are rebuilt with `ImageGenerationRequest` or
-`ImageEditRequest`. Model and prompt are required strings; edits also require
-`images`. Native enums validate quality/background, image references are
-serialized through `ImageReference`, and optional nulls are omitted. Standalone
-mask, stream and output options extend these DTOs. Invalid native types produce
-HTTP 400. Authentication, transport headers and worker identity remain locally
-managed. No URL, raw HTTP header block or caller credential is accepted as a
-transport override.
+Standalone Images uses the existing native `CodexImagesBackend`. Generation
+accepts `model`, `prompt`, `background`, `n`, `quality` and `size`; edits also
+require `images`. A supplied `stream` is only a downstream preference and is not
+sent in the native Images DTO. Mask, partial-image and output-format/compression
+extensions are unsupported. Absent `n` stays absent.
 
-Multipart editing is converted by the caller before RPC dispatch: images become
-ordered `images: [{"image_url":"data:image/png;base64,..."}]` entries and mask
-becomes `mask: {"image_url":"data:image/png;base64,..."}`. Repeated form fields use
-JSON arrays during caller conversion; a field whose native type is scalar must
-still pass native validation. The RPC carries the converted business JSON and
-no multipart boundary or temporary filename. The worker preserves the supplied image order, duplicate entries and
-base64 content through native JSON serialization.
+Multipart editing is converted by the caller into native image references,
+for example `images: [{"image_url":"data:image/png;base64,..."}]`. The worker
+preserves the supplied image order, duplicate entries and base64 content.
 
-Image responses, including partial-image SSE events and JSON results, use the
-existing `bodyBase64` channel without identity rewriting of image contents.
-`cpa/inference/completed` indicates transport EOF; it does not require a
-`response.completed` event. The caller interprets image events, or Responses
-terminal events when `imageApi` is `responses`. Transport failures and cancellation
-produce `cpa/inference/error`, including after a partial image was transferred.
-The same `requestId` correlates the RPC, worker diagnostics and upstream exchange.
+Both representations deliver their final bytes atomically in
+`cpa/inference/completed.bodyBase64` after native success. Standalone Images
+returns JSON; Responses returns accepted SSE events, including supported hosted
+image events. Failed attempt bytes are diagnostic only. Native failures and
+cancellation use the start RPC error.
 
-The protocol remains v3. Both sides need image-aware code and must negotiate the
-operation before sending the new `imageApi` field. Independent
-`responses/compact` remains unsupported; ordinary Responses summary prompts,
-`compaction_trigger` and `compaction` items use the existing Responses path.
+Independent `responses/compact` remains unsupported. Ordinary Responses summary
+prompts and native compaction history use the same native execution entry.
 
 ### Session, thread and turn identities
 
@@ -280,8 +265,8 @@ Known response identity fields matching the request's mapped native IDs are
 restored to source values. A matching generated field is removed when that source
 field was absent. Model text, `response.id`, item IDs, `call_id`, tool payloads,
 business `metadata` and opaque `turn_state` are not rewritten. See the
-[identity contract](../codex-rs/app-server/docs/cpa-bridge-v3.md#response-identity-projection)
-for supported locations and aliases.
+[native contract](../codex-rs/app-server/docs/cpa-native-model-runtime.md)
+for the execution and identity boundary.
 
 ### Runtime date and timezone
 
@@ -297,9 +282,10 @@ Values come from the worker's effective system clock and timezone. Use the
 the deployment host; a container does not inherit unmounted host files merely
 because its image was rebuilt.
 
-## Streaming and completion
+## Completion delivery
 
-The start reply indicates that upstream response headers have been accepted:
+The start reply is sent after native model execution succeeds. It contains the
+response status and public headers:
 
 ```json
 {
@@ -314,28 +300,22 @@ The start reply indicates that upstream response headers have been accepted:
 
 The same connection receives notifications keyed by `params.requestId`:
 
-| Notification              | Parameters                                          | Client behavior                                                                       |
-| ------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `cpa/inference/upstream`  | Diagnostic exchange, described below                | Handle independently from business-response bytes. May arrive before the start reply. |
-| `cpa/inference/body`      | `{requestId, bodyBase64}`                           | Base64-decode and append bytes in order.                                              |
-| `cpa/inference/completed` | `{requestId}`                                       | Transport EOF. Finalize the stream parser.                                            |
-| `cpa/inference/error`     | `{requestId, httpStatus, message, body?, headers?}` | Terminal transfer failure; do not expect successful completion afterward.             |
+| Notification | Parameters | Client behavior |
+| --- | --- | --- |
+| `cpa/inference/upstream` | Diagnostic exchange, described below | Keep diagnostic bytes separate from business output. May arrive before the start reply. |
+| `cpa/inference/completed` | `{requestId, bodyBase64}` | Native success and the complete final body. Decode the required base64 field once. |
+| `cpa/inference/error` | `{requestId, httpStatus, message, body?, headers?}` | Supervisor reports a worker that exited after start succeeded but before completion arrived. |
 
 Register notification handlers before sending the request. Different requests
-can interleave. Header values are arrays of strings. Each base64 payload is a
-byte chunk, not a complete UTF-8 string, JSON document, SSE line or event. Use a
-streaming UTF-8 decoder and SSE parser, or write decoded bytes directly to an
-output stream. Do not concatenate base64 text before decoding.
+can interleave. Header values are arrays of strings. The completion contains one
+complete body; there is no separate business-chunk notification. Responses
+payloads contain accepted native SSE events; standalone Images payloads are JSON.
+The client may transform this final payload for its own downstream API.
 
-Unchanged SSE events preserve their bytes; identity-bearing events may have
-their JSON reserialized. IPC body chunks are at most 64 KiB after decoding without
-limiting the complete response. The local WebSocket and pending SSE-event/JSON-response
-input buffers have no size limit. Heartbeat/comment lines before event data are forwarded promptly.
-
-`cpa/inference/completed` means HTTP body EOF, not model-level success. Inspect
-Responses events such as `response.completed` or `response.failed` yourself.
-Accepted inference streams are not automatically replayed. Native authentication
-recovery may refresh a credential and retry a rejected 401 before acceptance.
+Business events are buffered until native success, delaying first-byte delivery.
+Native completion is authoritative: HTTP 200, partial output and transport EOF
+alone never establish success. Internal recovery failures stay in diagnostics.
+Neither execution-mode selection nor caller-side replay is part of the contract.
 
 ## Errors and cancellation
 
@@ -346,14 +326,16 @@ A failure before the start result is returned as the original RPC's error:
   "id": 3,
   "error": {
     "code": -32000,
-    "message": "stream=true is required",
+    "message": "model is required",
     "data": { "httpStatus": 400 }
   }
 }
 ```
 
-Structured upstream failures may include `data.body` and `data.headers`. A failure
-after acceptance uses `cpa/inference/error` instead. Optional fields may be null.
+Native final failures include `data.body` and `data.headers`, and may include
+`data.nativeError`. A supervisor transport failure after the start reply uses
+`cpa/inference/error`; it does not reinterpret native model state. Optional error
+fields may be null.
 Representative `httpStatus` values include 400 for invalid requests, 401 for
 managed authentication, 403 for credential restrictions, 429 for context capacity,
 499 for cancellation and 502/504 for transport/authentication failures.
@@ -381,10 +363,14 @@ already sent to the upstream service cannot be recalled.
 
 `cpa/inference/upstream` has a `kind` discriminator:
 
-- `request`: `requestId`, `url`, `method`, `headers`, `body`, optional
-  `accessTokenSha256` and `oaiLbNode`.
-- `response`: `requestId`, `statusCode`, `headers`, optional `body` and `oaiLbNode`.
-- `error`: `requestId` and `message`.
+- `request`: `requestId`, `transport`, `url`, `method`, `headers`, `body`, encoded
+  `bodyBase64`, optional `accessTokenSha256` and `oaiLbNode`.
+- `response`: `requestId`, `transport`, `statusCode`, `headers`, optional `body` and `oaiLbNode`.
+- `body`: `requestId`, `transport`, `bodyBase64` from an actual native attempt.
+- `error`: `requestId`, `transport` and `message`.
+
+`transport` is the actual `http` or `websocket` transport. WebSocket handshake
+records and response.create frame records are separate observations.
 
 `oaiLbNode` describes this HTTP exchange's gateway node. Request notifications
 use the actual outbound `Cookie` header. Response notifications use the response's
@@ -398,8 +384,9 @@ used to infer the response node.
 These describe native upstream exchanges, including rejected authentication
 attempts. Diagnostic identities remain native; source identity restoration
 applies to the business response. Authorization/cookie headers are redacted, but
-request bodies can contain full prompts and history. Diagnostics are not another
-copy of the body stream and do not replace completion/error notifications.
+request bodies can contain full prompts and history. Per-attempt body bytes are
+diagnostic data and do not replace the final completion/error result. Do not log
+the final business body again when upstream body logging is enabled.
 
 stderr `cpa.worker.started` and `cpa.request.*` events identify credential workers
 and request mapping. Correlate using the inference `requestId` and the actual
@@ -435,4 +422,4 @@ dispatcher for concurrent requests and its own Responses event/tool handling.
 The current schemas live in
 [`cpa.rs`](../codex-rs/app-server-protocol/src/protocol/v2/cpa.rs). The enclosing
 `v2` source directory is the native app-server schema layout; the service
-capability's `protocolVersion` is still 3.
+capability's `protocolVersion` is 4.
