@@ -8,7 +8,6 @@ use crate::requests::Compression;
 use crate::requests::headers::build_session_headers;
 use crate::requests::headers::insert_header;
 use crate::requests::headers::subagent_header;
-use crate::sse::spawn_response_stream;
 use crate::telemetry::SseTelemetry;
 use codex_client::EncodedJsonBody;
 use codex_client::HttpTransport;
@@ -72,6 +71,37 @@ impl<T: HttpTransport> ResponsesClient<T> {
         request: ResponsesApiRequest,
         options: ResponsesOptions,
     ) -> Result<ResponseStream, ApiError> {
+        self.stream_request_with_errors(request, options, false)
+            .await
+    }
+
+    /// Return the first native response error immediately to an external retry owner.
+    #[instrument(
+        name = "responses.stream_request",
+        level = "info",
+        skip_all,
+        fields(
+            transport = "responses_http",
+            http.method = "POST",
+            api.path = "/responses"
+        )
+    )]
+    pub async fn stream_request_once(
+        mut self,
+        request: ResponsesApiRequest,
+        options: ResponsesOptions,
+    ) -> Result<ResponseStream, ApiError> {
+        self.session = self.session.without_retries();
+        self.stream_request_with_errors(request, options, true)
+            .await
+    }
+
+    async fn stream_request_with_errors(
+        &self,
+        request: ResponsesApiRequest,
+        options: ResponsesOptions,
+        return_errors_immediately: bool,
+    ) -> Result<ResponseStream, ApiError> {
         let ResponsesOptions {
             session_id,
             thread_id,
@@ -92,8 +122,14 @@ impl<T: HttpTransport> ResponsesClient<T> {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }
 
-        self.stream_encoded(body, headers, compression, turn_state)
-            .await
+        self.stream_encoded(
+            body,
+            headers,
+            compression,
+            turn_state,
+            return_errors_immediately,
+        )
+        .await
     }
 
     #[instrument(
@@ -116,7 +152,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
     ) -> Result<ResponseStream, ApiError> {
         let body = EncodedJsonBody::encode(&body)
             .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-        self.stream_encoded(body, extra_headers, compression, turn_state)
+        self.stream_encoded(body, extra_headers, compression, turn_state, false)
             .await
     }
 
@@ -126,6 +162,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         extra_headers: HeaderMap,
         compression: Compression,
         turn_state: Option<Arc<OnceLock<String>>>,
+        return_errors_immediately: bool,
     ) -> Result<ResponseStream, ApiError> {
         let request_compression = match compression {
             Compression::None => RequestCompression::None,
@@ -149,11 +186,21 @@ impl<T: HttpTransport> ResponsesClient<T> {
             )
             .await?;
 
-        Ok(spawn_response_stream(
-            stream_response,
-            self.session.provider().stream_idle_timeout,
-            self.sse_telemetry.clone(),
-            turn_state,
-        ))
+        Ok(if return_errors_immediately {
+            crate::sse::responses::spawn_response_stream_with_errors(
+                stream_response,
+                self.session.provider().stream_idle_timeout,
+                self.sse_telemetry.clone(),
+                turn_state,
+                true,
+            )
+        } else {
+            crate::sse::spawn_response_stream(
+                stream_response,
+                self.session.provider().stream_idle_timeout,
+                self.sse_telemetry.clone(),
+                turn_state,
+            )
+        })
     }
 }

@@ -9,6 +9,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 pub trait ResponsesObserver: Send + Sync {
+    /// An original payload rejected by the native parser, with its native classification.
+    fn failed_event(&self, _payload: &str, _error: &crate::ApiError) {}
     /// The parser has accepted this event. Completion remains a native typed event;
     /// observing bytes alone never authorizes a caller to report model success.
     fn accepted_event(&self, payload: &str);
@@ -57,6 +59,9 @@ pub(crate) fn observe_processed_event(
     payload: &str,
     processed: &Result<Option<ResponseEvent>, ResponsesEventError>,
 ) {
+    if let Err(ResponsesEventError::Api(error)) = processed {
+        observe_failed_event(payload, error);
+    }
     // Internal status and rejected events belong to diagnostic output. Unknown valid
     // extension events, including tool/image deltas, retain their original payload.
     if processed.is_ok()
@@ -67,4 +72,8 @@ pub(crate) fn observe_processed_event(
     {
         let _ = OBSERVER.try_with(|observer| observer.accepted_event(payload));
     }
+}
+
+pub(crate) fn observe_failed_event(payload: &str, error: &crate::ApiError) {
+    let _ = OBSERVER.try_with(|observer| observer.failed_event(payload, error));
 }

@@ -1,6 +1,6 @@
 # Codex Server inference validation record
 
-> The validation below records the stable v3 implementation. Experimental native execution has a separate [v4 contract and validation boundary](cpa-native-model-runtime.md).
+> The validation below records the stable v3 implementation. Experimental native execution has a separate [v5 contract and validation boundary](cpa-native-model-runtime.md).
 
 ## 2026-10-13 upstream stable 0.162.1 merge
 

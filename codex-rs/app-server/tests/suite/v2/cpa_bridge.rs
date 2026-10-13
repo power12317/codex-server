@@ -1,4 +1,4 @@
-//! IPC v4 contract and retained account lifecycle regressions.
+//! IPC v5 contract and retained account lifecycle regressions.
 #[path = "cpa_bridge/home_tests.rs"]
 mod home_tests;
 #[path = "cpa_bridge/native_runtime_tests.rs"]
@@ -234,31 +234,31 @@ async fn cpa_cancel_before_headers_and_disconnect_leave_runtime_alive() -> Resul
     .await?;
     assert_eq!(
         receive(&mut ws, "id", json!(4)).await?["result"]["protocolVersion"],
-        json!(4)
+        json!(5)
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn cpa_managed_401_recovery_refreshes_shared_storage() -> Result<()> {
+async fn cpa_managed_401_returns_original_error_without_refresh_or_resend() -> Result<()> {
     let upstream = MockServer::start().await;
     app_test_support::mount_workspace_routing(&upstream).await;
     let home = TempDir::new()?;
     let _runtime = server(&upstream, &home).await?;
     let auth: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
     Mock::given(method("POST")).and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(/*s*/ 200).set_body_json(json!({"access_token":"fake-refreshed", "refresh_token":"fake-refresh-next", "id_token":auth["id_token"]}))).expect(/*r*/ 1).mount(&upstream).await;
+        .respond_with(ResponseTemplate::new(/*s*/ 200).set_body_json(json!({"access_token":"fake-refreshed", "refresh_token":"fake-refresh-next", "id_token":auth["id_token"]}))).expect(/*r*/ 0).mount(&upstream).await;
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .and(wiremock::matchers::header(
             "authorization",
             "Bearer fake-cpa-access",
         ))
-        .respond_with(ResponseTemplate::new(/*s*/ 401).set_body_string("private-error-never-echo"))
+        .respond_with(ResponseTemplate::new(/*s*/ 401).set_body_string("original-401-body"))
         .mount(&upstream)
         .await;
     Mock::given(method("POST")).and(path("/v1/responses")).and(wiremock::matchers::header("authorization","Bearer fake-refreshed"))
-        .respond_with(ResponseTemplate::new(/*s*/ 200).insert_header("content-type","text/event-stream").set_body_string("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"refreshed\"}}\n\n")).expect(/*r*/ 1).mount(&upstream).await;
+        .respond_with(ResponseTemplate::new(/*s*/ 200).insert_header("content-type","text/event-stream").set_body_string("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"refreshed\"}}\n\n")).expect(/*r*/ 0).mount(&upstream).await;
     let mut ws = connect(&home).await?;
     send(
         &mut ws,
@@ -267,16 +267,24 @@ async fn cpa_managed_401_recovery_refreshes_shared_storage() -> Result<()> {
     .await?;
     let mut transport_logs = Vec::new();
     let accepted = timeout(Duration::from_secs(/*secs*/ 30), async {
+        let mut accepted = Value::Null;
+        let mut completed = false;
+        let mut diagnostics_done = false;
         loop {
             if let Some(Ok(Message::Text(text))) = ws.next().await {
                 let message: Value = serde_json::from_str(&text)?;
                 if message["id"] == 2 {
-                    break Ok::<_, anyhow::Error>(message);
+                    accepted = message.clone();
                 }
+                completed |= message["id"] == 2 && message.get("error").is_some();
+                diagnostics_done |= message["method"] == "cpa/inference/diagnostics/completed";
                 if message["method"] == "cpa/inference/upstream"
                     && message["params"]["kind"] != "body"
                 {
                     transport_logs.push(message["params"].clone());
+                }
+                if completed && diagnostics_done {
+                    break Ok::<_, anyhow::Error>(accepted);
                 }
             }
         }
@@ -295,16 +303,18 @@ async fn cpa_managed_401_recovery_refreshes_shared_storage() -> Result<()> {
         })
         .collect();
     assert_eq!(
-        accepted["result"]["statusCode"],
-        json!(200),
+        accepted["error"]["data"]["httpStatus"],
+        json!(401),
         "{accepted}; calls={calls:?}"
     );
-    receive(&mut ws, "method", json!("cpa/inference/completed")).await?;
+    assert_eq!(accepted["error"]["data"]["body"], "original-401-body");
+    assert!(accepted["error"]["data"].get("nativeError").is_some());
     let upstream_requests = upstream.received_requests().await.unwrap();
     let inference: Vec<_> = upstream_requests
         .iter()
         .filter(|r| r.url.path() == "/v1/responses")
         .collect();
+    assert_eq!(inference.len(), 1);
     assert_eq!(transport_logs.len(), inference.len() * 2);
     use sha2::Digest;
     for (logs, actual) in transport_logs.chunks_exact(/*chunk_size*/ 2).zip(inference) {
@@ -334,8 +344,8 @@ async fn cpa_managed_401_recovery_refreshes_shared_storage() -> Result<()> {
         }
     }
     let saved: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
-    assert_eq!(saved["access_token"], json!("fake-refreshed"));
-    assert_eq!(saved["refresh_token"], json!("fake-refresh-next"));
+    assert_eq!(saved["access_token"], json!("fake-cpa-access"));
+    assert_eq!(saved["refresh_token"], json!("refresh-token"));
     assert_eq!(saved["unknown_field"], json!({"keep":true}));
     assert!(!home.path().join("auth.json").exists());
     Ok(())
@@ -360,7 +370,7 @@ async fn cpa_fresh_placeholder_oauth_immediate_inference_and_disable() -> Result
     )
     .await?;
     let caps = receive(&mut ws, "id", json!(10)).await?;
-    assert_eq!(caps["result"]["protocolVersion"], json!(4));
+    assert_eq!(caps["result"]["protocolVersion"], json!(5));
     assert_eq!(caps["result"]["manualOAuth"], json!(true));
     send(&mut ws, json!({"id":11,"method":"thread/list","params":{}})).await?;
     assert_eq!(
@@ -458,7 +468,7 @@ async fn cpa_fresh_placeholder_oauth_immediate_inference_and_disable() -> Result
     )
     .await?;
     let caps = receive(&mut ws, "id", json!(15)).await?;
-    assert_eq!(caps["result"]["protocolVersion"], json!(4));
+    assert_eq!(caps["result"]["protocolVersion"], json!(5));
     send(
         &mut ws,
         start(json!({"model":"mock-model","stream":true,"input":[]})),
@@ -568,7 +578,7 @@ async fn cpa_file_watcher_stops_runtime_and_restarts_same_credential() -> Result
     .await?;
     assert_eq!(
         receive(&mut ws, "id", json!(32)).await?["result"]["protocolVersion"],
-        json!(4)
+        json!(5)
     );
     Ok(())
 }
@@ -616,7 +626,7 @@ async fn cpa_nested_unicode_ids_have_independent_persistent_runtimes() -> Result
     .await?;
     assert_eq!(
         receive(&mut ws, "id", json!(41)).await?["result"]["protocolVersion"],
-        json!(4)
+        json!(5)
     );
     send(
         &mut ws,
@@ -649,7 +659,7 @@ async fn cpa_nested_unicode_ids_have_independent_persistent_runtimes() -> Result
     .await?;
     assert_eq!(
         receive(&mut ws, "id", json!(44)).await?["result"]["protocolVersion"],
-        json!(4)
+        json!(5)
     );
     assert_eq!(
         std::fs::read(private_home.join("retained"))?,

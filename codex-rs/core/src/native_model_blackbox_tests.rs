@@ -167,29 +167,35 @@ async fn native_model_blackbox_http_matrix() {
             }
             _ => vec![responses::sse(success())],
         };
-        responses::mount_sse_sequence(&server, responses).await;
+        responses::mount_sse_sequence(&server, responses.into_iter().take(1).collect()).await;
         let (session, turn) = context(&server.uri(), false).await;
         let result = run_model(&session, &turn, &body, case == "native_lite").await;
         let requests = responses::received_responses_requests(&server).await;
         let trace = json!({"result":outcome(result),"requests":requests.iter().map(|r|r.body_json()).collect::<Vec<_>>()});
-        if matches!(case, "final_invalid_prompt" | "final_eof") {
+        if matches!(
+            case,
+            "final_invalid_prompt"
+                | "final_eof"
+                | "eof_recovery"
+                | "content_filter_recovery"
+                | "partial_item_recovery"
+                | "failure_then_completion"
+        ) {
             assert_eq!(trace["result"]["success"], false, "{case}: {trace}");
         } else {
             assert_eq!(trace["result"]["success"], true, "{case}: {trace}");
         }
+        assert_eq!(requests.len(), 1, "single native send: {case}");
         assert!(!std::path::Path::new("/tmp/codex-native-forbidden-tool").exists());
         report(case, trace);
     }
 }
 
 #[tokio::test]
-async fn native_model_blackbox_websocket_and_fallback() {
+async fn native_model_blackbox_websocket_errors_do_not_retry_or_fallback() {
     for retry in [false, true] {
         let scripts = if retry {
-            vec![
-                vec![vec![responses::ev_response_created("resp_dropped")]],
-                vec![success()],
-            ]
+            vec![vec![vec![responses::ev_response_created("resp_dropped")]]]
         } else {
             vec![vec![success()]]
         };
@@ -202,7 +208,8 @@ async fn native_model_blackbox_websocket_and_fallback() {
             .flatten()
             .map(|r| r.body_json())
             .collect::<Vec<_>>();
-        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(result.is_err(), retry, "{result:?}");
+        assert_eq!(requests.len(), 1);
         report(
             if retry {
                 "websocket_recovery"
@@ -218,10 +225,17 @@ async fn native_model_blackbox_websocket_and_fallback() {
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
-    responses::mount_sse_sequence(&server, vec![responses::sse(success())]).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(responses::sse(success()), "text/event-stream"),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
     let (session, turn) = context(&server.uri(), true).await;
     let result = run_model(&session, &turn, &request(), false).await;
-    assert!(result.is_ok(), "{result:?}");
+    assert!(result.is_err(), "{result:?}");
     let requests = responses::received_responses_requests(&server)
         .await
         .into_iter()
@@ -235,8 +249,10 @@ async fn native_model_blackbox_websocket_and_fallback() {
         .filter(|r| r.url.path().ends_with("/responses"))
         .map(|r| r.method.to_string())
         .collect::<Vec<_>>();
+    assert!(requests.is_empty());
+    assert_eq!(methods, vec!["GET"]);
     report(
-        "websocket_fallback",
+        "websocket_no_fallback",
         json!({"result":outcome(result),"requests":requests,"methods":methods}),
     );
 }
@@ -260,12 +276,8 @@ impl codex_http_client::observation::TransportObserver for Capture {
     fn body(&self, _t: &str, _b: &[u8]) {}
     fn error(&self, _t: &str, _m: &str) {}
 }
-impl crate::InferenceObserver for Capture {
-    fn start_attempt(&self) {
-        self.events.lock().unwrap().clear();
-    }
-    fn recovery(&self, _message: &str) {}
-}
+impl crate::InferenceObserver for Capture {}
+
 async fn run_model(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
@@ -308,7 +320,7 @@ async fn run_model(
 
 // BEGIN MODEL_ONLY_BOUNDARY_TESTS
 #[tokio::test]
-async fn native_model_client_tool_recovery_never_synthesizes_outputs() {
+async fn native_model_client_tool_failure_never_retries_or_synthesizes_outputs() {
     for custom in [false, true] {
         let server = responses::start_mock_server().await;
         let event = if custom {
@@ -324,14 +336,7 @@ async fn native_model_client_tool_recovery_never_synthesizes_outputs() {
                 "{\"command\":\"touch /tmp/codex-native-forbidden-tool\"}",
             )
         };
-        responses::mount_sse_sequence(
-            &server,
-            vec![
-                responses::sse(vec![event.clone()]),
-                responses::sse(vec![event, responses::ev_completed("tool_success")]),
-            ],
-        )
-        .await;
+        responses::mount_sse_sequence(&server, vec![responses::sse(vec![event])]).await;
         let (session, turn) = context(&server.uri(), false).await;
         let mut body = request();
         body["tools"] = if custom {
@@ -349,13 +354,11 @@ async fn native_model_client_tool_recovery_never_synthesizes_outputs() {
             .unwrap()
             .push(prior_call["item"].clone());
         body["input"].as_array_mut().unwrap().push(json!({"type":if custom {"custom_tool_call_output"} else {"function_call_output"},"call_id":"caller_prior","output":"original client result"}));
-        let output = run_model(&session, &turn, &body, false).await.unwrap();
-        assert_eq!(output.len(), 1);
-        assert_eq!(output[0]["call_id"], "client_call");
+        assert!(run_model(&session, &turn, &body, false).await.is_err());
         let requests = responses::received_responses_requests(&server).await;
-        assert_eq!(requests.len(), 2);
-        let retry = requests[1].body_json();
-        let history = retry["input"].as_array().unwrap();
+        assert_eq!(requests.len(), 1);
+        let sent = requests[0].body_json();
+        let history = sent["input"].as_array().unwrap();
         assert!(!history.iter().any(|item| item["call_id"] == "client_call"));
         let outputs: Vec<_> = history
             .iter()

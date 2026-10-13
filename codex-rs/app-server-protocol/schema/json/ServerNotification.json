@@ -1127,23 +1127,30 @@
     "CpaInferenceCompletedNotification": {
       "additionalProperties": false,
       "properties": {
-        "bodyBase64": {
-          "description": "Final business bytes and native success are delivered atomically.",
-          "type": "string"
-        },
         "requestId": {
           "type": "string"
         }
       },
       "required": [
-        "bodyBase64",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "CpaInferenceDiagnosticsCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
         "requestId"
       ],
       "type": "object"
     },
     "CpaInferenceErrorNotification": {
       "additionalProperties": false,
-      "description": "Supervisor transport failure after the start RPC has already succeeded. Native model failures and cancellation use the start RPC error instead.",
+      "description": "Native failure, cancellation or worker loss after the start reply.",
       "properties": {
         "body": {
           "type": [
@@ -1171,6 +1178,7 @@
         "message": {
           "type": "string"
         },
+        "nativeError": true,
         "requestId": {
           "type": "string"
         }
@@ -1178,6 +1186,22 @@
       "required": [
         "httpStatus",
         "message",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "CpaInferenceEventNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "bodyBase64": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bodyBase64",
         "requestId"
       ],
       "type": "object"
@@ -7285,6 +7309,46 @@
         "params"
       ],
       "title": "Cpa/inference/upstreamNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "cpa/inference/event"
+          ],
+          "title": "Cpa/inference/eventNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/CpaInferenceEventNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Cpa/inference/eventNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "cpa/inference/diagnostics/completed"
+          ],
+          "title": "Cpa/inference/diagnostics/completedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/CpaInferenceDiagnosticsCompletedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Cpa/inference/diagnostics/completedNotification",
       "type": "object"
     },
     {

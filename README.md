@@ -1,6 +1,6 @@
 # Codex Server
 
-> The `codex/native-model-runtime` experimental branch exposes [native model execution through IPC v4](codex-rs/app-server/docs/cpa-native-model-runtime.md) and publishes to an isolated image package. It requires a matching v4 client.
+> The `codex/native-model-runtime` experimental branch exposes [native model execution through IPC v5](codex-rs/app-server/docs/cpa-native-model-runtime.md) and publishes to an isolated image package. It requires a matching v5 client.
 
 Codex Server exposes native Codex inference through a long-running service for
 third-party applications. A master process accepts requests and supervises one

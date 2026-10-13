@@ -6,6 +6,7 @@ use pretty_assertions::assert_eq;
 struct Exchange {
     reply: Value,
     body: Vec<u8>,
+    error: Option<Value>,
     logs: Vec<Value>,
 }
 
@@ -15,38 +16,46 @@ async fn exchange(ws: &mut Socket, request: Value) -> Result<Exchange> {
     send(ws, request).await?;
     timeout(Duration::from_secs(30), async {
         let mut exchange = Exchange::default();
+        let mut business_done = false;
+        let mut diagnostics_done = false;
         while let Some(message) = ws.next().await {
             let Message::Text(text) = message? else {
                 continue;
             };
             let message: Value = serde_json::from_str(&text)?;
-            if message["id"] == id {
+            if message.get("id") == Some(&id) {
                 exchange.reply = message;
-                if exchange.reply.get("error").is_some() {
-                    return Ok(exchange);
+                business_done |= exchange.reply.get("error").is_some();
+            } else if message["params"]["requestId"] == request_id {
+                match message["method"].as_str() {
+                    Some("cpa/inference/upstream") => exchange.logs.push(message["params"].clone()),
+                    Some("cpa/inference/event") => {
+                        assert!(message["params"].get("attemptId").is_none());
+                        exchange.body.extend(
+                            base64::engine::general_purpose::STANDARD.decode(
+                                message["params"]["bodyBase64"]
+                                    .as_str()
+                                    .expect("event bytes"),
+                            )?,
+                        );
+                    }
+                    Some("cpa/inference/completed") => {
+                        assert!(message["params"].get("bodyBase64").is_none());
+                        business_done = true;
+                    }
+                    Some("cpa/inference/error") => {
+                        exchange.error = Some(message["params"].clone());
+                        business_done = true;
+                    }
+                    Some("cpa/inference/diagnostics/completed") => diagnostics_done = true,
+                    _ => anyhow::bail!("unexpected inference notification: {message}"),
                 }
-                continue;
             }
-            if message["params"]["requestId"] != request_id {
-                continue;
-            }
-            match message["method"].as_str() {
-                Some("cpa/inference/upstream") => exchange.logs.push(message["params"].clone()),
-                Some("cpa/inference/completed") => {
-                    exchange.body = base64::engine::general_purpose::STANDARD.decode(
-                        message["params"]["bodyBase64"]
-                            .as_str()
-                            .expect("atomic final bytes"),
-                    )?;
-                    return Ok(exchange);
-                }
-                Some("cpa/inference/error") => {
-                    anyhow::bail!("unexpected non-RPC final error: {message}")
-                }
-                _ => anyhow::bail!("unexpected inference notification: {message}"),
+            if business_done && diagnostics_done {
+                return Ok(exchange);
             }
         }
-        anyhow::bail!("connection closed before native outcome")
+        anyhow::bail!("connection closed before business and diagnostics ended")
     })
     .await?
 }
@@ -62,8 +71,8 @@ fn wire(exchange: &Exchange) -> Value {
         .logs
         .iter()
         .find(|log| log["kind"] == "request" && log["method"] == "POST")
-        .unwrap();
-    serde_json::from_str(log["body"].as_str().unwrap()).unwrap()
+        .expect("native request diagnostic");
+    serde_json::from_str(log["body"].as_str().expect("request JSON text")).expect("request JSON")
 }
 fn rpc(input: Value, id: u64) -> Value {
     let mut request = start(input);
@@ -153,7 +162,7 @@ async fn cpa_native_completion_preserves_tools_extensions_and_identity() -> Resu
     Mock::given(method("POST")).and(path("/v1/responses")).respond_with(move |request:&wiremock::Request| {
         let body:Value=request.body_json().unwrap();let metadata=&body["client_metadata"];
         let items=vec![json!({"type":"function_call","id":"fc_fixture","call_id":"call_fixture","name":"shell","arguments":json!({"command":command}).to_string()})];
-        let events=vec![json!({"type":"response.created","response":{"id":"resp_opaque"}}),
+        let events=[json!({"type":"response.created","response":{"id":"resp_opaque"}}),
             json!({"type":"response.function_call_arguments.delta","delta":"original arguments","call_id":"call_fixture"}),
             json!({"type":"response.future_extension","payload":{"keep":[1,true]}}),
             json!({"type":"response.output_item.done","item":items[0]}),
@@ -181,7 +190,7 @@ async fn cpa_native_completion_preserves_tools_extensions_and_identity() -> Resu
     let final_event: Value = serde_json::from_str(
         body.lines()
             .filter_map(|line| line.strip_prefix("data: "))
-            .last()
+            .next_back()
             .unwrap(),
     )?;
     assert_eq!(final_event["response"]["session_id"], "source-session");
@@ -333,7 +342,7 @@ async fn cpa_native_eof_is_failure_and_internal_errors_are_diagnostics() -> Resu
                 "data: {{\"type\":\"response.failed\",\"response\":{{\"id\":\"internal\",\"error\":{{\"code\":\"server_error\",\"message\":\"internal recovery\"}}}}}}\n\n{}",
                 completed(json!({"id":"success"}))
             ),
-            true,
+            false,
         ),
     ] {
         let upstream = MockServer::start().await;
@@ -350,8 +359,8 @@ async fn cpa_native_eof_is_failure_and_internal_errors_are_diagnostics() -> Resu
             assert_eq!(result.reply["result"]["statusCode"], 200);
             assert!(!String::from_utf8(result.body)?.contains("response.failed"));
         } else {
-            assert!(result.reply.get("error").is_some(), "{}", result.reply);
-            assert!(result.body.is_empty());
+            assert!(result.error.is_some() || result.reply.get("error").is_some());
+            assert!(!String::from_utf8(result.body)?.contains("response.completed"));
         }
         assert!(result.logs.iter().any(|log| log["kind"] == "body"));
     }
@@ -487,8 +496,10 @@ async fn cpa_native_concurrent_source_and_credential_isolation() -> Result<()> {
     }
     let mut done = std::collections::BTreeMap::new();
     let mut mapped = std::collections::BTreeMap::new();
+    let mut completed = std::collections::BTreeSet::new();
+    let mut diagnostics = std::collections::BTreeSet::new();
     timeout(Duration::from_secs(30), async {
-        while done.len() < 4 {
+        while completed.len() < 4 || diagnostics.len() < 4 {
             let Some(Ok(Message::Text(text))) = ws.next().await else {
                 continue;
             };
@@ -505,6 +516,10 @@ async fn cpa_native_concurrent_source_and_credential_isolation() -> Result<()> {
                     serde_json::from_str(message["params"]["body"].as_str().unwrap())?;
                 mapped.insert(id, body["client_metadata"]["session_id"].clone());
             } else if message["method"] == "cpa/inference/completed" {
+                completed.insert(id);
+            } else if message["method"] == "cpa/inference/diagnostics/completed" {
+                diagnostics.insert(id);
+            } else if message["method"] == "cpa/inference/event" {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(message["params"]["bodyBase64"].as_str().unwrap())?;
                 let event: Value = serde_json::from_str(
@@ -538,5 +553,306 @@ async fn cpa_native_concurrent_source_and_credential_isolation() -> Result<()> {
         1
     );
     assert_eq!(auth.len(), 4);
+    Ok(())
+}
+
+#[path = "streaming_tests.rs"]
+mod streaming_tests;
+
+#[tokio::test]
+async fn cpa_native_partial_output_error_returns_without_retry() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let sequence = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    Mock::given(method("POST")).and(path("/v1/responses")).respond_with(move |request: &wiremock::Request| {
+        let first = sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+        let body: Value = request.body_json().unwrap();
+        if !first { assert!(!body["input"].to_string().contains("failed_tool")); }
+        let response_id = if first { "failed_response" } else { "successful_response" };
+        let call_id = if first { "failed_tool" } else { "successful_tool" };
+        let item = json!({"type":"function_call","id":call_id,"call_id":call_id,"name":"shell","arguments":"{}"});
+        let mut events = vec![
+            json!({"type":"response.created","response":{"id":response_id}}),
+            json!({"type":"response.output_text.delta","delta":response_id}),
+            json!({"type":"response.function_call_arguments.delta","call_id":call_id,"delta":"{}"}),
+            json!({"type":"response.function_call_arguments.done","call_id":call_id,"arguments":"{}"}),
+            json!({"type":"response.output_item.done","item":item}),
+        ];
+        if !first { events.push(json!({"type":"response.completed","response":{"id":response_id,"output":[item]}})); }
+        ResponseTemplate::new(200).set_body_raw(events.iter().map(|event|format!("data: {event}\n\n")).collect::<String>(),"text/event-stream")
+    }).expect(1).mount(&upstream).await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["stream_max_retries"] = toml::Value::Integer(1);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut input = model_input();
+    input["tools"] = json!([{"type":"function","name":"shell","parameters":{"type":"object"}}]);
+    let result = exchange(&mut ws, rpc(input, 901)).await?;
+    assert!(result.error.is_some());
+    let body = std::str::from_utf8(&result.body)?;
+    assert!(body.contains("failed_response"));
+    assert!(body.contains("response.function_call_arguments.delta"));
+    assert!(body.contains("response.function_call_arguments.done"));
+    assert!(body.contains("response.output_item.done"));
+    assert!(!body.contains("response.completed") && !body.contains("successful_response"));
+    assert_eq!(
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/v1/responses")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_master_rejections_close_the_diagnostic_lifetime() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let home = TempDir::new()?;
+    let _runtime = server(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut malformed = rpc(model_input(), 902);
+    malformed["params"]["request"] = Value::Null;
+    let mut missing = rpc(model_input(), 903);
+    missing["params"]["credentialId"] = json!("missing.json");
+    for request in [malformed, missing] {
+        let result = exchange(&mut ws, request).await?;
+        assert!(result.reply.get("error").is_some());
+        assert!(result.body.is_empty());
+    }
+    Ok(())
+}
+
+#[test_case::test_case(401)]
+#[test_case::test_case(429)]
+#[test_case::test_case(503)]
+#[tokio::test]
+async fn cpa_native_http_errors_do_not_retry_and_preserve_the_original_response(
+    status: u16,
+) -> Result<()> {
+    let upstream = MockServer::start().await;
+    let original =
+        json!({"error":{"code":"fixture_error","message":"original upstream failure","future":17}})
+            .to_string();
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("retry-after", "9")
+                .insert_header("x-request-id", "original-request")
+                .set_body_raw(original.clone(), "application/json"),
+        )
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["request_max_retries"] = toml::Value::Integer(5);
+    config["model_providers"]["mock_provider"]["stream_max_retries"] = toml::Value::Integer(5);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let result = exchange(&mut ws, rpc(model_input(), 1001)).await?;
+    let error = &result.reply["error"]["data"];
+    assert_eq!(error["httpStatus"], status);
+    assert_eq!(error["body"], original);
+    assert_eq!(error["headers"]["retry-after"], json!(["9"]));
+    assert_eq!(
+        error["headers"]["x-request-id"],
+        json!(["original-request"])
+    );
+    assert!(error.get("nativeError").is_some());
+    assert!(result.body.is_empty());
+    Ok(())
+}
+
+#[test_case::test_case(401)]
+#[test_case::test_case(426)]
+#[test_case::test_case(503)]
+#[tokio::test]
+async fn cpa_native_websocket_handshake_error_never_reconnects_or_falls_back(
+    status: u16,
+) -> Result<()> {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("retry-after", "7")
+                .insert_header("x-request-id", "handshake-error")
+                .set_body_string("original handshake error"),
+        )
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["supports_websockets"] = toml::Value::Boolean(true);
+    config["model_providers"]["mock_provider"]["stream_max_retries"] = toml::Value::Integer(5);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let result = exchange(
+        &mut ws,
+        rpc(
+            json!({"model":"gpt-5.2","input":"fixture","stream":true}),
+            1002,
+        ),
+    )
+    .await?;
+    let error = &result.reply["error"]["data"];
+    assert_eq!(error["httpStatus"], status);
+    assert_eq!(error["headers"]["retry-after"], json!(["7"]));
+    assert_eq!(error["headers"]["x-request-id"], json!(["handshake-error"]));
+    assert!(error.get("nativeError").is_some());
+    assert!(result.body.is_empty());
+    Ok(())
+}
+
+#[test_case::test_case("generations")]
+#[test_case::test_case("edits")]
+#[tokio::test]
+async fn cpa_native_images_do_not_retry_failed_posts(operation: &str) -> Result<()> {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/images/{operation}")))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("retry-after", "5")
+                .set_body_string("original Images failure"),
+        )
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["request_max_retries"] = toml::Value::Integer(5);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut input = json!({"model":"gpt-image-2","prompt":"fixture"});
+    if operation == "edits" {
+        input["images"] = json!([{"image_url":"data:image/png;base64,aW1hZ2U="}]);
+    }
+    let mut request = rpc(input, 1003);
+    request["params"]["operation"] = json!(format!("images/{operation}"));
+    request["params"]["imageApi"] = json!("images");
+    let result = exchange(&mut ws, request).await?;
+    let error = &result.reply["error"]["data"];
+    assert_eq!(error["httpStatus"], 503);
+    assert_eq!(error["body"], "original Images failure");
+    assert_eq!(error["headers"]["retry-after"], json!(["5"]));
+    assert!(error.get("nativeError").is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_native_zero_retries_preserves_normal_redirects() -> Result<()> {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(307).insert_header(
+            "location",
+            format!("{}/redirected-responses", upstream.uri()),
+        ))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/redirected-responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            completed(json!({"id":"redirect-preserved"})),
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    let _runtime = server(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let result = exchange(&mut ws, rpc(model_input(), 1004)).await?;
+    assert!(result.error.is_none());
+    assert_eq!(result.reply["result"]["statusCode"], 200);
+    assert!(std::str::from_utf8(&result.body)?.contains("redirect-preserved"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_same_request_id_on_new_connection_has_independent_worker_routes() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let entered = std::sync::Arc::new(std::sync::Mutex::new(Some(entered)));
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: Value = request.body_json().unwrap();
+            if body["input"].to_string().contains("hold-first-request") {
+                if let Some(entered) = entered.lock().unwrap().take() {
+                    let _ = entered.send(());
+                }
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(120))
+                    .set_body_string("unused")
+            } else {
+                ResponseTemplate::new(200).set_body_raw(
+                    completed(json!({"id":"second-connection-success"})),
+                    "text/event-stream",
+                )
+            }
+        })
+        .expect(2)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    let _runtime = server(&upstream, &home).await?;
+    let mut first = connect(&home).await?;
+    let mut second = connect(&home).await?;
+    let mut first_request = rpc(model_input(), 1200);
+    first_request["params"]["request"]["input"] = json!("hold-first-request");
+    send(&mut first, first_request).await?;
+    timeout(Duration::from_secs(10), ready).await??;
+    let mut second_request = rpc(model_input(), 1200);
+    second_request["params"]["sessionId"] = json!("independent-second-session");
+    let result = exchange(&mut second, second_request).await?;
+    assert_eq!(result.reply["result"]["requestId"], "r-1200");
+    assert!(std::str::from_utf8(&result.body)?.contains("second-connection-success"));
+    assert!(result.logs.iter().all(|log| log["requestId"] == "r-1200"));
+    send(
+        &mut first,
+        json!({"id":1201,"method":"cpa/inference/cancel","params":{"requestId":"r-1200"}}),
+    )
+    .await?;
+    let first_error = receive(&mut first, "id", json!(1200)).await?;
+    assert_eq!(first_error["error"]["data"]["httpStatus"], 499);
     Ok(())
 }

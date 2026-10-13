@@ -185,6 +185,9 @@ impl InferenceSession {
                 kind.clone(),
             ))
         });
+        let mut provider_info = config.model_provider.clone();
+        provider_info.request_max_retries = Some(0);
+        provider_info.stream_max_retries = Some(0);
         let client = ModelClient::new(
             Some(auth),
             if config
@@ -196,7 +199,7 @@ impl InferenceSession {
                 AgentIdentityAuthPolicy::JwtOnly
             },
             ThreadId::from_string(&mapped.thread_id)?,
-            config.model_provider.clone(),
+            provider_info,
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,

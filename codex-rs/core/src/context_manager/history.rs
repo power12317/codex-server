@@ -613,18 +613,6 @@ impl ContextManager {
         Arc::unwrap_or_clone(self.items)
     }
 
-    /// Native history preparation without synthesizing results for caller-owned tools.
-    pub(crate) fn for_inference_prompt(
-        mut self,
-        input_modalities: &[InputModality],
-    ) -> Vec<ResponseItem> {
-        self.normalize_history_for_tools(input_modalities, false);
-        Arc::unwrap_or_clone(self.items)
-            .into_iter()
-            .map(ResponseItemEnvelope::into_item)
-            .collect()
-    }
-
     /// Iterates over raw response items without exposing their history envelopes.
     pub(crate) fn raw_items(
         &self,

@@ -1686,6 +1686,7 @@ impl ModelClientSession {
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
+        allow_recovery: bool,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.provider.auth_manager();
         let mut auth_recovery = auth_manager
@@ -1694,10 +1695,13 @@ impl ModelClientSession {
         let mut provider_auth_recovery_attempted = false;
         let mut pending_retry = PendingUnauthorizedRetry::default();
         loop {
-            let client_setup = self
+            let mut client_setup = self
                 .client
                 .current_client_setup(ClientRouting::Workspace)
                 .await?;
+            if !allow_recovery {
+                client_setup.api_provider.retry.max_attempts = 0;
+            }
             let include_internal = self
                 .client
                 .state
@@ -1707,11 +1711,30 @@ impl ModelClientSession {
                 .client
                 .responses_headers(client_setup.auth.as_ref(), &model_info.slug);
             tracing::Span::current().record("api.path", "/responses");
-            let transport = self.client.build_api_transport(
-                &client_setup.api_provider,
-                "/responses",
-                client_setup.redirect_policy,
-            )?;
+            let transport = if allow_recovery {
+                self.client.build_api_transport(
+                    &client_setup.api_provider,
+                    "/responses",
+                    client_setup.redirect_policy,
+                )?
+            } else {
+                let client = codex_login::default_client::create_client_for_route_once(
+                    &self.client.http_client_factory,
+                    &client_setup.api_provider.url_for_path("/responses"),
+                    ClientRouteClass::Api,
+                    if client_setup
+                        .api_provider
+                        .headers
+                        .contains_key(codex_model_provider::ACCOUNT_ROUTING_HEADER)
+                    {
+                        ClientRedirectPolicy::Reject
+                    } else {
+                        client_setup.redirect_policy
+                    },
+                )
+                .map_err(std::io::Error::from)?;
+                ReqwestTransport::from_http_client(client)
+            };
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
                 client_setup.api_auth.as_ref(),
@@ -1796,7 +1819,11 @@ impl ModelClientSession {
                 client_setup.api_auth,
             )
             .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
-            let stream_result = client.stream_request(request, options).await;
+            let stream_result = if allow_recovery {
+                client.stream_request(request, options).await
+            } else {
+                client.stream_request_once(request, options).await
+            };
 
             match stream_result {
                 Ok(stream) => {
@@ -1810,11 +1837,12 @@ impl ModelClientSession {
                     return Ok(stream);
                 }
                 Err(ApiError::Transport(unauthorized_transport))
-                    if self
-                        .client
-                        .state
-                        .provider
-                        .is_recoverable_auth_error(&unauthorized_transport) =>
+                    if allow_recovery
+                        && self
+                            .client
+                            .state
+                            .provider
+                            .is_recoverable_auth_error(&unauthorized_transport) =>
                 {
                     let response_debug_context =
                         extract_response_debug_context(&unauthorized_transport);
@@ -1879,6 +1907,7 @@ impl ModelClientSession {
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
+        allow_recovery: bool,
     ) -> Result<WebsocketStreamOutcome> {
         let after_prewarm = !warmup && self.websocket_session.last_response_from_untraced_warmup;
         let provider = Arc::clone(&self.client.state.provider);
@@ -1955,12 +1984,13 @@ impl ModelClientSession {
             {
                 Ok(_) => {}
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
-                    if status == StatusCode::UPGRADE_REQUIRED =>
+                    if allow_recovery && status == StatusCode::UPGRADE_REQUIRED =>
                 {
                     return Ok(WebsocketStreamOutcome::FallbackToHttp);
                 }
                 Err(ApiError::Transport(unauthorized_transport))
-                    if provider.is_recoverable_auth_error(&unauthorized_transport) =>
+                    if allow_recovery
+                        && provider.is_recoverable_auth_error(&unauthorized_transport) =>
                 {
                     pending_retry = PendingUnauthorizedRetry::from_recovery(
                         handle_unauthorized(
@@ -2220,6 +2250,7 @@ impl ModelClientSession {
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
                 &disabled_trace,
+                /*allow_recovery*/ true,
             )
             .await
         {
@@ -2279,6 +2310,7 @@ impl ModelClientSession {
                             /*warmup*/ false,
                             request_trace,
                             inference_trace,
+                            /*allow_recovery*/ true,
                         )
                         .await?
                     {
@@ -2298,9 +2330,62 @@ impl ModelClientSession {
                     service_tier,
                     responses_metadata,
                     inference_trace,
+                    /*allow_recovery*/ true,
                 )
                 .await
             }
+        }
+    }
+
+    /// One native send, without authentication replay, transport retry or HTTP fallback.
+    /// This entry is for external retry owners. Normal CLI calls keep using `stream`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn stream_once(
+        &mut self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        summary: ReasoningSummaryConfig,
+        service_tier: Option<String>,
+        responses_metadata: &CodexResponsesMetadata,
+        inference_trace: &InferenceTraceContext,
+    ) -> Result<ResponseStream> {
+        if self.client.responses_websocket_enabled() {
+            let outcome = self
+                .stream_responses_websocket(
+                    prompt,
+                    model_info,
+                    session_telemetry,
+                    effort,
+                    summary,
+                    service_tier,
+                    responses_metadata,
+                    /*warmup*/ false,
+                    current_span_w3c_trace_context(),
+                    inference_trace,
+                    /*allow_recovery*/ false,
+                )
+                .await?;
+            match outcome {
+                WebsocketStreamOutcome::Stream(stream) => Ok(stream),
+                WebsocketStreamOutcome::FallbackToHttp => {
+                    unreachable!("single send returns the original handshake error")
+                }
+            }
+        } else {
+            self.stream_responses_api(
+                prompt,
+                model_info,
+                session_telemetry,
+                effort,
+                summary,
+                service_tier,
+                responses_metadata,
+                inference_trace,
+                /*allow_recovery*/ false,
+            )
+            .await
         }
     }
 

@@ -96,6 +96,67 @@ impl CodexImagesBackend {
         Ok(ImagesClient::new(transport, provider, auth))
     }
 
+    async fn client_once(
+        &self,
+        path: &str,
+    ) -> Result<ImagesClient<ReqwestTransport>, ImageBackendError> {
+        let mut provider = self
+            .provider
+            .api_provider()
+            .await
+            .map_err(|err| ImageBackendError::from_message(err.to_string()))?;
+        provider.retry.max_attempts = 0;
+        let auth = self
+            .provider
+            .api_auth()
+            .await
+            .map_err(|err| ImageBackendError::from_message(err.to_string()))?;
+        let client = codex_login::default_client::create_client_for_route_once(
+            &self.http_client_factory,
+            &provider.url_for_path(path),
+            ClientRouteClass::Api,
+            codex_login::default_client::ClientRedirectPolicy::Default,
+        )
+        .map_err(|err| ImageBackendError::from_message(err.to_string()))?;
+        Ok(ImagesClient::new(
+            ReqwestTransport::from_http_client(client),
+            provider,
+            auth,
+        ))
+    }
+
+    /// Native unary generation with an external retry owner.
+    pub async fn generate_once(
+        &self,
+        request: ImageGenerationRequest,
+        turn_id: &str,
+    ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
+        self.client_once("/images/generations")
+            .await?
+            .generate(
+                &request,
+                image_request_headers(self.originator.as_deref(), turn_id),
+            )
+            .await
+            .map_err(ImageBackendError::from_image_request)
+    }
+
+    /// Native unary editing with an external retry owner.
+    pub async fn edit_once(
+        &self,
+        request: ImageEditRequest,
+        turn_id: &str,
+    ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
+        self.client_once("/images/edits")
+            .await?
+            .edit(
+                &request,
+                image_request_headers(self.originator.as_deref(), turn_id),
+            )
+            .await
+            .map_err(ImageBackendError::from_image_request)
+    }
+
     /// Sends a standalone image generation request through the configured Images client.
     pub async fn generate(
         &self,

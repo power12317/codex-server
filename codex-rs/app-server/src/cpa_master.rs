@@ -28,7 +28,66 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use worker::Worker;
 
-type Client = mpsc::Sender<Value>;
+#[derive(Clone)]
+struct Client {
+    business: mpsc::UnboundedSender<Value>,
+    diagnostics: mpsc::UnboundedSender<Value>,
+}
+
+struct ClientMessages {
+    business: mpsc::UnboundedReceiver<Value>,
+    diagnostics: mpsc::UnboundedReceiver<Value>,
+}
+
+impl Client {
+    fn channel() -> (Self, ClientMessages) {
+        let (business, business_rx) = mpsc::unbounded_channel();
+        let (diagnostics, diagnostics_rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                business,
+                diagnostics,
+            },
+            ClientMessages {
+                business: business_rx,
+                diagnostics: diagnostics_rx,
+            },
+        )
+    }
+
+    async fn send(&self, message: Value) -> Result<(), mpsc::error::SendError<Value>> {
+        let sender = if matches!(
+            message["method"].as_str(),
+            Some("cpa/inference/upstream" | "cpa/inference/diagnostics/completed")
+        ) {
+            &self.diagnostics
+        } else {
+            &self.business
+        };
+        sender.send(message)
+    }
+
+    fn same_channel(&self, other: &Self) -> bool {
+        self.business.same_channel(&other.business)
+    }
+
+    async fn diagnostics_completed(&self, request_id: &str) {
+        let _ = self.send(json!({"method":"cpa/inference/diagnostics/completed","params":{"requestId":request_id}})).await;
+    }
+}
+
+impl ClientMessages {
+    async fn recv(&mut self) -> Option<Value> {
+        // Prioritize queued business frames. A write already in progress on the
+        // shared WebSocket still has to finish before another frame can be sent.
+        tokio::select! {
+            biased;
+            Some(message) = self.business.recv() => Some(message),
+            Some(message) = self.diagnostics.recv() => Some(message),
+            else => None,
+        }
+    }
+}
 
 struct Master {
     shutdown: CancellationToken,
@@ -211,7 +270,7 @@ impl Master {
 
     async fn connection(self: Arc<Self>, socket: WebSocket) {
         let (mut sink, mut source) = socket.split();
-        let (client, mut messages) = mpsc::channel::<Value>(/*buffer*/ 32);
+        let (client, mut messages) = Client::channel();
         let writer = tokio::spawn(async move {
             while let Some(message) = messages.recv().await {
                 if sink
@@ -282,14 +341,32 @@ impl Master {
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
+                        let inference = message["method"] == "cpa/inference/start";
                         if let Err(err) = master.dispatch(message, &client).await {
-                            crate::cpa_bridge::record_request(
-                                &credential_id,
-                                &request_id,
-                                "cpa.master.error",
-                                json!({"error": err.to_string(), "rpcId": id}),
-                            );
+                            let details = json!({"error": err.to_string(), "rpcId": id});
+                            let log_request_id = request_id.clone();
+                            tokio::task::spawn_blocking(move || {
+                                crate::cpa_bridge::record_request(
+                                    &credential_id,
+                                    &log_request_id,
+                                    "cpa.master.error",
+                                    details,
+                                );
+                            });
                             let _ = client.send(error(id, 503, &err.to_string())).await;
+                            if inference {
+                                let workers: Vec<_> =
+                                    master.workers.lock().await.values().cloned().collect();
+                                let mut active = false;
+                                for worker in workers {
+                                    active |= worker.owns_request(&request_id, &client).await;
+                                }
+                                // A duplicate start on the same connection must not
+                                // terminate the original request's diagnostic FIFO.
+                                if !active {
+                                    client.diagnostics_completed(&request_id).await;
+                                }
+                            }
                         }
                     });
                 }
@@ -316,6 +393,10 @@ impl Master {
                 json!({"result":crate::cpa_bridge::capabilities()})
             }
             "cpa/inference/start" | "cpa/auth/login/start" => {
+                if method == "cpa/inference/start" {
+                    let _: codex_app_server_protocol::CpaInferenceStartParams =
+                        serde_json::from_value(params.clone())?;
+                }
                 let id = params["credentialId"]
                     .as_str()
                     .context("credentialId required")?;

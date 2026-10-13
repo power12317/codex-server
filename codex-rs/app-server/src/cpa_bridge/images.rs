@@ -58,7 +58,7 @@ pub(super) async fn execute(
         .ok_or_else(|| failure(400, "image turn id is required"))?;
     if params.operation == "images/edits" {
         backend
-            .edit(
+            .edit_once(
                 ImageEditRequest {
                     images: required(fields, "images")?,
                     prompt: request.prompt,
@@ -72,7 +72,7 @@ pub(super) async fn execute(
             )
             .await
     } else {
-        backend.generate(request, turn_id).await
+        backend.generate_once(request, turn_id).await
     }
     .map(|_| ())
     .map_err(|error| native_failure(error.codex_error()))

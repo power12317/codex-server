@@ -1,6 +1,46 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[tokio::test]
+async fn cpa_business_precedes_queued_diagnostics_without_losing_the_tail() {
+    let (client, mut messages) = Client::channel();
+    for sequence in 0..100 {
+        client
+            .send(json!({"method":"cpa/inference/upstream","params":{"sequence":sequence}}))
+            .await
+            .unwrap();
+    }
+    client.diagnostics_completed("r").await;
+    client
+        .send(json!({"method":"cpa/inference/event"}))
+        .await
+        .unwrap();
+    client
+        .send(json!({"method":"cpa/inference/completed"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        messages.recv().await.unwrap()["method"],
+        "cpa/inference/event"
+    );
+    assert_eq!(
+        messages.recv().await.unwrap()["method"],
+        "cpa/inference/completed"
+    );
+    for sequence in 0..100 {
+        assert_eq!(
+            messages.recv().await.unwrap()["params"]["sequence"],
+            sequence
+        );
+    }
+    assert_eq!(
+        messages.recv().await.unwrap()["method"],
+        "cpa/inference/diagnostics/completed"
+    );
+    drop(client);
+    assert!(messages.recv().await.is_none());
+}
+
 #[test]
 fn scan_uses_relative_credential_ids_and_effective_flags() -> anyhow::Result<()> {
     let directory = tempfile::TempDir::new()?;
@@ -108,7 +148,7 @@ async fn local_bridge_accepts_messages_larger_than_default_limits() -> anyhow::R
             .context("follow-up RPC response missing")??;
         let response: Value = serde_json::from_str(response.to_text()?)?;
         assert_eq!(response["id"], json!(2));
-        assert_eq!(response["result"]["protocolVersion"], json!(4));
+        assert_eq!(response["result"]["protocolVersion"], json!(5));
         socket.close(None).await?;
         Ok(())
     }

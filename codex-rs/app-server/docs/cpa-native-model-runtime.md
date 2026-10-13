@@ -1,6 +1,6 @@
-# Experimental native model execution (IPC v4)
+# Experimental native model execution (IPC v5)
 
-This document describes the sole model execution path and IPC v4 contract on
+This document describes the sole model execution path and IPC v5 contract on
 `codex/native-model-runtime`.
 
 The fixed native reference is Codex `0.162.1`, commit
@@ -13,29 +13,30 @@ official comparison, regression coverage and delivery limits.
 ## Execution boundary
 
 Caller input is mapped to native `Prompt`, model controls and session metadata.
-`InferenceSession::execute` calls `ModelClientSession::stream` through the native
-attempt driver. The existing Agent sampler also uses that driver and the same
-recovery implementation. Native provider configuration, authentication recovery,
-compression, HTTP/WebSocket selection and fallback retain their original owners.
-The bridge does not construct a separate inference HTTP client or patch the
-serialized native request.
+`InferenceSession::execute` calls the native model client's single-attempt entry.
+The existing `request_max_retries` and `stream_max_retries` are zero for this
+model-only client. HTTP transport retries, 401 recovery/resend, stream recovery,
+WebSocket reconnect after failure and WebSocket-to-HTTP fallback do not replay a
+worker invocation. The default CLI/Agent entry retains its original recovery.
+
+Native serialization, authentication before a send, compression, transport
+selection, cookies, configured proxy routing and normal redirect policy are
+retained. The bridge does not build its own inference HTTP client or patch the
+final wire DTO. The native HTTP builder disables protocol-level error retries;
+normal redirects are not reclassified as retry failures. Connection preparation
+and control-plane model/auth discovery are distinct from repeating model calls.
 
 A model-only invocation does not create `ToolCallRuntime`, start an Agent turn,
-execute caller commands or persist a conversation. Function/custom tools are
-model data, including tools named `shell`, `exec` and `apply_patch`. Their results
-come from a subsequent caller request. Native history processing is shared for
-recovery, except that the model-only entry never synthesizes aborted tool results. Client
-tool calls from an unsuccessful response are uncommitted: they are neither
-delivered nor inserted as unpaired calls into recovery history. Completed text
-items remain in native recovery history. This is an explicit client-tool handoff
-boundary, not a claim of equivalence to the full Agent's tool execution/history.
-Caller history and native compaction items remain supported; standalone
-`responses/compact` is not an operation in this protocol.
+execute caller commands or persist a conversation. Function/custom tools,
+including `shell`, `exec` and `apply_patch`, are data. Deltas and ready events
+stream immediately. Results come from a subsequent caller request; no missing
+or aborted tool output is synthesized. No recovery-history buffer is needed.
+Standalone `responses/compact` is not an operation in this protocol.
 
-A logical caller thread reuses its native model client, including fallback state,
-across turn contexts. Each turn serializes access to its own native client session.
-Independent contexts remain concurrent. Existing credential isolation, synthetic
-turn lifetime and title-request ephemerality remain in force.
+Logical threads retain their native client and turn state across explicit caller
+requests. Each turn serializes its client session; independent contexts remain
+concurrent. Credential isolation, synthetic turn lifetime and title-request
+ephemerality are unchanged. The worker never silently retries a failed call.
 
 ### WebSocket turn-state metadata compatibility
 
@@ -47,62 +48,89 @@ baseline accepts only the former for turn-state extraction.
 The existing native `OnceLock` still retains the first value within the turn.
 Subsequent requests on the same native session send that value in their existing
 WebSocket client metadata; later tickets do not overwrite it. Other metadata,
-model events, sending, recovery and completion retain their existing handling.
+model events and native request identity retain their existing handling.
+The separate single-attempt policy below applies to this worker entry.
 This does not add handshake-header capture, HTTP SSE metadata capture, a separate
 ticket cache, or a runtime switch. Official executable names and version remain
 unchanged.
 
 ## IPC contract and delivery
 
-The IPC contract is `protocolVersion: 4`: successful completion carries the final
-business body, and upstream diagnostics carry their actual transport. Native
-model execution is the only implementation; there is no execution capability
-switch, legacy sender or CPA direct model fallback.
+The IPC contract is `protocolVersion: 5`. Native model execution is the only
+implementation; there is no execution capability switch, legacy sender or CPA
+direct model fallback. The official runtime version remains `0.162.1`.
 
-A successful invocation returns `cpa/inference/start` with public response headers,
-followed by `cpa/inference/completed` containing `requestId` and `bodyBase64`.
-`bodyBase64` is required, including when the final byte sequence is empty.
-The completion frame carries the final business bytes and native success together.
-EOF or HTTP 200 alone cannot produce this notification. Native final errors use
-the authoritative RPC error's `httpStatus`, `body` and `headers`; diagnostic errors
-from earlier attempts must not overwrite that result.
+The delivery sequence is:
 
-If a worker exits after the start reply but before the completion frame, the
-supervisor sends `cpa/inference/error` for the interrupted IPC transfer. This
-notification reports worker loss only; model failure and cancellation use the
-start RPC error. It does not trigger replay or choose another execution path.
+1. `cpa/inference/start` replies with public headers when the first accepted native
+   business event is ready. It does not wait for model completion or diagnostics.
+2. `cpa/inference/event {requestId, bodyBase64}` carries incremental accepted
+   business bytes. Responses events are SSE even with a WebSocket upstream.
+3. `cpa/inference/completed {requestId}` reports terminal native success, without
+   a body field or replay of previously delivered events. HTTP 200 and EOF alone
+   do not establish success.
+4. `cpa/inference/diagnostics/completed {requestId}` ends the independent diagnostic
+   FIFO. Keep reading its tail without delaying downstream business output.
 
-Accepted events are buffered per attempt and released after native model success.
-This delays first-byte delivery until that success. It is not real-time token
-streaming. Internal errors and failed attempt bytes remain diagnostic data.
-Accepted unknown extensions and function/custom/image deltas retain their JSON
-payloads; upstream WebSocket events are framed as downstream SSE. Existing
-identity projection applies only to recognized identity fields, never opaque
-response IDs, call IDs, arguments or user text.
+There is no `attempt` notification or `attemptId`: each invocation has one native
+attempt. Errors are returned to CPA, which applies its existing error/retry rules.
+This contract does not introduce a new CPA retry engine or force every native
+error to be non-retryable. Once downstream content is visible, the caller must
+report the stream error rather than append a replacement response to it. A client
+may explicitly retry with a new request. An IPC failure with an unknown native
+outcome must not be treated as proof that the model call did not occur.
+
+The master correlates worker requests using its private RPC sequence. It restores
+the source request ID on all public messages, allowing CPA to reuse that ID on a
+new connection while the previous diagnostic tail is pending. Same-connection
+active IDs remain unique; cancellation targets only that connection's invocation.
+The stderr `cpa.master.request` record retains the source ID in `rpcRequestId`
+and the private worker ID in `details.workerRequestId`, so Docker logs remain
+traceable from a CPA request without adding a public protocol field.
+
+### Errors and immediate delivery
+
+Before start, a failure is the start RPC error. After start it is
+`cpa/inference/error {requestId, httpStatus, message, body?, headers?, nativeError?}`.
+The original native HTTP status, response body and headers are preserved before
+typed error classification can discard details. Rejected SSE/WS response payloads
+retain their original JSON body and supplied error headers. `nativeError` is the
+native typed classification. Source identity restoration still applies only to
+recognized fields, not arbitrary text or opaque IDs.
+
+The native HTTP parser returns a rejected response immediately in this entry;
+it does not wait for EOF or let a later completed event hide the failure. The
+ordinary CLI retains its original parser behavior. Worker loss ends unfinished
+business and diagnostics without reversing an already delivered completion.
+
+All accepted nonterminal events, including function/custom argument done and
+client-tool output-item done, stream in observed order. Only terminal response
+events wait for the native final result. No tool-specific buffer or completion
+gate remains. The worker does not execute tools or invent their results.
 
 ## Supported input
 
-| Input | Native mapping / constraint |
-| --- | --- |
-| `model` | Selects native model information from the worker's model manager. |
-| `input` | Text or a native `ResponseItem` array. Message shorthand is normalized once. Unknown or lossy typed input fields are rejected. |
-| `instructions` | Native prompt base instructions. |
-| Function/custom/namespace tools | Native `ToolSpec` declarations, without registering executors. |
-| `web_search`, `tool_search` | Native declarations, subject to their typed schema. |
-| Hosted `image_generation` declaration | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry. |
-| `tool_choice` | Absent or `auto`; other choices cannot be expressed by this native prompt entry and are rejected. |
-| `parallel_tool_calls` | Native prompt preference; native model policy still applies (including Lite). |
-| `reasoning.effort`, `reasoning.summary` | Native request controls; defaults come from worker configuration/native model policy. |
-| `reasoning.context` | Optional assertion of the context derived by the native builder. It cannot enable Lite or override native configuration. |
-| `text.format` | `json_schema`, its schema and strictness; native schema name is `codex_output_schema`. |
-| `text.verbosity` | Native client configuration for this invocation, with worker/model defaults when absent. The client view retains shared authentication/fallback state; the native builder still enforces model support. |
-| `service_tier` | Native model tier resolution. |
-| `include` | If supplied, must match native `reasoning.encrypted_content` inclusion. |
-| `store`, `background` | Only `false` is compatible. |
-| `stream` | A downstream delivery preference; native model execution still owns its upstream transport. |
-| Session/thread/turn provenance | Existing identity mapping and source response projection. Worker-owned authentication/device/routing fields cannot be overridden. |
-| Existing environment date/time blocks | Replace recognized current context fields in place using the worker's local time zone. No additional context message is appended. |
-| Arbitrary wire extensions, persistent response state, unsupported tool choices | Explicit input error; no final-wire overlay or alternative sender. |
+| Input                                                                          | Native mapping / constraint                                                                                                                                                                            |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `model`                                                                        | Selects native model information from the worker's model manager.                                                                                                                                      |
+| `input`                                                                        | Text or a native `ResponseItem` array. Message shorthand is normalized once. Unknown or lossy typed input fields are rejected.                                                                         |
+| `instructions`                                                                 | Native prompt base instructions.                                                                                                                                                                       |
+| Function/custom/namespace tools                                                | Native `ToolSpec` declarations, without registering executors.                                                                                                                                         |
+| `web_search`, `tool_search`                                                    | Native declarations, subject to their typed schema.                                                                                                                                                    |
+| Hosted `image_generation` declaration                                          | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry.                                                                                 |
+| `tool_choice`                                                                  | Absent or `auto`; other choices cannot be expressed by this native prompt entry and are rejected.                                                                                                      |
+| `parallel_tool_calls`                                                          | Native prompt preference; native model policy still applies (including Lite).                                                                                                                          |
+| `reasoning.effort`, `reasoning.summary`                                        | Native request controls; defaults come from worker configuration/native model policy.                                                                                                                  |
+| `reasoning.context`                                                            | Optional assertion of the context derived by the native builder. It cannot enable Lite or override native configuration.                                                                               |
+| `text.format`                                                                  | `json_schema`, its schema and strictness; native schema name is `codex_output_schema`.                                                                                                                 |
+| `text.verbosity`                                                               | Native client configuration for this invocation, with worker/model defaults when absent. The client view retains shared authentication/session state; the native builder still enforces model support. |
+| `service_tier`                                                                 | Native model tier resolution.                                                                                                                                                                          |
+| `include`                                                                      | If supplied, must match native `reasoning.encrypted_content` inclusion.                                                                                                                                |
+| `store`, `background`                                                          | Only `false` is compatible.                                                                                                                                                                            |
+| `stream`                                                                       | A downstream delivery preference; native model execution still owns its upstream transport.                                                                                                            |
+| Session/thread/turn provenance                                                 | Existing identity mapping and source response projection. Worker-owned authentication/device/routing fields cannot be overridden.                                                                      |
+| Existing environment date/time blocks                                          | Replace recognized current context fields in place using the worker's local time zone. No additional context message is appended.                                                                      |
+| Arbitrary wire extensions, persistent response state, unsupported tool choices | Explicit input error; no final-wire overlay or alternative sender.                                                                                                                                     |
 
 Native additional-tool and compaction history items can also be supplied directly
 in `input`. A successful controlled mock test proves the mapping and native path;
@@ -120,15 +148,23 @@ image extension. No local image tool is installed or executed.
 - `mask`, `partial_images`, `output_format`, `output_compression` and arbitrary extensions are rejected.
 
 After the native backend validates success, the original JSON response is delivered
-atomically, preserving response fields outside the typed image DTO.
+as a JSON business event followed by the payload-free completion, preserving
+response fields outside the typed image DTO. The native Images backend is unary;
+this does not claim incremental upstream image generation.
 
 ## Diagnostics
 
 `upstreamLogs` and `upstreamBodyLogs` are true. `cpa/inference/upstream` identifies
 actual `transport: "http" | "websocket"` and has `request`, `response`, `body` and
-`error` variants. `body` notifications contain diagnostic `bodyBase64` for each
-attempt (native HTTP error bodies retain the native text-decoding representation). These notifications are never business completion. CPA must not log the
+`error` variants. `body` notifications contain diagnostic `bodyBase64` for the
+request (native HTTP error bodies retain the native text-decoding representation). These notifications are never business completion. CPA must not log the
 final business bytes a second time when `upstreamBodyLogs` is true.
+
+Business and diagnostics use separate unbounded queues. The worker allows one
+acknowledged diagnostic write at a time; the master prioritizes queued business
+frames. Business does not wait for diagnostic callbacks or FIFO drain. They still
+share a physical stdio/WebSocket writer: an in-progress write cannot be preempted,
+so physical head-of-line blocking is not eliminated.
 
 Request diagnostics include the native encoded bytes in `bodyBase64`; readable
 `body` is included when those bytes are UTF-8. Decoding for a log must not alter
@@ -163,7 +199,7 @@ Connect to `ws://127.0.0.1:38317/cpa/v1/ws`, send `initialize`, then the
 {"id":2,"method":"cpa/capabilities/read","params":{}}
 ```
 
-After checking the v4 message contract, submit a request for an enabled credential
+After checking the v5 message contract, submit a request for an enabled credential
 file already managed by the service:
 
 ```json
@@ -193,14 +229,15 @@ file already managed by the service:
 thread may have a different thread ID. Credentials and installation identity are
 owned by the worker and are not supplied in the business request.
 
-The client may receive diagnostic `cpa/inference/upstream` notifications while
-waiting. Success requires both the start response and the matching completion
-notification. Decode `completed.params.bodyBase64` as the final SSE payload (or
-JSON for standalone Images). An authoritative RPC error ends the invocation.
-Use `cpa/inference/cancel` with `{"requestId":"request-1"}` to cancel it; closing
-the connection also cancels its active work. Do not silently replay uncertain
+Register handlers before starting inference: diagnostic notifications may arrive
+before start. Consume business `event` frames incrementally and associate them
+for their `requestId`; `completed` reports success without replaying the body.
+Continue reading diagnostics until `diagnostics/completed`, even after business
+success/error. An early RPC error also has a diagnostic tail for a valid request
+ID. Use `cpa/inference/cancel` with `{"requestId":"request-1"}` to cancel it;
+closing the connection cancels active work. Never silently replay uncertain
 requests after an IPC failure.
 
 The existing credential reload and manual OAuth methods retain their v3 field
-shapes; their capability result now advertises version 4. The native error's typed
+shapes; their capability result now advertises version 5. The native error's typed
 classification is additionally exposed as `error.data.nativeError` when available.

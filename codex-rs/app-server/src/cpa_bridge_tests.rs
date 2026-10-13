@@ -2,18 +2,19 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn completion_requires_the_atomic_body_even_when_empty() {
-    assert!(
-        serde_json::from_value::<CpaInferenceCompletedNotification>(json!({"requestId":"r"}))
-            .is_err()
-    );
+fn completion_is_a_native_outcome_without_a_replayed_body() {
     assert_eq!(
         serde_json::to_value(CpaInferenceCompletedNotification {
             request_id: "r".into(),
-            body_base64: String::new(),
         })
         .expect("completion"),
-        json!({"requestId":"r", "bodyBase64":""})
+        json!({"requestId":"r"})
+    );
+    assert!(
+        serde_json::from_value::<CpaInferenceCompletedNotification>(
+            json!({"requestId":"r", "bodyBase64":""})
+        )
+        .is_err()
     );
 }
 
@@ -22,7 +23,7 @@ fn capabilities_describe_the_single_runtime_contract() {
     assert_eq!(
         serde_json::to_value(capabilities()).expect("capabilities"),
         json!({
-            "protocolVersion": 4,
+            "protocolVersion": 5,
             "runtimeVersion": env!("CARGO_PKG_VERSION"),
             "upstreamRevision": UPSTREAM,
             "manualOAuth": true,

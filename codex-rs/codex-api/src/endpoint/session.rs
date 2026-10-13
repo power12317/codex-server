@@ -45,6 +45,11 @@ impl<T: HttpTransport> EndpointSession<T> {
         &self.provider
     }
 
+    pub(crate) fn without_retries(mut self) -> Self {
+        self.provider.retry.max_attempts = 0;
+        self
+    }
+
     fn make_request(
         &self,
         method: &Method,

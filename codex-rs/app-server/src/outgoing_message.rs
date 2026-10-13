@@ -131,6 +131,7 @@ pub(crate) struct OutgoingMessageSender {
     verification_connections: Mutex<HashSet<ConnectionId>>,
     next_server_request_id: AtomicI64,
     sender: mpsc::Sender<OutgoingEnvelope>,
+    cpa_diagnostics: OnceLock<mpsc::UnboundedSender<(ConnectionId, ServerNotification)>>,
     request_id_to_callback: Mutex<HashMap<RequestId, PendingCallbackEntry>>,
     /// Incoming requests that are still waiting on a final response or error.
     /// We keep them here because this is where responses, errors, and
@@ -247,10 +248,44 @@ impl OutgoingMessageSender {
             verification_connections: Mutex::new(HashSet::new()),
             next_server_request_id: AtomicI64::new(0),
             sender,
+            cpa_diagnostics: OnceLock::new(),
             request_id_to_callback: Mutex::new(HashMap::new()),
             request_contexts: Mutex::new(HashMap::new()),
             analytics_events_client,
         }
+    }
+
+    /// One diagnostic write at a time. A diagnostic backlog stays outside the
+    /// ordinary RPC/business queue, and its acknowledgement never blocks callers.
+    pub(crate) fn queue_cpa_diagnostic(
+        &self,
+        connection_id: ConnectionId,
+        notification: ServerNotification,
+    ) {
+        let queue = self.cpa_diagnostics.get_or_init(|| {
+            let (queue, mut receiver) =
+                mpsc::unbounded_channel::<(ConnectionId, ServerNotification)>();
+            let sender = self.sender.clone();
+            tokio::spawn(async move {
+                while let Some((connection_id, notification)) = receiver.recv().await {
+                    let (write_complete_tx, write_complete_rx) = oneshot::channel();
+                    if sender
+                        .send(OutgoingEnvelope::ToConnection {
+                            connection_id,
+                            message: timestamped_server_notification(notification),
+                            write_complete_tx: Some(write_complete_tx),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let _ = write_complete_rx.await;
+                }
+            });
+            queue
+        });
+        let _ = queue.send((connection_id, notification));
     }
 
     pub(crate) async fn register_request_context(&self, request_context: RequestContext) {
@@ -1233,6 +1268,82 @@ mod tests {
             CommandExecutionApprovalDecision::AcceptForSession
         );
     }
+    #[tokio::test]
+    async fn cpa_blocked_diagnostic_ack_does_not_hold_business_delivery() {
+        use codex_app_server_protocol::CpaInferenceCompletedNotification;
+        use codex_app_server_protocol::CpaInferenceDiagnosticsCompletedNotification;
+        use codex_app_server_protocol::CpaInferenceUpstreamNotification;
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let outgoing = OutgoingMessageSender::new(tx, AnalyticsEventsClient::disabled());
+        let connection = ConnectionId(42);
+        outgoing.queue_cpa_diagnostic(
+            connection,
+            ServerNotification::CpaInferenceUpstream(CpaInferenceUpstreamNotification::Body {
+                request_id: "r".into(),
+                transport: "http".into(),
+                body_base64: "e30=".into(),
+            }),
+        );
+        let first = rx.recv().await.unwrap();
+        let OutgoingEnvelope::ToConnection {
+            write_complete_tx: Some(ack),
+            ..
+        } = first
+        else {
+            panic!("acknowledged diagnostic")
+        };
+        // Retain the first write acknowledgement while the diagnostic tail queues.
+        outgoing.queue_cpa_diagnostic(
+            connection,
+            ServerNotification::CpaInferenceDiagnosticsCompleted(
+                CpaInferenceDiagnosticsCompletedNotification {
+                    request_id: "r".into(),
+                },
+            ),
+        );
+        outgoing
+            .send_server_notification_to_connections(
+                &[connection],
+                ServerNotification::CpaInferenceCompleted(CpaInferenceCompletedNotification {
+                    request_id: "r".into(),
+                }),
+            )
+            .await;
+        let envelope = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let OutgoingEnvelope::ToConnection {
+            message: OutgoingMessage::AppServerNotification(envelope),
+            ..
+        } = envelope
+        else {
+            panic!("business notification")
+        };
+        assert!(matches!(
+            envelope.notification,
+            ServerNotification::CpaInferenceCompleted(_)
+        ));
+        assert!(rx.try_recv().is_err());
+        ack.send(()).unwrap();
+        let envelope = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let OutgoingEnvelope::ToConnection {
+            message: OutgoingMessage::AppServerNotification(envelope),
+            ..
+        } = envelope
+        else {
+            panic!("diagnostic tail")
+        };
+        assert!(matches!(
+            envelope.notification,
+            ServerNotification::CpaInferenceDiagnosticsCompleted(_)
+        ));
+    }
+
     #[tokio::test]
     async fn send_response_routes_to_target_connection() {
         let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(4);

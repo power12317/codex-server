@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
@@ -29,6 +30,57 @@ const upstream = createServer((request, response) => {
     response.writeHead(404, { 'content-type': 'application/json' });
     response.end('{}');
   }
+});
+// The built-in OpenAI provider uses WebSockets. The identity fixture supports
+// that native transport directly; it must not rely on error-driven HTTP fallback.
+const upstreamSockets = new Set();
+function serverFrame(payload, opcode = 1) {
+  const body = Buffer.from(payload);
+  const header = Buffer.alloc(body.length < 126 ? 2 : 4);
+  header[0] = 0x80 | opcode;
+  if (body.length < 126) header[1] = body.length;
+  else { header[1] = 126; header.writeUInt16BE(body.length, 2); }
+  return Buffer.concat([header, body]);
+}
+upstream.on('upgrade', (request, peer, head) => {
+  const accept = createHash('sha1').update(request.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  peer.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  upstreamSockets.add(peer);
+  peer.on('close', () => upstreamSockets.delete(peer));
+  peer.on('error', () => {});
+  let pending = head;
+  const consume = () => {
+    while (pending.length >= 2) {
+      const opcode = pending[0] & 15;
+      const masked = (pending[1] & 128) !== 0;
+      let length = pending[1] & 127;
+      let offset = 2;
+      if (length === 126) {
+        if (pending.length < 4) return;
+        length = pending.readUInt16BE(2); offset = 4;
+      } else if (length === 127) {
+        if (pending.length < 10) return;
+        length = Number(pending.readBigUInt64BE(2)); offset = 10;
+      }
+      const maskBytes = masked ? 4 : 0;
+      if (pending.length < offset + maskBytes + length) return;
+      const mask = pending.subarray(offset, offset + maskBytes);
+      const body = Buffer.from(pending.subarray(offset + maskBytes, offset + maskBytes + length));
+      pending = pending.subarray(offset + maskBytes + length);
+      if (masked) for (let i = 0; i < body.length; i++) body[i] ^= mask[i % 4];
+      if (opcode === 8) { peer.end(serverFrame(body, 8)); return; }
+      if (opcode === 9) { peer.write(serverFrame(body, 10)); continue; }
+      if (opcode !== 1) continue;
+      const message = JSON.parse(body.toString('utf8'));
+      assert.equal(message.type, 'response.create');
+      requests.push(request.headers);
+      peer.write(serverFrame(JSON.stringify({ type: 'response.completed', response: {
+        id: 'identity-check', output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      } })));
+    }
+  };
+  peer.on('data', chunk => { pending = Buffer.concat([pending, chunk]); consume(); });
+  consume();
 });
 let child;
 let socket;
@@ -134,6 +186,7 @@ chatgpt_base_url = "${url}"
   socket?.close();
   if (binary) child?.kill();
   else await execute('docker', ['rm', '-f', name]).catch(() => {});
+  for (const peer of upstreamSockets) peer.destroy();
   upstream.closeAllConnections();
   await new Promise(resolve => upstream.close(resolve));
   await rm(fixture, { recursive: true, force: true });

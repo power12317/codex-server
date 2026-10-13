@@ -1,4 +1,4 @@
-//! Opt-in CPA IPC v4. Native model execution without an agent/tool execution pipeline.
+//! CPA IPC v5. Native model execution with incremental business delivery.
 use crate::JsonSchema;
 use crate::TS;
 use serde::Deserialize;
@@ -74,20 +74,33 @@ pub struct CpaInferenceCancelResponse {}
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceCompletedNotification {
     pub request_id: String,
-    /// Final business bytes and native success are delivered atomically.
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct CpaInferenceEventNotification {
+    pub request_id: String,
     pub body_base64: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export_to = "v2/")]
-/// Supervisor transport failure after the start RPC has already succeeded.
-/// Native model failures and cancellation use the start RPC error instead.
+pub struct CpaInferenceDiagnosticsCompletedNotification {
+    pub request_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+/// Native failure, cancellation or worker loss after the start reply.
 pub struct CpaInferenceErrorNotification {
     pub body: Option<String>,
     pub headers: Option<BTreeMap<String, Vec<String>>>,
     pub request_id: String,
     pub http_status: u16,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub native_error: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

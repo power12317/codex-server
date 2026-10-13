@@ -8,6 +8,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 pub trait TransportObserver: Send + Sync {
+    /// Preserve the original error response before typed API classification.
+    fn http_error(&self, _status: u16, _headers: &HeaderMap, _body: Option<&str>) {}
     fn observes_request(&self, _method: &str, _url: &str) -> bool {
         true
     }

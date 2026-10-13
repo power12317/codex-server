@@ -40,6 +40,16 @@ pub fn spawn_response_stream(
     telemetry: Option<Arc<dyn SseTelemetry>>,
     turn_state: Option<Arc<OnceLock<String>>>,
 ) -> ResponseStream {
+    spawn_response_stream_with_errors(stream_response, idle_timeout, telemetry, turn_state, false)
+}
+
+pub(crate) fn spawn_response_stream_with_errors(
+    stream_response: StreamResponse,
+    idle_timeout: Duration,
+    telemetry: Option<Arc<dyn SseTelemetry>>,
+    turn_state: Option<Arc<OnceLock<String>>>,
+    return_errors_immediately: bool,
+) -> ResponseStream {
     let rate_limit_snapshots = parse_all_rate_limits(&stream_response.headers);
     let models_etag = stream_response
         .headers
@@ -94,6 +104,7 @@ pub fn spawn_response_stream(
             telemetry,
             safety_buffering_treatment,
             /*raw_events*/ None,
+            return_errors_immediately,
         )
         .await;
     }));
@@ -520,6 +531,7 @@ pub async fn process_sse(
         telemetry,
         SafetyBufferingTreatment::default(),
         /*raw_events*/ None,
+        /*return_errors_immediately*/ false,
     )
     .await;
 }
@@ -533,6 +545,7 @@ pub(super) async fn process_sse_with_treatment(
     telemetry: Option<Arc<dyn SseTelemetry>>,
     safety_buffering_treatment: SafetyBufferingTreatment,
     raw_events: Option<mpsc::Sender<Result<Value, ApiError>>>,
+    return_errors_immediately: bool,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
@@ -716,7 +729,7 @@ pub(super) async fn process_sse_with_treatment(
             Ok(None) => {}
             Err(error) => {
                 let error = error.into_api_error();
-                if matches!(error, ApiError::FlexUnavailable) {
+                if return_errors_immediately || matches!(error, ApiError::FlexUnavailable) {
                     let _ = tx_event.send(Err(error)).await;
                     return;
                 }

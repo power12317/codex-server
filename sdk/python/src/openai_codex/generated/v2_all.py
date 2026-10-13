@@ -1156,13 +1156,14 @@ class CpaInferenceCompletedNotification(BaseModel):
         extra="forbid",
         populate_by_name=True,
     )
-    body_base64: Annotated[
-        str,
-        Field(
-            alias="bodyBase64",
-            description="Final business bytes and native success are delivered atomically.",
-        ),
-    ]
+    request_id: Annotated[str, Field(alias="requestId")]
+
+
+class CpaInferenceDiagnosticsCompletedNotification(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
     request_id: Annotated[str, Field(alias="requestId")]
 
 
@@ -1175,6 +1176,16 @@ class CpaInferenceErrorNotification(BaseModel):
     headers: dict[str, Any] | None = None
     http_status: Annotated[int, Field(alias="httpStatus", ge=0)]
     message: str
+    native_error: Annotated[Any | None, Field(alias="nativeError")] = None
+    request_id: Annotated[str, Field(alias="requestId")]
+
+
+class CpaInferenceEventNotification(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    body_base64: Annotated[str, Field(alias="bodyBase64")]
     request_id: Annotated[str, Field(alias="requestId")]
 
 
@@ -4469,6 +4480,41 @@ class CpaInferenceUpstreamServerNotification(BaseModel):
         Literal["cpa/inference/upstream"], Field(title="Cpa/inference/upstreamNotificationMethod")
     ]
     params: CpaInferenceUpstreamNotification
+
+
+class CpaInferenceEventServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["cpa/inference/event"], Field(title="Cpa/inference/eventNotificationMethod")
+    ]
+    params: CpaInferenceEventNotification
+
+
+class CpaInferenceDiagnosticsCompletedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["cpa/inference/diagnostics/completed"],
+        Field(title="Cpa/inference/diagnostics/completedNotificationMethod"),
+    ]
+    params: CpaInferenceDiagnosticsCompletedNotification
 
 
 class CpaInferenceCompletedServerNotification(BaseModel):
@@ -13223,6 +13269,8 @@ class ServerNotification(
     RootModel[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
+        | CpaInferenceEventServerNotification
+        | CpaInferenceDiagnosticsCompletedServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification
         | ThreadStartedServerNotification
@@ -13316,6 +13364,8 @@ class ServerNotification(
     root: Annotated[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
+        | CpaInferenceEventServerNotification
+        | CpaInferenceDiagnosticsCompletedServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification
         | ThreadStartedServerNotification

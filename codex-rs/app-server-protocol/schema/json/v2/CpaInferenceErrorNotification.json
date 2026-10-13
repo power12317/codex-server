@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "description": "Supervisor transport failure after the start RPC has already succeeded. Native model failures and cancellation use the start RPC error instead.",
+  "description": "Native failure, cancellation or worker loss after the start reply.",
   "properties": {
     "body": {
       "type": [
@@ -29,6 +29,7 @@
     "message": {
       "type": "string"
     },
+    "nativeError": true,
     "requestId": {
       "type": "string"
     }

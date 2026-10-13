@@ -1,4 +1,5 @@
-//! Read-only observations of actual native attempts and accepted model events.
+//! Independent native business and diagnostic observations for one model send.
+use super::BridgeResult;
 use axum::http::HeaderMap;
 use base64::Engine;
 use codex_api::observation::ResponsesObserver;
@@ -10,65 +11,128 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub(super) enum Business {
+    Ready(HeaderMap),
+    Event(Vec<u8>),
+    Finished(BridgeResult<()>),
+}
+
+pub(super) enum Diagnostic {
+    Notification(CpaInferenceUpstreamNotification),
+    Record { event: &'static str, details: Value },
+}
+
+#[derive(Default)]
+struct NativeErrorResponse {
+    status: Option<u16>,
+    headers: HeaderMap,
+    body: Option<String>,
+}
+
 #[derive(Default)]
 struct Observed {
-    business: Vec<u8>,
-    raw_body: Vec<u8>,
     headers: HeaderMap,
     node: Option<String>,
+    ready: bool,
+    closed: bool,
+    // Nonterminal events, including tool-ready events, are never held here.
+    terminal_events: Vec<Vec<u8>>,
+    image_body: Vec<u8>,
+    error: Option<NativeErrorResponse>,
 }
 
 pub(super) struct NativeObservation {
-    pub(super) request_id: String,
-    pub(super) credential_id: String,
-    pub(super) sender: UnboundedSender<CpaInferenceUpstreamNotification>,
-    observed: Mutex<Observed>,
+    request_id: String,
+    diagnostics: UnboundedSender<Diagnostic>,
+    business: UnboundedSender<Business>,
+    images: bool,
+    state: Mutex<Observed>,
 }
 
 impl NativeObservation {
     pub(super) fn new(
         request_id: String,
-        credential_id: String,
-        sender: UnboundedSender<CpaInferenceUpstreamNotification>,
-    ) -> Self {
-        Self {
+        diagnostics: UnboundedSender<Diagnostic>,
+        business: UnboundedSender<Business>,
+        images: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
             request_id,
-            credential_id,
-            sender,
-            observed: Mutex::new(Observed::default()),
+            diagnostics,
+            business,
+            images,
+            state: Mutex::new(Observed::default()),
+        })
+    }
+
+    pub(super) fn record(&self, event: &'static str, details: Value) {
+        let _ = self.diagnostics.send(Diagnostic::Record { event, details });
+    }
+
+    pub(super) fn finish(&self, mut result: BridgeResult<()>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        if let Err(error) = &mut result {
+            if let (Some(original), Some(data)) = (&state.error, error.data.as_mut()) {
+                if let Some(status) = original.status {
+                    data["httpStatus"] = serde_json::json!(status);
+                }
+                if let Some(body) = &original.body {
+                    data["body"] = serde_json::json!(body);
+                }
+                if !original.headers.is_empty() {
+                    data["headers"] = serde_json::json!(public_error_headers(&original.headers));
+                }
+            }
+        } else {
+            if self.images {
+                self.ready(&mut state);
+                let _ = self
+                    .business
+                    .send(Business::Event(std::mem::take(&mut state.image_body)));
+            }
+            for bytes in std::mem::take(&mut state.terminal_events) {
+                let _ = self.business.send(Business::Event(bytes));
+            }
+        }
+        let _ = self.business.send(Business::Finished(result));
+    }
+
+    fn ready(&self, state: &mut Observed) {
+        if !state.ready {
+            state.ready = true;
+            let _ = self.business.send(Business::Ready(state.headers.clone()));
         }
     }
 
     fn notify(&self, notification: CpaInferenceUpstreamNotification) {
-        let mut details = serde_json::to_value(&notification).unwrap_or(Value::Null);
-        if let Some(details) = details.as_object_mut() {
-            details.remove("body");
-            details.remove("bodyBase64");
-        }
-        record(
-            &self.credential_id,
-            &self.request_id,
-            "cpa.request.upstream",
-            details,
-        );
-        let _ = self.sender.send(notification);
+        let _ = self
+            .diagnostics
+            .send(Diagnostic::Notification(notification));
     }
+}
 
-    pub(super) fn result(&self, images: bool) -> (HeaderMap, Vec<u8>) {
-        let mut state = self
-            .observed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let body = if images {
-            std::mem::take(&mut state.raw_body)
-        } else {
-            std::mem::take(&mut state.business)
-        };
-        (state.headers.clone(), body)
-    }
+fn public_error_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
+    headers
+        .keys()
+        .map(|name| {
+            (
+                name.to_string(),
+                headers
+                    .get_all(name)
+                    .iter()
+                    .filter_map(|value| value.to_str().ok().map(str::to_owned))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 impl TransportObserver for NativeObservation {
@@ -100,15 +164,13 @@ impl TransportObserver for NativeObservation {
             .and_then(oai_lb_node);
         {
             let mut state = self
-                .observed
+                .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state.raw_body.clear();
             if method != "response.create" {
                 state.node = node.clone();
             }
         }
-        // Preserve encoded/compressed bytes exactly; do not change native compression for logs.
         self.notify(CpaInferenceUpstreamNotification::Request {
             request_id: self.request_id.clone(),
             transport: transport.into(),
@@ -123,16 +185,17 @@ impl TransportObserver for NativeObservation {
             oai_lb_node: node,
         });
     }
-
     fn response(&self, transport: &str, status: u16, headers: &HeaderMap) {
         let node = {
             let mut state = self
-                .observed
+                .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.headers = headers.clone();
-            state.raw_body.clear();
             state.node = response_oai_lb_node(Some(headers), state.node.as_deref());
+            if self.images && (200..300).contains(&status) && !state.closed {
+                self.ready(&mut state);
+            }
             state.node.clone()
         };
         self.notify(CpaInferenceUpstreamNotification::Response {
@@ -144,20 +207,20 @@ impl TransportObserver for NativeObservation {
             oai_lb_node: node,
         });
     }
-
     fn body(&self, transport: &str, bytes: &[u8]) {
-        self.observed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .raw_body
-            .extend_from_slice(bytes);
+        if self.images {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .image_body
+                .extend_from_slice(bytes);
+        }
         self.notify(CpaInferenceUpstreamNotification::Body {
             request_id: self.request_id.clone(),
             transport: transport.into(),
             body_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
         });
     }
-
     fn error(&self, transport: &str, message: &str) {
         self.notify(CpaInferenceUpstreamNotification::Error {
             request_id: self.request_id.clone(),
@@ -165,42 +228,82 @@ impl TransportObserver for NativeObservation {
             message: message.into(),
         });
     }
+    fn http_error(&self, status: u16, headers: &HeaderMap, body: Option<&str>) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error = Some(NativeErrorResponse {
+            status: Some(status),
+            headers: headers.clone(),
+            body: body.map(str::to_owned),
+        });
+    }
 }
 
 impl ResponsesObserver for NativeObservation {
     fn accepted_event(&self, payload: &str) {
         let mut state = self
-            .observed
+            .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for line in payload.split('\n') {
-            state.business.extend_from_slice(b"data: ");
-            state.business.extend_from_slice(line.as_bytes());
-            state.business.push(b'\n');
+        if state.closed {
+            return;
         }
-        state.business.push(b'\n');
+        self.ready(&mut state);
+        let mut bytes = Vec::with_capacity(payload.len() + 8);
+        for line in payload.split('\n') {
+            bytes.extend_from_slice(b"data: ");
+            bytes.extend_from_slice(line.as_bytes());
+            bytes.push(b'\n');
+        }
+        bytes.push(b'\n');
+        let terminal = serde_json::from_str::<Value>(payload).is_ok_and(|value| {
+            matches!(
+                value["type"].as_str(),
+                Some("response.completed" | "response.incomplete" | "response.cancelled")
+            )
+        });
+        if terminal {
+            state.terminal_events.push(bytes);
+        } else {
+            let _ = self.business.send(Business::Event(bytes));
+        }
     }
-}
-
-impl InferenceObserver for NativeObservation {
-    fn start_attempt(&self) {
-        let mut state = self
-            .observed
+    fn failed_event(&self, payload: &str, error: &codex_api::ApiError) {
+        let mut original = NativeErrorResponse {
+            body: Some(payload.into()),
+            ..Default::default()
+        };
+        if let codex_api::ApiError::Transport(codex_api::TransportError::Http {
+            status,
+            headers,
+            ..
+        }) = error
+        {
+            original.status = Some(status.as_u16());
+            original.headers = headers.clone().unwrap_or_default();
+        } else if let Ok(value) = serde_json::from_str::<Value>(payload) {
+            // Preserve supplied error headers without reclassifying or retrying the native error.
+            for path in ["/headers", "/response/error/headers", "/error/headers"] {
+                if let Some(headers) = value.pointer(path).and_then(Value::as_object) {
+                    for (name, value) in headers {
+                        if let (Ok(name), Some(value)) =
+                            (name.parse::<axum::http::HeaderName>(), value.as_str())
+                            && let Ok(value) = value.parse::<axum::http::HeaderValue>()
+                        {
+                            original.headers.insert(name, value);
+                        }
+                    }
+                }
+            }
+        }
+        self.state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.business.clear();
-        state.raw_body.clear();
-        state.headers.clear();
-    }
-    fn recovery(&self, message: &str) {
-        record(
-            &self.credential_id,
-            &self.request_id,
-            "cpa.request.native_recovery",
-            serde_json::json!({"message":message}),
-        );
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error = Some(original);
     }
 }
+impl InferenceObserver for NativeObservation {}
 
 pub(super) fn log_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
     headers
@@ -283,46 +386,5 @@ pub(crate) fn record(credential_id: &str, request_id: &str, event: &str, details
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn native_observation_preserves_actual_node_and_redacts_sensitive_headers() {
-        let (sender, mut notifications) = tokio::sync::mpsc::unbounded_channel();
-        let observer = NativeObservation::new("r".into(), "credential".into(), sender);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"host":"chat.gateway.fixture.api.openai.com"}"#);
-        let mut headers = HeaderMap::new();
-        headers.insert("authorization", "Bearer test-secret".parse().unwrap());
-        headers.insert(
-            "cookie",
-            format!("__oailb=e30.{payload}.sig").parse().unwrap(),
-        );
-        observer.request(
-            "http",
-            "POST",
-            "http://fixture/v1/responses",
-            &headers,
-            b"{}",
-        );
-        observer.response("http", 200, &HeaderMap::new());
-        let request = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
-        let response = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
-        assert_eq!(request["oaiLbNode"], "fixture");
-        assert_eq!(response["oaiLbNode"], "fixture");
-        assert_eq!(
-            request["headers"]["authorization"],
-            serde_json::json!(["[REDACTED]"])
-        );
-        assert_eq!(
-            request["headers"]["cookie"],
-            serde_json::json!(["[REDACTED]"])
-        );
-        assert!(!observer.observes_request("POST", "https://auth.example/oauth/token"));
-        assert!(observer.observes_request("POST", "https://api.example/v1/responses"));
-        let mut deleted = HeaderMap::new();
-        deleted.insert("set-cookie", "__oailb=; Max-Age=0".parse().unwrap());
-        observer.response("http", 401, &deleted);
-        let response = serde_json::to_value(notifications.try_recv().unwrap()).unwrap();
-        assert!(response["oaiLbNode"].is_null());
-    }
-}
+#[path = "upstream_tests.rs"]
+mod tests;

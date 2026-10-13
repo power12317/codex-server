@@ -1,6 +1,6 @@
 # Codex Server deployment
 
-> On `codex/native-model-runtime`, use the isolated `ghcr.io/power12317/codex-server-native-runtime` image and a v4-capable client. See the [experimental native model contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md); the stable package described below remains separate.
+> On `codex/native-model-runtime`, use the isolated `ghcr.io/power12317/codex-server-native-runtime` image and a v5-capable client. See the [experimental native model contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md); the stable package described below remains separate.
 
 Pushes to main publish `ghcr.io/power12317/codex-server:latest`.
 Use the service standalone or alongside CPA; a source checkout is not required
@@ -188,7 +188,8 @@ docker build -f deploy/cpa-runtime/Dockerfile \
 Use `codex-server:local` in Compose for that build. The existing
 `.github/workflows/cpa-runtime-image.yml` filename is retained; its repository
 guard and image labels point to `power12317/codex-server`. Runtime executable,
-credential filenames, state locations and protocol v4 identifiers are unchanged.
+credential filenames and state locations are unchanged. This experimental branch
+uses IPC v5 for incremental business delivery.
 
 ## Runtime release identity
 
@@ -204,7 +205,8 @@ accepts official stable manifests whose local lockfile packages still use
 `0.0.0`, including implicit workspace members; it does not resolve or upgrade
 third-party dependencies. Docker runs this synchronization again in its build
 copy. `cpa/capabilities/read` reports the compiled runtime version and selected
-upstream release commit; protocol v4 and the client identity names are unchanged.
+upstream release commit. IPC v5 is an internal message contract; the client
+identity names and official runtime version are unchanged.
 
 The official release contains two distinct targets: the `codex-cli` package
 builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds

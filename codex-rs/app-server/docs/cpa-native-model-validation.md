@@ -5,6 +5,66 @@ not certify the stable v3 bridge or a published Linux image. The fixed reference
 is official Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
 
+## Current IPC v5 zero-retry candidate
+
+The user selected immediate native event delivery with worker retries set to
+zero. This supersedes the earlier candidate's native recovery and attempt-boundary
+contract. `event {requestId, bodyBase64}`, payload-free `completed`, post-start
+`error`, and independent `diagnostics/completed` remain. Attempt notifications and
+IDs have been removed from the schema and clients.
+
+The model-only client config sets request and stream retries to zero. Its native
+single-attempt entry also bypasses 401 replay and WebSocket error fallback, while
+HTTP protocol retries are disabled in the native client builder. Normal redirects,
+proxy policy, request construction, client identity and successful WebSocket
+turn-state reuse are retained. No public switch or alternate sender was added.
+Native model errors are returned immediately to CPA for its existing rules.
+
+Tests cover HTTP 401/429/503, handshake errors without HTTP fallback, standalone
+Images failures, partial EOF with no second model call, immediate rejected SSE/WS
+payloads while the upstream connection remains open, realtime tool-ready events,
+normal HTTP redirects, identity mapping and diagnostic lifecycle. Final local
+verification on macOS arm64 with Rust 1.95.0 passed:
+
+| Check                                                                    | Result                                                                                 |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Service unit tests                                                       | 24 passed                                                                              |
+| Real master/worker integration tests                                     | 38 passed                                                                              |
+| Native model test groups                                                 | 4 passed                                                                               |
+| Existing native client tests (`client::tests::`)                         | 32 passed                                                                              |
+| Native API library                                                       | 195 passed                                                                             |
+| Native HTTP-client library                                               | 115 passed                                                                             |
+| Protocol library and generated export consistency                        | 320 passed; 1 generator test ignored by default and run explicitly during regeneration |
+| Strict Clippy for app-server, API, HTTP-client and login libraries/tests | Passed with warnings denied                                                            |
+| Rust formatting, final binary build and actual request identity          | Passed                                                                                 |
+| Third-party example against the real master/worker                       | Passed with incremental event and payload-free completion                              |
+| Paired CPA real HTTP/WS matrix                                           | 92 leaf cases passed with Go `-race`                                                   |
+
+The paired matrix used
+`/private/tmp/codex-zero-retry-v5-20261013/codex-app-server-correlated`, SHA256
+`5c30250a6bfb252cacfba04507a5dcdb7496ee98d811341831777a4dfaa8566d`.
+It verifies delivery of tool deltas and ready events before upstream completion,
+immediate native errors while upstream connections remain open, zero worker
+retries or error-driven HTTP fallback, and CPA-owned retries without CPA model
+egress. With two configured CPA retries, the fixture observes three worker sends
+and zero direct CPA sends. The first 780-byte turn-state ticket is replayed
+exactly, including prefixed metadata compatibility. Results are recorded in
+`/private/tmp/cpa-zero-retry-v5-final-matrix.log`.
+
+The final rebuilt binary is
+`/private/tmp/codex-zero-retry-v5-20261013/codex-app-server-final`, SHA256
+`61911ad31c11ea928e84a3603f822b62621c1ec234aa0503acd9e2118f6b0e8e`.
+Only lint-equivalent production edits and test/documentation corrections followed
+the paired candidate. The full paired matrix was not repeated for those edits;
+the local checks above and identity/example probes cover the final source and
+binary. The executable remains `codex-app-server 0.162.1`, with native
+`codex-tui/0.162.1` request identity. These local results do not certify Linux
+image publication.
+
+The following reference and earlier candidate results are historical. Their
+native-recovery behavior is intentionally different from the current authorized
+zero-retry policy; they must not be presented as current retry equivalence.
+
 ## Execution ownership and independent reference
 
 The bridge maps business input to `Prompt`, native configuration and session
@@ -51,25 +111,25 @@ The test host is macOS arm64, using Rust 1.95.0, Python 3.14 and local mock
 upstreams/test credentials. Counts below are distinct tests within each row;
 scenario comparisons are not additional Rust unit tests.
 
-| Check | Result |
-| --- | --- |
-| Native model matrices, client-tool boundary and verbosity/fallback sharing | 4 passed; 16 reference comparisons matched |
-| Existing recovery tests | 2 passed |
-| Native context history tests | 91 passed |
-| Inference input, time and tool adapter tests | 14 passed |
-| Real master/worker IPC integration | 15 passed |
-| Bridge unit tests | 16 passed |
-| Master credential scanning and large-message IPC | 2 passed |
-| Native API library | 193 passed; six unit tests for deleted bypass senders were removed with their implementation |
-| Native HTTP-client library | 115 distinct tests passed |
-| Protocol library and regenerated schema/export consistency | 320 passed; 1 intended generator test ignored |
-| Python generated-contract tests | 5 passed |
-| Release version preparation | 5 passed |
-| Strict Clippy for core/API/HTTP/app-server/image extension libraries and binaries | Passed |
-| Final binary build and actual request identity | Passed; `codex-tui`, version `0.162.1`, original User-Agent |
-| CPA real-worker HTTP, WebSocket and native-fallback matrices against the final binary | All 3 passed with Go `-race`; 114 leaf cases |
-| Experimental image workflow | `actionlint` passed |
-| Rust formatting and diff whitespace checks | Passed |
+| Check                                                                                 | Result                                                                                       |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Native model matrices, client-tool boundary and verbosity/fallback sharing            | 4 passed; 16 reference comparisons matched                                                   |
+| Existing recovery tests                                                               | 2 passed                                                                                     |
+| Native context history tests                                                          | 91 passed                                                                                    |
+| Inference input, time and tool adapter tests                                          | 14 passed                                                                                    |
+| Real master/worker IPC integration                                                    | 15 passed                                                                                    |
+| Bridge unit tests                                                                     | 16 passed                                                                                    |
+| Master credential scanning and large-message IPC                                      | 2 passed                                                                                     |
+| Native API library                                                                    | 193 passed; six unit tests for deleted bypass senders were removed with their implementation |
+| Native HTTP-client library                                                            | 115 distinct tests passed                                                                    |
+| Protocol library and regenerated schema/export consistency                            | 320 passed; 1 intended generator test ignored                                                |
+| Python generated-contract tests                                                       | 5 passed                                                                                     |
+| Release version preparation                                                           | 5 passed                                                                                     |
+| Strict Clippy for core/API/HTTP/app-server/image extension libraries and binaries     | Passed                                                                                       |
+| Final binary build and actual request identity                                        | Passed; `codex-tui`, version `0.162.1`, original User-Agent                                  |
+| CPA real-worker HTTP, WebSocket and native-fallback matrices against the final binary | All 3 passed with Go `-race`; 114 leaf cases                                                 |
+| Experimental image workflow                                                           | `actionlint` passed                                                                          |
+| Rust formatting and diff whitespace checks                                            | Passed                                                                                       |
 
 The first API/HTTP runs inherited a machine-wide HTTP proxy: one API and three
 HTTP assertions failed because the proxy changed localhost routing, header casing
@@ -217,20 +277,19 @@ starts with empty routing state. Logs and JSON traces for these probes are under
 
 ## Compatibility and delivery limits
 
-- IPC v4 defines the message structure. The final
-  successful body is in `cpa/inference/completed.bodyBase64`; diagnostics cannot
-  substitute for an authoritative native result.
-- Business bytes are buffered until native success, so token delivery is delayed.
-  Cancellation during native work cancels the invocation; a later diagnostic
-  delivery delay cannot reclassify a settled native result.
-- Supported parameters and explicit input errors are documented in
-  [the protocol guide](cpa-native-model-runtime.md). There is no wire overlay,
-  alternative sender, local tool dispatcher, or automatic CPA replay.
-- Native hosted-image declaration mapping was verified against the official
-  executor and mock services. Live production hosted-image acceptance was not
-  tested. Standalone Images uses the existing native Images backend.
-- The local binary is macOS arm64. Linux amd64/arm64 build, startup, time-zone
-  mounts and client identity checks belong to the isolated image workflow.
-  Triggering that workflow does not establish that an image was published.
-- The experiment publishes only `ghcr.io/power12317/codex-server-native-runtime`.
-  Stable package tags and the existing stable workflow are not changed.
+- IPC v5 carries incremental business bytes without attempt fields. Native success
+  is a separate payload-free completion, and errors before/after start use the
+  RPC error/error notification respectively.
+- Every accepted nonterminal event, including tool-ready events, streams without
+  waiting for complete model success. Only terminal events await the native result.
+- Worker retries are zero across Responses, auth-error resend, HTTP and Images;
+  a WebSocket failure does not switch to HTTP. CPA owns its existing downstream
+  error/retry policy. Unknown IPC outcomes must not be assumed safe to replay.
+- Diagnostic queues are independent and unbounded; a shared physical write cannot
+  be preempted. Log completion does not delay business or native execution.
+- There is no local caller-tool execution, fabricated tool output, persistent
+  conversation, alternative HTTP sender, runtime selector, or new capacity limit.
+- The local candidate is macOS arm64. Linux amd64/arm64 publication belongs to the
+  isolated experimental workflow after paired acceptance. Starting that workflow
+  does not establish image publication.
+- Stable main/gateway worktrees and the stable image package are unchanged.

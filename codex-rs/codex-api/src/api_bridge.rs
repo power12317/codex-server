@@ -20,6 +20,24 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub fn map_api_error(err: ApiError) -> CodexErr {
+    if let ApiError::Transport(TransportError::Http {
+        status,
+        headers,
+        body,
+        url,
+        ..
+    }) = &err
+        && let Some(observer) = codex_http_client::observation::transport_observer()
+        && url
+            .as_deref()
+            .is_none_or(|url| observer.observes_request("POST", url))
+    {
+        observer.http_error(
+            status.as_u16(),
+            headers.as_ref().unwrap_or(&HeaderMap::new()),
+            body.as_deref(),
+        );
+    }
     let retry_after = match &err {
         ApiError::Retryable { retry_after, .. }
         | ApiError::RateLimitExceeded { retry_after, .. }

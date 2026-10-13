@@ -757,6 +757,7 @@ async fn run_websocket_response_stream(
                     && let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
                 {
+                    crate::observation::observe_failed_event(&text, &error);
                     return Err(error);
                 }
 

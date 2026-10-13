@@ -268,6 +268,22 @@ pub fn create_client_for_route(
     create_client_for_route_with_builder(http_client_factory, request_url, route_class, builder)
 }
 
+/// Preserves native identity, cookies, routing and redirects while disabling
+/// automatic request-error retries for callers that own retry decisions.
+pub fn create_client_for_route_once(
+    http_client_factory: &HttpClientFactory,
+    request_url: &str,
+    route_class: ClientRouteClass,
+    redirect_policy: ClientRedirectPolicy,
+) -> Result<HttpClient, BuildRouteAwareHttpClientError> {
+    let builder = match redirect_policy {
+        ClientRedirectPolicy::Default => default_http_client_builder(),
+        ClientRedirectPolicy::Reject => default_http_client_builder().without_redirects(),
+    }
+    .without_retries();
+    create_client_for_route_with_builder(http_client_factory, request_url, route_class, builder)
+}
+
 fn create_client_for_route_with_builder(
     http_client_factory: &HttpClientFactory,
     request_url: &str,

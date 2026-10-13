@@ -1,5 +1,6 @@
-//! CPA IPC v4 boundary. This module deliberately has no ThreadManager or tool runtime.
+//! CPA IPC v5 boundary. This module deliberately has no ThreadManager or tool runtime.
 mod contexts;
+mod delivery;
 mod identity_response;
 mod images;
 mod login;
@@ -8,7 +9,6 @@ mod upstream;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
-use base64::Engine;
 use codex_app_server_protocol::*;
 use codex_core::config::Config;
 use codex_login::AuthManager;
@@ -17,7 +17,6 @@ use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
 use serde_json::Value;
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -27,13 +26,6 @@ pub(crate) use upstream::record as record_request;
 const UPSTREAM: &str = "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
-type InferenceResponse = (BTreeMap<String, Vec<String>>, Vec<u8>);
-
-struct NativeOutcome {
-    result: BridgeResult<InferenceResponse>,
-    diagnostics: tokio::task::JoinHandle<()>,
-}
-
 pub(crate) struct CpaBridge {
     credential_id: Option<String>,
     contexts: Mutex<contexts::Contexts>,
@@ -126,21 +118,33 @@ impl CpaBridge {
         id: ConnectionRequestId,
         params: CpaInferenceStartParams,
     ) -> BridgeResult<()> {
-        upstream::record(
-            &params.credential_id,
-            &params.request_id,
+        let (diagnostics_tx, diagnostics_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (business_tx, business_rx) = tokio::sync::mpsc::unbounded_channel();
+        let observation = upstream::NativeObservation::new(
+            params.request_id.clone(),
+            diagnostics_tx.clone(),
+            business_tx,
+            params.image_api == Some(CpaImageApi::Images),
+        );
+        delivery::diagnostics(
+            self.outgoing.clone(),
+            id.connection_id,
+            params.credential_id.clone(),
+            params.request_id.clone(),
+            diagnostics_rx,
+        );
+        observation.record(
             "cpa.request.start",
             json!({
                 "source": codex_core::InferenceIdentity::from_request(&params.request),
-                "rpcSessionId": params.session_id,
-                "operation": params.operation, "imageApi": params.image_api,
-                "codexHome": self.config.codex_home,
+                "rpcSessionId": params.session_id, "operation":params.operation,
+                "imageApi":params.image_api, "codexHome":self.config.codex_home,
             }),
         );
-        let prepared = (|| -> BridgeResult<_> {
+        let admitted = (|| -> BridgeResult<_> {
             validate(&params)?;
             if self.credential_id.as_deref() != Some(params.credential_id.as_str()) {
-                return Err(failure(/*status*/ 403, "credentialId mismatch"));
+                return Err(failure(403, "credentialId mismatch"));
             }
             self.require_enabled()?;
             self.bound_auth()?;
@@ -166,93 +170,57 @@ impl CpaBridge {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if active.contains_key(&(id.connection_id, params.request_id.clone())) {
-                    return Err(failure(/*status*/ 409, "Duplicate active requestId"));
+                    return Err(failure(409, "Duplicate active requestId"));
                 }
                 active.insert((id.connection_id, params.request_id.clone()), token.clone());
             }
             Ok((session, token))
         })();
-        let (session, token) = prepared.inspect_err(|error| {
-            upstream::record(&params.credential_id, &params.request_id, "cpa.request.error",
-                json!({"error": error.message, "httpStatus": error.data.as_ref().map(|data| &data["httpStatus"])}));
+        let (session, token) = admitted.inspect_err(|error| {
+            observation.record("cpa.request.error", json!({"error":error.message,"httpStatus":error.data.as_ref().map(|d|&d["httpStatus"])}));
         })?;
         let bridge = self.clone();
+        let params = Arc::new(params);
+        let native_bridge = bridge.clone();
+        let native_params = params.clone();
+        let native_session = session.clone();
+        let native_token = token.clone();
         tokio::spawn(async move {
-            let mut auth_changes = bridge.auth.auth_change_receiver();
+            let mut auth_changes = native_bridge.auth.auth_change_receiver();
             let result = tokio::select! {
                 biased;
-                _ = token.cancelled() => Err(failure(/*status*/ 499, "Inference cancelled")),
+                result = native_bridge.run(&native_params, &native_session, observation.clone()) => result,
+                _ = native_token.cancelled() => Err(failure(499, "Inference cancelled")),
                 _ = async {
                     loop {
-                        if auth_changes.changed().await.is_err() || bridge.bound_auth().is_err() { break; }
+                        if auth_changes.changed().await.is_err() || native_bridge.bound_auth().is_err() { break; }
                     }
-                } => Err(failure(/*status*/ 401, "Managed account changed")),
-                result = bridge.run(&id, &params, &session) => result,
+                } => Err(failure(401, "Managed account changed")),
             };
-            let result = match result {
-                Ok(outcome) => {
-                    // Delivery cannot turn an already settled native result into cancellation.
-                    if let Err(error) = outcome.diagnostics.await {
-                        tracing::warn!(%error, "native diagnostic delivery task stopped");
-                    }
-                    outcome.result
-                }
-                Err(error) => Err(error),
-            };
-            let succeeded = result.is_ok();
-            upstream::record(
-                &params.credential_id,
-                &params.request_id,
-                if succeeded {
-                    "cpa.request.completed"
-                } else {
-                    "cpa.request.error"
-                },
-                json!({"error": result.as_ref().err().map(|error| &error.message),
-                    "turnState": session.turn_state(),
-                    "turnStateLength": session.turn_state().map(str::len)}),
-            );
-            match result {
-                Err(mut error) => {
-                    identity_response::IdentityResponse::new(
-                        codex_core::InferenceIdentity::from_request(&params.request),
-                        session.mapping(),
-                    )
-                    .failure(&mut error);
-                    bridge.outgoing.send_error(id.clone(), error).await;
-                }
-                Ok((headers, body)) => {
-                    bridge
-                        .outgoing
-                        .send_response(
-                            id.clone(),
-                            CpaInferenceStartResponse {
-                                request_id: params.request_id.clone(),
-                                status_code: 200,
-                                headers,
-                            },
-                        )
-                        .await;
-                    bridge
-                        .outgoing
-                        .send_server_notification_to_connections(
-                            &[id.connection_id],
-                            ServerNotification::CpaInferenceCompleted(
-                                CpaInferenceCompletedNotification {
-                                    request_id: params.request_id.clone(),
-                                    body_base64: base64::engine::general_purpose::STANDARD
-                                        .encode(body),
-                                },
-                            ),
-                        )
-                        .await;
-                }
-            }
+            observation.record(if result.is_ok() {"cpa.request.completed"} else {"cpa.request.error"},
+                json!({"error":result.as_ref().err().map(|error|&error.message),
+                    "turnState":native_session.turn_state(),"turnStateLength":native_session.turn_state().map(str::len)}));
+            observation.finish(result);
+        });
+        tokio::spawn(async move {
+            delivery::business(
+                &bridge.outgoing,
+                &id,
+                &params,
+                &session,
+                &token,
+                business_rx,
+            )
+            .await;
+            let _ = diagnostics_tx.send(upstream::Diagnostic::Record {
+                event: "cpa.delivery.finished",
+                details: json!({"cancelled":token.is_cancelled()}),
+            });
             bridge
                 .active
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&(id.connection_id, params.request_id));
+                .remove(&(id.connection_id, params.request_id.clone()));
         });
         Ok(())
     }
@@ -269,10 +237,10 @@ impl CpaBridge {
 
     async fn run(
         &self,
-        id: &ConnectionRequestId,
         params: &CpaInferenceStartParams,
         session: &codex_core::InferenceSession,
-    ) -> BridgeResult<NativeOutcome> {
+        observation: Arc<upstream::NativeObservation>,
+    ) -> BridgeResult<()> {
         self.auth.reload().await;
         self.config_manager
             .check_thread_model_provider(&self.config)
@@ -293,29 +261,8 @@ impl CpaBridge {
         {
             return Err(failure(400, "CPA requires the managed OpenAI provider"));
         }
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let observation = Arc::new(upstream::NativeObservation::new(
-            params.request_id.clone(),
-            params.credential_id.clone(),
-            sender,
-        ));
-        let outgoing = self.outgoing.clone();
-        let connection_id = id.connection_id;
-        let diagnostics = tokio::spawn(async move {
-            while let Some(notification) = receiver.recv().await {
-                if !outgoing
-                    .send_server_notification_to_connection_and_wait(
-                        connection_id,
-                        ServerNotification::CpaInferenceUpstream(notification),
-                    )
-                    .await
-                {
-                    break;
-                }
-            }
-        });
         let image_endpoint = params.image_api == Some(CpaImageApi::Images);
-        let result = if image_endpoint {
+        if image_endpoint {
             codex_http_client::observation::observe_transport(
                 observation.clone(),
                 images::execute(provider.clone(), &self.config, params, session),
@@ -331,9 +278,7 @@ impl CpaBridge {
                 .models
                 .get_model_info(model, &self.config.to_models_manager_config())
                 .await;
-            upstream::record(
-                &params.credential_id,
-                &params.request_id,
+            observation.record(
                 "cpa.request.mapping",
                 json!({"source":codex_core::InferenceIdentity::from_request(&params.request),
                     "worker":session.mapping(),"identityPolicy":"session-root-and-thread-hierarchy"}),
@@ -347,66 +292,13 @@ impl CpaBridge {
                 )
                 .await
                 .map_err(|error| native_failure(&error))
-        };
-        let (upstream_headers, body) = observation.result(image_endpoint);
-        drop(observation);
-        let result = result.and_then(|()| {
-            let identities = identity_response::IdentityResponse::new(
-                codex_core::InferenceIdentity::from_request(&params.request),
-                session.mapping(),
-            );
-            let mut headers = BTreeMap::new();
-            for name in [
-                "x-request-id",
-                "retry-after",
-                "openai-model",
-                "openai-processing-ms",
-                "x-codex-imagegen-request-id",
-                "session-id",
-                "thread-id",
-                "x-codex-parent-thread-id",
-                "x-codex-window-id",
-                "x-codex-turn-metadata",
-            ] {
-                let values: Vec<String> = upstream_headers
-                    .get_all(name)
-                    .iter()
-                    .filter_map(|value| value.to_str().ok().map(str::to_owned))
-                    .collect();
-                if !values.is_empty() {
-                    headers.insert(name.to_owned(), values);
-                }
-            }
-            let content_type = if image_endpoint {
-                "application/json"
-            } else {
-                "text/event-stream"
-            };
-            headers.insert("content-type".into(), vec![content_type.into()]);
-            let mut headers =
-                serde_json::to_value(headers).map_err(|error| failure(502, &error.to_string()))?;
-            if let Some(fields) = headers.as_object_mut() {
-                identities.fields(fields);
-            }
-            let mut response = response_stream::ResponseStream::new(identities, content_type);
-            let mut translated = response.push(&body);
-            translated.extend(response.finish());
-            Ok((
-                serde_json::from_value(headers)
-                    .map_err(|error| failure(502, &error.to_string()))?,
-                translated,
-            ))
-        });
-        Ok(NativeOutcome {
-            result,
-            diagnostics,
-        })
+        }
     }
 }
 
 pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
     CpaCapabilitiesReadResponse {
-        protocol_version: 4,
+        protocol_version: 5,
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         upstream_revision: UPSTREAM.into(),
         manual_oauth: true,

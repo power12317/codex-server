@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Codex Server IPC v4: one request per connection, with no external dependencies.
+// Codex Server IPC v5: one request per connection, with no external dependencies.
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 
@@ -87,14 +87,12 @@ try {
   send({ method: "initialized" });
   const capabilities = await rpc(2, "cpa/capabilities/read", {});
   if (
-    capabilities.protocolVersion !== 4 ||
+    capabilities.protocolVersion !== 5 ||
     capabilities.executionMode !== "inference-only" ||
     !capabilities.rawBody ||
     !capabilities.operations?.includes("responses")
   ) {
-    throw new Error(
-      "Server does not support the required v4 message contract",
-    );
+    throw new Error("Server does not support the required v5 message contract");
   }
   if (capabilitiesOnly) {
     console.log(JSON.stringify(capabilities, null, 2));
@@ -133,25 +131,49 @@ try {
         },
       },
     });
-    for (;;) {
+    let businessDone = false;
+    let diagnosticsDone = false;
+    let failure;
+    while (!businessDone || !diagnosticsDone) {
       const message = await nextMessage();
-      if (message.error && (message.id === 3 || message.id === 4)) {
-        throw new Error(JSON.stringify(message.error));
+      if (message.error && message.id === 3) {
+        failure = JSON.stringify(message.error);
+        businessDone = true;
+      }
+      if (message.error && message.id === 4) {
+        console.error("Cancellation failed:", JSON.stringify(message.error));
       }
       if (message.params?.requestId !== requestId) continue;
-      if (message.method === "cpa/inference/completed") {
-        if (
-          !process.stdout.write(
-            Buffer.from(message.params.bodyBase64, "base64"),
-          )
-        ) {
-          await once(process.stdout, "drain");
-        }
-        break;
+      if (message.method === "cpa/inference/diagnostics/completed") {
+        diagnosticsDone = true;
+        continue;
+      }
+      if (message.method === "cpa/inference/upstream") continue;
+      let output = message;
+      if (message.method === "cpa/inference/event") {
+        const { bodyBase64, ...params } = message.params;
+        output = {
+          method: message.method,
+          params: {
+            ...params,
+            body: Buffer.from(bodyBase64, "base64").toString("utf8"),
+          },
+        };
+      } else if (message.method === "cpa/inference/completed") {
+        businessDone = true;
       } else if (message.method === "cpa/inference/error") {
-        throw new Error(JSON.stringify(message.params));
+        failure = JSON.stringify(message.params);
+        businessDone = true;
+      } else {
+        continue;
+      }
+      // Each request streams one native attempt. Errors end that request; this
+      // example never silently resends or joins another response to its output.
+      if (!process.stdout.write(JSON.stringify(output) + "\n")) {
+        await once(process.stdout, "drain");
       }
     }
+    if (failure) throw new Error(failure);
   }
 } catch (error) {
   console.error(error.message ?? String(error));

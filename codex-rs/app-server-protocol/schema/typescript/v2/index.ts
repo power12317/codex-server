@@ -121,7 +121,9 @@ export type { ConsumeAccountRateLimitResetCreditResponse } from "./ConsumeAccoun
 export type { ContextCompactedNotification } from "./ContextCompactedNotification";
 export type { CpaImageApi } from "./CpaImageApi";
 export type { CpaInferenceCompletedNotification } from "./CpaInferenceCompletedNotification";
+export type { CpaInferenceDiagnosticsCompletedNotification } from "./CpaInferenceDiagnosticsCompletedNotification";
 export type { CpaInferenceErrorNotification } from "./CpaInferenceErrorNotification";
+export type { CpaInferenceEventNotification } from "./CpaInferenceEventNotification";
 export type { CpaInferenceUpstreamNotification } from "./CpaInferenceUpstreamNotification";
 export type { CreditsSnapshot } from "./CreditsSnapshot";
 export type { CyberAccessProgram } from "./CyberAccessProgram";
