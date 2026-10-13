@@ -210,7 +210,7 @@ impl ResponsesStreamEvent {
     }
 
     pub(crate) fn turn_state(&self) -> Option<String> {
-        if self.kind() != "response.metadata" {
+        if !matches!(self.kind(), "response.metadata" | "codex.response.metadata") {
             return None;
         }
 
@@ -2020,6 +2020,38 @@ mod tests {
                 event.safety_buffering(&SafetyBufferingTreatment::default()),
                 None
             );
+        }
+    }
+
+    #[test]
+    fn turn_state_accepts_both_metadata_event_names() {
+        for kind in ["response.metadata", "codex.response.metadata"] {
+            let event: ResponsesStreamEvent = serde_json::from_value(json!({
+                "type": kind,
+                "headers": {
+                    "X-Codex-Turn-State": "first-ticket",
+                    "openai-model": CYBER_RESTRICTED_MODEL_FOR_TESTS,
+                }
+            }))
+            .expect("metadata event");
+            assert_eq!(event.turn_state().as_deref(), Some("first-ticket"));
+            assert_eq!(
+                event.response_model().as_deref(),
+                Some(CYBER_RESTRICTED_MODEL_FOR_TESTS)
+            );
+        }
+    }
+
+    #[test]
+    fn turn_state_ignores_other_events_and_missing_headers() {
+        for event in [
+            json!({"type":"response.created","headers":{"x-codex-turn-state":"ignored"}}),
+            json!({"type":"codex.rate_limits","headers":{"x-codex-turn-state":"ignored"}}),
+            json!({"type":"response.metadata","headers":{"unrelated":"ignored"}}),
+            json!({"type":"codex.response.metadata"}),
+        ] {
+            let event: ResponsesStreamEvent = serde_json::from_value(event).expect("event");
+            assert_eq!(event.turn_state(), None);
         }
     }
 

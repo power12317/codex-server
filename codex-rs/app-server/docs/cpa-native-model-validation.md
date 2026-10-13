@@ -33,6 +33,11 @@ Only dynamic mapped identities, native item IDs, times and trace values are
 normalized. Field presence, identity relationships, request bodies, attempt
 counts/order, model results and final error classifications remain compared.
 
+These 16 scenarios do not cover prefixed turn-state metadata. The explicitly
+authorized compatibility extension described below intentionally differs from
+the unmodified official baseline for that event; the comparison is not a claim
+that both event names have identical ticket behavior in official `0.162.1`.
+
 This comparison covers controlled model execution, not the full Agent/tool loop.
 The model-only boundary deliberately leaves newly generated client tool calls
 uncommitted when an attempt fails: it neither inserts unpaired calls into recovery
@@ -40,7 +45,7 @@ history nor fabricates outputs. A separate test verifies function and custom
 calls, retention of the caller's existing call/result history, native text-history
 recovery, one successful delivery and absence of a local execution marker.
 
-## Local checks
+## Baseline local checks (834df84f)
 
 The test host is macOS arm64, using Rust 1.95.0, Python 3.14 and local mock
 upstreams/test credentials. Counts below are distinct tests within each row;
@@ -126,7 +131,7 @@ handlers, downstream streaming/nonstreaming forms, tool-result continuation,
 native errors and cancellation. The corresponding `-race` test requires zero
 CPA model egress and zero server-side client-tool execution.
 
-The final local worker is `codex-app-server 0.162.1`, SHA256
+The single-implementation cleanup worker was `codex-app-server 0.162.1`, SHA256
 `902df54637d8820621d78cb782b6d7bdc0ad9e08c6b9fe03c9e8eec292e9287c`.
 All three CPA matrices passed against this exact binary after the final worker
 changes. These tests use the matching experimental CPA IPC v4 implementation.
@@ -157,6 +162,58 @@ Cleanup evidence is recorded in `/private/tmp/codex-native-runtime/single-path-c
 `single-path-comparison.json`, and `/private/tmp/cpa-native-only-real-worker.log`.
 The worker artifact is
 `/private/tmp/codex-native-runtime/artifacts/codex-app-server-single-path-final`.
+
+## Authorized WebSocket turn-state compatibility
+
+The parser now also extracts `headers.x-codex-turn-state` from
+`codex.response.metadata`. This is an intentional one-condition extension of
+official `0.162.1`; standard `response.metadata` remains supported. No sending,
+recovery, completion, session-lifetime or native first-write rule is changed.
+WS handshake headers and HTTP SSE metadata do not gain new capture behavior.
+
+Regression coverage includes both event names, missing/unrelated fields,
+preserved model metadata, and four real master/worker cases: standard only,
+prefixed only, standard before prefixed, and prefixed before standard. Each case
+uses the same full source turn and exactly one upstream WebSocket connection,
+completes two requests, and inspects the actual second request frame. It must
+carry the first 780-character ticket and the previous response ID, preserving
+the first value when a later metadata event supplies a different ticket.
+
+The read-only pre-fix probe and independent official probe are recorded in
+`/private/tmp/codex-turn-state-20261013/results.json` and `official-results.json`.
+Both showed standard metadata replaying the ticket and prefixed metadata failing
+to do so. Post-fix validation must expect that prefixed-event behavior to differ;
+no extra capability or transport selection is introduced to hide the difference.
+
+The compatibility worker is
+`/private/tmp/codex-turn-state-20261013/codex-app-server-metadata-fix`, SHA256
+`7f1bd59f3ae4b5be5381cb42d0b274acb04e17ac49824a8c206cf835d68c3602`.
+The same CPA test-only overlay fails against the pre-fix binary and passes against
+this artifact: the second successful request's actual ticket equals the first
+response's 780-character ticket, and its CPA log changes from `0/780` to `780/780`.
+All 115 paired real-worker leaf cases pass with Go `-race`; CPA production code
+and its image do not need a change for this fix.
+
+All 19 app-server master/worker integration cases pass, including the four new
+standard/prefixed/mixed-order cases. The second frame replays the first ticket
+exactly, not merely another value of the same length, and normal text/completion
+events remain delivered.
+
+The worker build, strict API/app-server Clippy, Rust formatting and actual client
+identity checks pass. The executable remains `codex-app-server 0.162.1` and its
+upstream identity remains `codex-tui/0.162.1` with the native platform suffix.
+
+The native API library passes all 195 tests, including both new extraction tests
+and the existing metadata/model-event cases. The initial run inherited a local
+HTTP proxy and failed the existing blob-transport diagnostic fixture; all 195
+passed with proxy variables removed only for the test process. No assertion or
+native proxy behavior was changed.
+
+Direct worker probes also confirm unchanged exclusions: handshake-only WS tickets
+and HTTP SSE metadata-only tickets are not captured. A different full source turn
+starts with empty routing state. Logs and JSON traces for these probes are under
+`/private/tmp/codex-turn-state-20261013/`; the paired CPA run is recorded in
+`/private/tmp/cpa-turn-state-fix-20261013/after.log`.
 
 ## Compatibility and delivery limits
 

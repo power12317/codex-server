@@ -37,6 +37,21 @@ across turn contexts. Each turn serializes access to its own native client sessi
 Independent contexts remain concurrent. Existing credential isolation, synthetic
 turn lifetime and title-request ephemerality remain in force.
 
+### WebSocket turn-state metadata compatibility
+
+This branch deliberately extends official `0.162.1` in one parser rule: both
+`response.metadata` and `codex.response.metadata` may supply
+`headers.x-codex-turn-state` on a WebSocket response. The unmodified official
+baseline accepts only the former for turn-state extraction.
+
+The existing native `OnceLock` still retains the first value within the turn.
+Subsequent requests on the same native session send that value in their existing
+WebSocket client metadata; later tickets do not overwrite it. Other metadata,
+model events, sending, recovery and completion retain their existing handling.
+This does not add handshake-header capture, HTTP SSE metadata capture, a separate
+ticket cache, or a runtime switch. Official executable names and version remain
+unchanged.
+
 ## IPC contract and delivery
 
 The IPC contract is `protocolVersion: 4`: successful completion carries the final

@@ -75,6 +75,75 @@ fn model_input() -> Value {
     json!({"model":"mock-model","input":"fixture","stream":true})
 }
 
+#[test_case::test_case("response.metadata", "response.metadata"; "standard")]
+#[test_case::test_case("codex.response.metadata", "codex.response.metadata"; "prefixed")]
+#[test_case::test_case("response.metadata", "codex.response.metadata"; "standard_then_prefixed")]
+#[test_case::test_case("codex.response.metadata", "response.metadata"; "prefixed_then_standard")]
+#[tokio::test]
+async fn cpa_native_ws_turn_state_reuses_first_ticket(
+    first_kind: &str,
+    later_kind: &str,
+) -> Result<()> {
+    use core_test_support::responses;
+
+    let first_ticket = "A".repeat(780);
+    let later_ticket = "B".repeat(780);
+    let events = |id: &str| {
+        vec![
+            json!({"type":first_kind,"headers":{"x-codex-turn-state":first_ticket,"openai-model":"gpt-5.2","x-models-etag":"fixture-etag"}}),
+            json!({"type":later_kind,"headers":{"x-codex-turn-state":later_ticket}}),
+            responses::ev_response_created(id),
+            responses::ev_output_text_delta("metadata preserved"),
+            responses::ev_completed(id),
+        ]
+    };
+    let upstream = MockServer::start().await;
+    let websocket =
+        responses::start_websocket_server(vec![vec![events("resp_first"), events("resp_second")]])
+            .await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    let provider = &mut config["model_providers"]["mock_provider"];
+    provider["base_url"] = toml::Value::String(format!(
+        "{}/v1",
+        websocket.uri().replace("ws://", "http://")
+    ));
+    provider["supports_websockets"] = toml::Value::Boolean(true);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let input = json!({"model":"gpt-5.2","input":"fixture","stream":true,
+        "session_id":"source-session","thread_id":"source-session",
+        "turn_id":"01a1335a-1111-7111-8111-111111111111"});
+    for id in [701, 702] {
+        let result = exchange(&mut ws, rpc(input.clone(), id)).await?;
+        assert_eq!(
+            result.reply["result"]["statusCode"], 200,
+            "{}",
+            result.reply
+        );
+        let body = String::from_utf8(result.body)?;
+        assert!(body.contains("metadata preserved"));
+        assert!(body.contains("response.completed"));
+    }
+    let connections = websocket.connections();
+    assert_eq!(connections.len(), 1, "same native WebSocket connection");
+    assert_eq!(connections[0].len(), 2, "two successful model requests");
+    let first = connections[0][0].body_json();
+    let second = connections[0][1].body_json();
+    assert!(first["client_metadata"].get("x-codex-turn-state").is_none());
+    assert_eq!(
+        second["client_metadata"]["x-codex-turn-state"],
+        first_ticket
+    );
+    assert_eq!(first["client_metadata"]["turn_id"], input["turn_id"]);
+    assert_eq!(second["client_metadata"]["turn_id"], input["turn_id"]);
+    assert_eq!(second["previous_response_id"], "resp_first");
+    Ok(())
+}
+
 #[tokio::test]
 async fn cpa_native_completion_preserves_tools_extensions_and_identity() -> Result<()> {
     let upstream = MockServer::start().await;
