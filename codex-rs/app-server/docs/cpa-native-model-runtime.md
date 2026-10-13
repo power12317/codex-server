@@ -38,6 +38,14 @@ requests. Each turn serializes its client session; independent contexts remain
 concurrent. Credential isolation, synthetic turn lifetime and title-request
 ephemerality are unchanged. The worker never silently retries a failed call.
 
+WebSocket routing diagnostics retain only the sanitized `__oailb` node on the
+actual connection. Handshake response cookies take precedence over cookies sent
+by that handshake; explicit deletion or invalid values clear the diagnostic node.
+Every model request on the connection reports it through the existing `oaiLbNode`
+field, including the initial and reused `response.create` frames. Reconnection
+derives a fresh value and never inherits another socket's diagnostic node. Native
+cookie storage and sending remain unchanged; no handshake response is replayed.
+
 ### WebSocket turn-state metadata compatibility
 
 This branch deliberately extends official `0.162.1` in one parser rule: both

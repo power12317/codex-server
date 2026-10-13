@@ -51,6 +51,8 @@ struct WsStream {
     tx_command: mpsc::Sender<WsCommand>,
     rx_message: mpsc::UnboundedReceiver<Result<Message, WsError>>,
     pump_task: tokio::task::JoinHandle<()>,
+    // Sanitized diagnostics only; discarded with this socket, never sent upstream.
+    oai_lb_node: Option<String>,
 }
 
 enum WsCommand {
@@ -61,7 +63,7 @@ enum WsCommand {
 }
 
 impl WsStream {
-    fn new(inner: WebSocketConnection) -> Self {
+    fn new(inner: WebSocketConnection, oai_lb_node: Option<String>) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
         let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
 
@@ -122,6 +124,7 @@ impl WsStream {
             tx_command,
             rx_message,
             pump_task,
+            oai_lb_node,
         }
     }
 
@@ -508,10 +511,6 @@ async fn connect_websocket(
     request.headers_mut().extend(headers);
 
     let observer = codex_http_client::observation::transport_observer();
-    if let Some(observer) = &observer {
-        observer.request("websocket", "GET", url.as_str(), request.headers(), &[]);
-    }
-
     let response = connector.connect(request, websocket_config()).await;
 
     let (stream, response) = match response {
@@ -546,7 +545,10 @@ async fn connect_websocket(
         let _ = turn_state.set(header_value.to_string());
     }
     Ok((
-        WsStream::new(stream),
+        WsStream::new(
+            stream,
+            observer.and_then(|observer| observer.websocket_connection_node()),
+        ),
         response.status(),
         reasoning_included,
         server_model,
@@ -929,12 +931,10 @@ async fn send_websocket_request(
 ) -> Result<(), ApiError> {
     let request_start = Instant::now();
     if let Some(observer) = codex_http_client::observation::transport_observer() {
-        observer.request(
-            "websocket",
-            "response.create",
+        observer.websocket_request(
             endpoint,
-            &HeaderMap::new(),
             request_text.as_bytes(),
+            ws_stream.oai_lb_node.as_deref(),
         );
     }
     let result = tokio::time::timeout(

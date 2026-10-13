@@ -174,6 +174,18 @@ impl WebSocketConnector {
                 request.headers_mut().insert(COOKIE, cookies);
             }
             let proxy_route = route.await.map_err(WebSocketError::Io)?;
+            // Observe the actual handshake after the native cookie store has supplied headers.
+            if let Some(observer) = codex_http_client::observation::transport_observer()
+                && observer.observes_request(request.method().as_str(), url.as_str())
+            {
+                observer.request(
+                    "websocket",
+                    request.method().as_str(),
+                    url.as_str(),
+                    request.headers(),
+                    &[],
+                );
+            }
             let result = dialer::connect(
                 request,
                 config,

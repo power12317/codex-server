@@ -559,6 +559,9 @@ async fn cpa_native_concurrent_source_and_credential_isolation() -> Result<()> {
 #[path = "streaming_tests.rs"]
 mod streaming_tests;
 
+#[path = "websocket_node_tests.rs"]
+mod websocket_node_tests;
+
 #[tokio::test]
 async fn cpa_native_partial_output_error_returns_without_retry() -> Result<()> {
     let upstream = MockServer::start().await;

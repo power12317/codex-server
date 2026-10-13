@@ -5,6 +5,47 @@ not certify the stable v3 bridge or a published Linux image. The fixed reference
 is official Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
 
+## WebSocket connection node diagnostics (2026-10-14)
+
+The connection now retains the sanitized `__oailb` node determined by its actual
+handshake and supplies it to each request's independent diagnostic observer.
+Previously, even the first `response.create` notification lost a node reported
+by the handshake, and reused requests had no connection-level snapshot. Handshake
+request observation now runs after native cookie-store insertion, so fallback
+reflects the cookie actually sent. Native cookie policy, business bytes, client
+identity, worker retry policy and IPC v5 are unchanged.
+
+Four real master/worker WebSocket cases pass. Each opens three connections under
+the same source session/turn and sends two successful requests on each. The first
+two sockets then receive a separate failing invocation, which must return without
+retry before the caller opens the next connection. Tests verify first/reused
+request nodes, response-cookie priority, actual-request-cookie fallback, deletion,
+invalid values, reconnect updates, no stale node on a cookie-free new connection,
+redaction, and absence of synthetic handshake responses or frame cookie headers.
+
+CPA's existing production logging consumes the unchanged `oaiLbNode` field;
+no CPA production change is required. Its `-race` matrix passes 97 real-worker
+leaf cases and one diagnostic-blocking regression. The new case verifies six
+model requests over three sockets, exact node values on both rounds, one handshake
+per socket and zero direct CPA model sends. Evidence is recorded in
+`/private/tmp/cpa-ws-oailb-final-matrix.log`, using the final standalone build
+`/private/tmp/codex-ws-node-20261014/codex-app-server`, SHA256
+`5624ff3e5e08ed3750869bc499d9ff1e6bfff2172afba156d26069b2f32b8519`.
+This exact artifact also passes the actual client-identity probe
+(`codex-app-server 0.162.1`, `codex-tui/0.162.1`).
+
+Local checks pass 24 service unit tests, 42 master/worker integration tests
+(including the four new cases), 195 API tests, 115 HTTP-client tests and 18
+WebSocket-client tests. The secure-handshake cookie fixture additionally compares
+all observed request cookies with those received by the server, including cookies
+inserted by the native store. One existing HTTP redirect log-capture assertion
+failed in the parallel run; the complete HTTP suite passed with one test thread,
+without changing the test or HTTP routing implementation. The standalone locked
+build, strict Clippy for app-server/API/HTTP-client/WebSocket-client libraries and
+tests, Rust formatting, documentation formatting and diff whitespace checks pass.
+
+The zero-retry rollout results below are retained as the preceding baseline.
+
 ## Current IPC v5 zero-retry candidate
 
 The user selected immediate native event delivery with worker retries set to

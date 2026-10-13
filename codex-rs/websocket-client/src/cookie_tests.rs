@@ -1,10 +1,13 @@
 //! Real WebSocket handshakes exercising shared routing cookies and their transport boundaries.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use codex_http_client::HttpClientFactory;
 use codex_http_client::OutboundProxyPolicy;
 use codex_http_client::OutboundProxyRoute;
+use codex_http_client::observation::TransportObserver;
+use codex_http_client::observation::observe_transport;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use pretty_assertions::assert_eq;
 use rcgen::CertifiedKey;
@@ -23,6 +26,7 @@ use tokio_tungstenite::tungstenite::Error as WebSocketError;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::server::Request;
 use tokio_tungstenite::tungstenite::handshake::server::Response;
+use tokio_tungstenite::tungstenite::http::HeaderMap;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::http::header::COOKIE;
@@ -32,6 +36,27 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use crate::AsyncIo;
 use crate::TcpNodelay;
 use crate::WebSocketConnector;
+
+#[derive(Default)]
+struct HandshakeObserver(Mutex<Vec<Option<HeaderValue>>>);
+
+impl TransportObserver for HandshakeObserver {
+    fn request(
+        &self,
+        transport: &str,
+        method: &str,
+        _url: &str,
+        headers: &HeaderMap,
+        _body: &[u8],
+    ) {
+        assert_eq!(transport, "websocket");
+        assert_eq!(method, "GET");
+        self.0.lock().unwrap().push(headers.get(COOKIE).cloned());
+    }
+    fn response(&self, _transport: &str, _status: u16, _headers: &HeaderMap) {}
+    fn body(&self, _transport: &str, _bytes: &[u8]) {}
+    fn error(&self, _transport: &str, _message: &str) {}
+}
 
 #[tokio::test]
 async fn websocket_handshakes_share_routing_cookies_and_respect_cookie_scope() {
@@ -165,6 +190,7 @@ async fn websocket_handshakes_share_routing_cookies_and_respect_cookie_scope() {
     });
 
     let mut actual_statuses = Vec::new();
+    let observer = Arc::new(HandshakeObserver::default());
     for (url, explicit_cookie) in requests {
         // Separate connector/factory instances must still see the shared routing cookie.
         let connector = WebSocketConnector {
@@ -178,8 +204,9 @@ async fn websocket_handshakes_share_routing_cookies_and_respect_cookie_scope() {
                 .headers_mut()
                 .insert(COOKIE, HeaderValue::from_static(cookie));
         }
-        let result = connector
-            .connect_with_route(
+        let result = observe_transport(
+            observer.clone(),
+            connector.connect_with_route(
                 request,
                 WebSocketConfig::default(),
                 std::future::ready(Ok(OutboundProxyRoute::Proxy {
@@ -187,8 +214,9 @@ async fn websocket_handshakes_share_routing_cookies_and_respect_cookie_scope() {
                     no_proxy: None,
                 })),
                 /*loopback_direct*/ false,
-            )
-            .await;
+            ),
+        )
+        .await;
         let status = match result {
             Ok((connection, response)) => {
                 drop(connection);
@@ -200,8 +228,14 @@ async fn websocket_handshakes_share_routing_cookies_and_respect_cookie_scope() {
         actual_statuses.push(status);
     }
     assert_eq!(actual_statuses, expected_statuses);
+    let received_cookies = server.await.unwrap();
     assert_eq!(
-        server.await.unwrap(),
+        *observer.0.lock().unwrap(),
+        received_cookies,
+        "diagnostics must see cookies added by the native store, exactly as sent"
+    );
+    assert_eq!(
+        received_cookies,
         [
             None,
             Some("__oailb=west"),

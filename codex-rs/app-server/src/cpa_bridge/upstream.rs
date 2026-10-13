@@ -136,6 +136,20 @@ fn public_error_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
 }
 
 impl TransportObserver for NativeObservation {
+    fn websocket_connection_node(&self) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .node
+            .clone()
+    }
+    fn websocket_request(&self, url: &str, body: &[u8], node: Option<&str>) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .node = node.map(str::to_owned);
+        self.request("websocket", "response.create", url, &HeaderMap::new(), body);
+    }
     fn observes_request(&self, _method: &str, url: &str) -> bool {
         let Ok(url) = url.parse::<url::Url>() else {
             return false;
@@ -162,15 +176,16 @@ impl TransportObserver for NativeObservation {
             .flat_map(|value| value.split(';'))
             .find_map(oai_lb_cookie)
             .and_then(oai_lb_node);
-        {
+        let node = {
             let mut state = self
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if method != "response.create" {
-                state.node = node.clone();
+                state.node = node;
             }
-        }
+            state.node.clone()
+        };
         self.notify(CpaInferenceUpstreamNotification::Request {
             request_id: self.request_id.clone(),
             transport: transport.into(),

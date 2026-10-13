@@ -411,7 +411,7 @@ queued behind all preceding records in the same diagnostic FIFO.
 `transport` is the actual `http` or `websocket` transport. WebSocket handshake
 records and response.create frame records are separate observations.
 
-`oaiLbNode` describes this HTTP exchange's gateway node. Request notifications
+For HTTP, `oaiLbNode` describes this exchange's gateway node. Request notifications
 use the actual outbound `Cookie` header. Response notifications use the response's
 `__oailb` cookie when present, including an empty result for deletion or an invalid
 value; otherwise they retain the node from that exact request. Other response
@@ -419,6 +419,17 @@ cookies do not clear it. The same rule applies to successful and HTTP error
 responses. Network errors without an HTTP response leave the request notification
 as the available observation. No additional node cache or cookie-jar reread is
 used to infer the response node.
+
+For WebSockets, the actual handshake determines a connection-scoped diagnostic
+node using the same response-cookie priority and request-cookie fallback. Request
+headers are observed after the native cookie store supplies them. Every
+`response.create` request notification, including the first and reused requests,
+carries that connection's `oaiLbNode`. A new connection derives its own node;
+an absent, deleted or invalid cookie cannot inherit a previous connection's node.
+Only the sanitized node is retained, not the handshake observer or raw cookie.
+Reused requests do not emit a synthetic HTTP response or add cookie headers to
+WebSocket frames. This diagnostic state does not change routing, retries or
+business-event delivery, and uses the existing IPC v5 fields.
 
 These describe native upstream exchanges, including rejected authentication
 attempts. Diagnostic identities remain native; source identity restoration
