@@ -204,6 +204,14 @@ third-party dependencies. Docker runs this synchronization again in its build
 copy. `cpa/capabilities/read` reports the compiled runtime version and selected
 upstream release commit; protocol v3 and the client identity names are unchanged.
 
+The official release contains two distinct targets: the `codex-cli` package
+builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds
+`codex-app-server` (`codex-app-server 0.162.1`). The image uses the latter official
+target; it is not a renamed CLI. The supervisor's `initialize` response uses
+native client identity generation rather than a fork-specific User-Agent name.
+See [the official identity audit](../../codex-rs/app-server/docs/cpa-official-identity.md)
+for release artifact checks and the comparison command.
+
 ## Runtime timezone
 
 The supplied Compose configurations bind the deployment host's `/etc/localtime`
