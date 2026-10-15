@@ -2153,6 +2153,7 @@ dependencies = [
  "futures",
  "hmac 0.12.1",
  "http 1.4.0",
+ "httpdate",
  "keyring",
  "libc",
  "opentelemetry",

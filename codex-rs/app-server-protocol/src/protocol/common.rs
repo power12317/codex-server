@@ -1982,6 +1982,8 @@ server_notification_definitions! {
     Error => "error" (v2::ErrorNotification),
     #[experimental("cpa/inference/upstream")]
     CpaInferenceUpstream => "cpa/inference/upstream" (v2::CpaInferenceUpstreamNotification),
+    #[experimental("cpa/inference/ticket")]
+    CpaInferenceTicket => "cpa/inference/ticket" (v2::CpaInferenceTicketNotification),
     #[experimental("cpa/inference/body")]
     CpaInferenceBody => "cpa/inference/body" (v2::CpaInferenceBodyNotification),
     #[experimental("cpa/inference/completed")]

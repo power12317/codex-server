@@ -43,7 +43,18 @@ complete inference requests and full upstream diagnostic bodies.
 return master capabilities:
 
 ```json
-{"protocolVersion":3,"runtimeVersion":"...","upstreamRevision":"...","executionMode":"inference-only","operations":["responses","images/generations","images/edits"],"rawBody":true,"responseIdentityMapping":true,"manualOAuth":true,"upstreamLogs":true,"upstreamBodyLogs":true}
+{
+  "protocolVersion": 3,
+  "runtimeVersion": "...",
+  "upstreamRevision": "...",
+  "executionMode": "inference-only",
+  "operations": ["responses", "images/generations", "images/edits"],
+  "rawBody": true,
+  "responseIdentityMapping": true,
+  "manualOAuth": true,
+  "upstreamLogs": true,
+  "upstreamBodyLogs": true
+}
 ```
 
 Reload scans one credential or the directory and waits for the corresponding
@@ -53,7 +64,7 @@ selection and effective flags; the master only applies them.
 ## Inference
 
 `cpa/inference/start` takes
-`{requestId, credentialId, operation, sourceFormat, sessionId, imageApi?, request}` and returns
+`{requestId, credentialId, operation, sourceFormat, sessionId, imageApi?, captureTicketSnapshot?, request}` and returns
 `{requestId, statusCode, headers}`. There is no `accountId` parameter. The worker
 maps the semantic request into the native Codex request builder, sends once
 through the native auth/provider transport, and does not start an agent/tool loop.
@@ -68,6 +79,11 @@ Ordered notifications:
   present (an empty/invalid value remains empty), otherwise the same request's
   node, for both success and HTTP errors. Other Set-Cookie values do not clear it.
   This is an exchange-local observation, not an additional routing-state cache.
+- `cpa/inference/ticket`: opt-in source material from one actual exchange, enabled
+  only by `captureTicketSnapshot: true` when capabilities include `ticketSnapshots`.
+  It carries `{requestId, credentialId, model, observedAt, state, route}` and is
+  delivered before the terminal notification, including before acceptance when
+  complete response headers suffice. See the [snapshot contract](../../../docs/codex-runtime-source-ticket_CN.md).
 - **`cpa/inference/body {requestId, bodyBase64}`**: HTTP response bytes after the
   selective identity projection described below.
   This is the only business-response body channel. Do not emit an additional
@@ -189,9 +205,9 @@ native identity header aliases are recognized. If the corresponding source field
 was absent, a matching generated field is removed instead of exposing a synthetic
 source identity. Server-owned values that do not match the mapping remain intact.
 
-Successful response headers allowlist `session-id`, `thread-id`,
-`x-codex-parent-thread-id`, `x-codex-window-id` and `x-codex-turn-metadata` in
-addition to the existing public diagnostic headers. Structured HTTP error bodies
+Successful response headers retain all actual values, including Cookie,
+Set-Cookie, Authorization and turn-state, with the existing selective identity
+projection. Structured HTTP error bodies
 and headers receive the same projection; stale body validators are removed when
 an error body changes. The separate `cpa/inference/upstream` diagnostic channel
 retains actual native request/response identities for troubleshooting.
@@ -261,15 +277,15 @@ are consumed instead of being sent as unknown Responses parameters.
 
 Field handling:
 
-| Fields | Policy |
-| --- | --- |
-| model/input/instructions/tools/reasoning/service_tier | Parse and build using native types; normalize text messages and supported tool envelopes. |
-| session/thread/cache/turn identities | Resolve once using the identity and lifecycle rules above. |
-| headers/authorization/cookies and reserved device metadata | Worker-owned; caller values cannot override the transport. |
-| tool_choice/text/include and unknown top-level extensions | Retain as documented request options, subject to tool-choice validation; extensions are not a guarantee of upstream support. |
-| non-reserved flat client_metadata | Retain unless managed above. |
-| previous_response_id/conversation/generate/store=true/background=true | Reject; stream=true is required. |
-| response HTTP body | Restore matching known envelope identity fields, then forward as ordered base64 chunks; preserve opaque content. |
+| Fields                                                                | Policy                                                                                                                       |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| model/input/instructions/tools/reasoning/service_tier                 | Parse and build using native types; normalize text messages and supported tool envelopes.                                    |
+| session/thread/cache/turn identities                                  | Resolve once using the identity and lifecycle rules above.                                                                   |
+| headers/authorization/cookies and reserved device metadata            | Worker-owned; caller values cannot override the transport.                                                                   |
+| tool_choice/text/include and unknown top-level extensions             | Retain as documented request options, subject to tool-choice validation; extensions are not a guarantee of upstream support. |
+| non-reserved flat client_metadata                                     | Retain unless managed above.                                                                                                 |
+| previous_response_id/conversation/generate/store=true/background=true | Reject; stream=true is required.                                                                                             |
+| response HTTP body                                                    | Restore matching known envelope identity fields, then forward as ordered base64 chunks; preserve opaque content.             |
 
 The `sourceFormat` label does not convert whole Chat/Claude conversations into
 Responses. Every client supplies the Responses request envelope and history.
@@ -293,9 +309,12 @@ name, PID, CODEX_HOME and config path; `cpa.request.start`, `.mapping`, `.upstre
 `.completed` and `.error` with `credentialId` and `rpcRequestId`. No `RUST_LOG`
 setting is required. Validation failures and master dispatch errors are logged.
 Mapping events distinguish source IDs, native metadata IDs, transport affinity,
-cache key and actual turn state. Upstream events include status, redacted headers
+cache key and turn-state length. Upstream stderr events include status, redacted headers
 and structured failure code/type/message. Authorization and cookies stay masked;
 full request/response payloads continue through the existing CPA notifications.
+IPC notification, start and error headers carry original values. Log redaction
+uses a separate copy and never changes IPC. Dedicated ticket notifications are
+not serialized into ordinary logs.
 
 `rpcRequestId` is the RPC UUID, not CPA's eight-character external log ID.
 Use the actual upstream `x-request-id`, also present in CPA's detailed request

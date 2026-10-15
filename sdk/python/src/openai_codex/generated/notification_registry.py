@@ -20,6 +20,7 @@ from .v2_all import ContextCompactedNotification
 from .v2_all import CpaInferenceBodyNotification
 from .v2_all import CpaInferenceCompletedNotification
 from .v2_all import CpaInferenceErrorNotification
+from .v2_all import CpaInferenceTicketNotification
 from .v2_all import CpaInferenceUpstreamNotification
 from .v2_all import DeprecationNoticeNotification
 from .v2_all import EnvironmentConnectionNotification
@@ -108,6 +109,7 @@ KnownNotificationPayload: TypeAlias = (
     | CpaInferenceBodyNotification
     | CpaInferenceCompletedNotification
     | CpaInferenceErrorNotification
+    | CpaInferenceTicketNotification
     | CpaInferenceUpstreamNotification
     | DeprecationNoticeNotification
     | EnvironmentConnectionNotification
@@ -195,6 +197,7 @@ NOTIFICATION_MODELS: dict[str, type[KnownNotificationPayload]] = {
     "cpa/inference/body": CpaInferenceBodyNotification,
     "cpa/inference/completed": CpaInferenceCompletedNotification,
     "cpa/inference/error": CpaInferenceErrorNotification,
+    "cpa/inference/ticket": CpaInferenceTicketNotification,
     "cpa/inference/upstream": CpaInferenceUpstreamNotification,
     "deprecationNotice": DeprecationNoticeNotification,
     "error": ErrorNotification,

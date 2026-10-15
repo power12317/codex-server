@@ -1192,6 +1192,39 @@
       ],
       "type": "object"
     },
+    "CpaInferenceTicketNotification": {
+      "additionalProperties": false,
+      "description": "Private routing material; never include its values in diagnostic formatting.",
+      "properties": {
+        "credentialId": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/definitions/CpaTicketRoute"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credentialId",
+        "model",
+        "observedAt",
+        "requestId",
+        "route",
+        "state"
+      ],
+      "type": "object"
+    },
     "CpaInferenceUpstreamNotification": {
       "description": "Actual inference transport exchanges, including attempts made during auth recovery.",
       "oneOf": [
@@ -1316,6 +1349,40 @@
           "type": "object"
         }
       ]
+    },
+    "CpaTicketCookie": {
+      "additionalProperties": false,
+      "properties": {
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "CpaTicketRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "__cflb": {
+          "$ref": "#/definitions/CpaTicketCookie"
+        },
+        "__oailb": {
+          "$ref": "#/definitions/CpaTicketCookie"
+        }
+      },
+      "required": [
+        "__cflb",
+        "__oailb"
+      ],
+      "type": "object"
     },
     "CreditsSnapshot": {
       "properties": {
@@ -7250,6 +7317,26 @@
         "params"
       ],
       "title": "Cpa/inference/upstreamNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "cpa/inference/ticket"
+          ],
+          "title": "Cpa/inference/ticketNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/CpaInferenceTicketNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Cpa/inference/ticketNotification",
       "type": "object"
     },
     {

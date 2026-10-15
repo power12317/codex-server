@@ -776,7 +776,7 @@ impl OutgoingMessageSender {
                 })
                 .await
             {
-                warn!("failed to send server notification to client: {err:?}");
+                warn!("failed to send server notification to client: {err}");
             }
             return;
         }
@@ -790,7 +790,7 @@ impl OutgoingMessageSender {
                 })
                 .await
             {
-                warn!("failed to send server notification to client: {err:?}");
+                warn!("failed to send server notification to client: {err}");
             }
         }
     }
@@ -812,7 +812,7 @@ impl OutgoingMessageSender {
             })
             .await
         {
-            warn!("failed to send server notification to client: {err:?}");
+            warn!("failed to send server notification to client: {err}");
         }
         write_complete_rx.await.is_ok()
     }
@@ -881,7 +881,7 @@ impl OutgoingMessageSender {
         };
 
         if let Err(err) = send_result {
-            warn!("failed to send {message_kind} to client: {err:?}");
+            warn!("failed to send {message_kind} to client: {err}");
         }
     }
 }

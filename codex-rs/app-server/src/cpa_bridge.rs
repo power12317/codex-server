@@ -3,6 +3,7 @@ mod contexts;
 mod identity_response;
 mod login;
 mod response_stream;
+mod ticket;
 mod upstream;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
@@ -25,7 +26,6 @@ use codex_model_provider::create_model_provider;
 use futures::StreamExt;
 use serde_json::Value;
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -205,7 +205,6 @@ impl CpaBridge {
                     "cpa.request.error"
                 },
                 json!({"error": result.as_ref().err().map(|error| &error.message),
-                    "turnState": session.turn_state(),
                     "turnStateLength": session.turn_state().map(str::len)}),
             );
             if let Err(mut error) = result {
@@ -355,13 +354,14 @@ impl CpaBridge {
                     "Unable to construct managed HTTP client",
                 )
             })?;
-        let transport = upstream::UpstreamTransport {
+        let mut transport = upstream::UpstreamTransport {
             inner: ReqwestTransport::from_http_client(client),
             factory,
             outgoing: self.outgoing.clone(),
             connection_id: id.connection_id,
             request_id: params.request_id.clone(),
             credential_id: params.credential_id.clone(),
+            ticket_model: None,
         };
         if image_endpoint {
             let operation = match params.operation.as_str() {
@@ -423,9 +423,12 @@ impl CpaBridge {
                 "requestPurpose": if source.is_title() { "thread_title" } else { "conversation" },
                 "syntheticTurn": source.turn_id.is_none(),
                 "transportSessionId": options.session_id, "transportThreadId": options.thread_id,
-                "turnStateSent": options.extra_headers.get("x-codex-turn-state").and_then(|value| value.to_str().ok()),
+                "turnStateSentLength": options.extra_headers.get("x-codex-turn-state").map(|value| value.as_bytes().len()),
             }),
         );
+        if params.capture_ticket_snapshot == Some(true) {
+            transport.ticket_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
+        }
         ResponsesClient::new(transport, provider, auth_provider_from_auth(&auth))
             .stream_prepared_body(body, options)
             .await
@@ -466,32 +469,8 @@ impl CpaBridge {
             codex_core::InferenceIdentity::from_request(&params.request),
             session.mapping(),
         );
-        // Only explicit public identity projections are added to the existing allowlist.
-        // Cookies, bearer credentials and opaque routing state remain private headers.
-        let mut headers = BTreeMap::new();
-        for name in [
-            "content-type",
-            "x-request-id",
-            "retry-after",
-            "openai-model",
-            "openai-processing-ms",
-            "x-codex-imagegen-request-id",
-            "session-id",
-            "thread-id",
-            "x-codex-parent-thread-id",
-            "x-codex-window-id",
-            "x-codex-turn-metadata",
-        ] {
-            let values: Vec<_> = stream
-                .headers
-                .get_all(name)
-                .iter()
-                .filter_map(|v| v.to_str().ok().map(str::to_owned))
-                .collect();
-            if !values.is_empty() {
-                headers.insert(name.to_owned(), values);
-            }
-        }
+        // The trusted IPC receives all actual response headers, with identity projection only.
+        let headers = upstream::wire_headers(&stream.headers);
         let mut translated_headers =
             serde_json::to_value(&headers).map_err(|error| failure(502, &error.to_string()))?;
         if let Some(fields) = translated_headers.as_object_mut() {
@@ -564,6 +543,7 @@ pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
         upstream_body_logs: true,
         raw_body: true,
         response_identity_mapping: true,
+        ticket_snapshots: Some(true),
         execution_mode: "inference-only".into(),
         operations: vec![
             "responses".into(),
@@ -593,7 +573,7 @@ fn api_failure(error: ApiError) -> JSONRPCErrorError {
             code: -32000,
             message: "Upstream inference failed".into(),
             data: Some(
-                json!({"httpStatus":status.as_u16(),"body":body,"headers":headers.as_ref().map(upstream::log_headers)}),
+                json!({"httpStatus":status.as_u16(),"body":body,"headers":headers.as_ref().map(upstream::wire_headers)}),
             ),
         };
     }

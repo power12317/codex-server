@@ -208,9 +208,9 @@ async fn cpa_source_turn_continuity_isolation_and_default_stderr() -> Result<()>
         (
             started["fields"]["credentialId"].clone(),
             started["fields"]["rpcRequestId"].clone(),
-            completed["fields"]["details"]["turnState"].clone()
+            completed["fields"]["details"]["turnStateLength"].clone()
         ),
-        (json!("shared.json"), json!("r"), json!("first"))
+        (json!("shared.json"), json!("r"), json!(5))
     );
     assert!(worker["fields"]["details"]["pid"].is_number());
     assert!(
@@ -289,7 +289,7 @@ async fn cpa_failure_logs_are_visible_without_rust_log() -> Result<()> {
     let response = receive(&mut ws, "method", json!("cpa/inference/upstream")).await?;
     assert_eq!(
         response["params"]["headers"]["set-cookie"],
-        json!(["[REDACTED]"])
+        json!(["private-cookie"])
     );
     receive(&mut ws, "id", json!(2)).await?;
     let error = runtime

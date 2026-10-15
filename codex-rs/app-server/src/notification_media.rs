@@ -140,7 +140,8 @@ pub(crate) fn without_notification_media(notification: ServerNotification) -> Se
         | ServerNotification::CpaInferenceUpstream(_)
         | ServerNotification::CpaInferenceBody(_)
         | ServerNotification::CpaInferenceCompleted(_)
-        | ServerNotification::CpaInferenceError(_) => notification,
+        | ServerNotification::CpaInferenceError(_)
+        | ServerNotification::CpaInferenceTicket(_) => notification,
     }
 }
 

@@ -1,8 +1,13 @@
 //! ChatGPT cookies shared by HTTP and WebSocket transports. Only infrastructure cookies may be
 //! stored globally; configured cookies remain scoped to their factory.
 
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use http::HeaderMap;
 use http::HeaderValue;
@@ -24,6 +29,9 @@ static SHARED_CHATGPT_CLOUDFLARE_COOKIE_STORE: LazyLock<Arc<ChatGptCloudflareCoo
 #[derive(Debug, Default)]
 struct ChatGptCloudflareCookieStore {
     jar: Jar,
+    // Diagnostic lower bounds only; never used for selecting or sending cookies.
+    // Match the exact value by digest and retain its earliest known deadline.
+    routing_expiry: Mutex<HashMap<(String, [u8; 32]), SystemTime>>,
 }
 
 pub(crate) struct ChatGptCookieStore {
@@ -54,9 +62,22 @@ impl CookieStore for ChatGptCloudflareCookieStore {
             return;
         }
 
-        let mut cloudflare_cookie_headers =
-            cookie_headers.filter(|header| is_allowed_cloudflare_set_cookie_header(header));
-        self.jar.set_cookies(&mut cloudflare_cookie_headers, url);
+        let headers: Vec<_> = cookie_headers
+            .filter(|header| is_allowed_cloudflare_set_cookie_header(header))
+            .collect();
+        let now = SystemTime::now();
+        for header in &headers {
+            if let Some((name, value, expiry)) = routing_cookie_deadline(header, now) {
+                let key = (name, Sha256::digest(value.as_bytes()).into());
+                self.routing_expiry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .entry(key)
+                    .and_modify(|existing| *existing = (*existing).min(expiry))
+                    .or_insert(expiry);
+            }
+        }
+        self.jar.set_cookies(&mut headers.into_iter(), url);
     }
 
     fn cookies(&self, url: &reqwest::Url) -> Option<HeaderValue> {
@@ -104,6 +125,16 @@ impl CookieStore for ChatGptCookieStore {
 }
 
 impl HttpClientFactory {
+    /// Known expiry for an exact outbound routing-cookie value, without reading jar values.
+    /// This conservative diagnostic bound never changes native cookie expiration or sending.
+    pub fn chatgpt_routing_cookie_deadline(&self, name: &str, value: &str) -> Option<SystemTime> {
+        SHARED_CHATGPT_CLOUDFLARE_COOKIE_STORE
+            .routing_expiry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(name.to_owned(), Sha256::digest(value.as_bytes()).into()))
+            .copied()
+    }
     /// Returns cookies for a ChatGPT HTTPS or WSS request, using the same store as HTTP clients.
     /// Explicit request Cookie headers should take precedence over this value.
     pub fn chatgpt_cookie_header(&self, uri: &Uri) -> Option<HeaderValue> {
@@ -124,6 +155,41 @@ impl HttpClientFactory {
                 .set_cookies(&mut headers.get_all(SET_COOKIE).iter(), &url);
         }
     }
+}
+
+fn routing_cookie_deadline(
+    header: &HeaderValue,
+    now: SystemTime,
+) -> Option<(String, String, SystemTime)> {
+    let mut parts = header.to_str().ok()?.split(';');
+    let (name, value) = parts.next()?.trim().split_once('=')?;
+    if !matches!(name, "__cflb" | "__oailb") || value.is_empty() {
+        return None;
+    }
+    let mut expires = None;
+    let mut max_age = None;
+    for part in parts {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        if key.eq_ignore_ascii_case("expires") {
+            expires = httpdate::parse_http_date(value.trim()).ok();
+        } else if key.eq_ignore_ascii_case("max-age") {
+            max_age = value.trim().parse::<i64>().ok();
+        }
+    }
+    if let Some(seconds) = max_age {
+        expires = if seconds <= 0 {
+            Some(SystemTime::UNIX_EPOCH)
+        } else {
+            now.checked_add(std::time::Duration::from_secs(seconds as u64))
+        };
+    }
+    Some((
+        name.to_owned(),
+        value.trim_matches('"').to_owned(),
+        expires?,
+    ))
 }
 
 fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {

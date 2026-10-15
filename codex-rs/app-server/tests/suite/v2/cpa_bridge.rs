@@ -15,6 +15,8 @@ mod images_tests;
 mod oailb_tests;
 #[path = "cpa_bridge/parser_tests.rs"]
 mod parser_tests;
+#[path = "cpa_bridge/ticket_tests.rs"]
+mod ticket_tests;
 #[path = "cpa_bridge/time_context_tests.rs"]
 mod time_context_tests;
 
@@ -197,7 +199,7 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
         .respond_with(
             ResponseTemplate::new(/*s*/ 200)
                 .insert_header("content-type", "text/event-stream")
-                .insert_header("set-cookie", node_cookie)
+                .insert_header("set-cookie", node_cookie.clone())
                 .set_body_raw(body.clone(), "text/event-stream"),
         )
         .expect(/*r*/ 1)
@@ -276,12 +278,12 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
     assert!(prepared.get("authorization").is_none());
     assert_eq!(
         logged_request["headers"]["authorization"],
-        json!(["[REDACTED]"])
+        json!(["Bearer fake-cpa-access"])
     );
     assert_eq!(logged_response["kind"], json!("response"));
     assert_eq!(
         logged_response["headers"]["set-cookie"],
-        json!(["[REDACTED]"])
+        json!([node_cookie])
     );
     assert_eq!(logged_response["statusCode"], json!(200));
     assert_eq!(logged_response["oaiLbNode"], json!("unified-42"));
@@ -313,10 +315,9 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
             _ => anyhow::bail!("unexpected inference message: {message}"),
         }
     }
-    assert_eq!(
-        accepted["result"],
-        json!({"requestId":"r","statusCode":200,"headers":{"content-type":["text/event-stream"]}})
-    );
+    assert_eq!(accepted["result"]["requestId"], "r");
+    assert_eq!(accepted["result"]["statusCode"], 200);
+    assert_eq!(accepted["result"]["headers"], logged_response["headers"]);
     assert_eq!(wire_body, body.as_bytes());
     assert!(!marker.exists());
     let requests = upstream.received_requests().await.unwrap();
@@ -341,15 +342,13 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
         )
     );
     for (name, values) in logged_request["headers"].as_object().unwrap() {
-        if values != &json!(["[REDACTED]"]) {
-            let actual: Vec<_> = inference[0]
-                .headers
-                .get_all(name.as_str())
-                .iter()
-                .map(|v| v.to_str().unwrap())
-                .collect();
-            assert_eq!(values, &json!(actual), "header {name}");
-        }
+        let actual: Vec<_> = inference[0]
+            .headers
+            .get_all(name.as_str())
+            .iter()
+            .map(|v| v.to_str().unwrap())
+            .collect();
+        assert_eq!(values, &json!(actual), "header {name}");
     }
     use sha2::Digest;
     assert_eq!(

@@ -109,6 +109,7 @@ async fn cpa_oailb_exchange_success_and_http_error(
         "invalid" => Some("__oailb=invalid; Path=/".to_owned()),
         _ => unreachable!(),
     };
+    let expected_cookie = cookie.clone();
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(move |request: &wiremock::Request| {
@@ -144,13 +145,15 @@ async fn cpa_oailb_exchange_success_and_http_error(
         assert_eq!(sent["oaiLbNode"], json!(request_node));
         assert_eq!(received["oaiLbNode"], json!(expected));
         assert_eq!(received["statusCode"], json!(status));
-        if request_node.is_some() {
-            assert_eq!(sent["headers"]["cookie"], json!(["[REDACTED]"]));
+        if let Some(request_node) = request_node {
+            assert_eq!(
+                sent["headers"]["cookie"],
+                json!([format!("__cf_bm=fixture; {}", node_cookie(request_node))])
+            );
         }
         if response_cookie != "absent" {
-            assert_eq!(received["headers"]["set-cookie"], json!(["[REDACTED]"]));
+            assert_eq!(received["headers"]["set-cookie"], json!([expected_cookie]));
         }
-        assert!(!serde_json::to_string(messages)?.contains("fixture-signature"));
         let last = messages.last().expect("terminal message");
         if status == 200 {
             assert_eq!(last["method"], json!("cpa/inference/completed"));

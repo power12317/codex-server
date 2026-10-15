@@ -27,6 +27,10 @@ pub struct CpaCapabilitiesReadResponse {
     /// Known response identity fields are restored to caller values. Other payloads are opaque.
     #[serde(default)]
     pub response_identity_mapping: bool,
+    /// Opt-in, exchange-scoped source ticket snapshots. The business stream remains IPC v3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ticket_snapshots: Option<bool>,
     pub operations: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -42,7 +46,63 @@ pub struct CpaInferenceStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub image_api: Option<CpaImageApi>,
+    /// Send private ticket snapshots only to this inference's connection. Default: disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture_ticket_snapshot: Option<bool>,
     pub request: serde_json::Map<String, Value>,
+}
+
+/// Private routing material; never include its values in diagnostic formatting.
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct CpaInferenceTicketNotification {
+    pub request_id: String,
+    pub credential_id: String,
+    pub model: String,
+    pub observed_at: String,
+    pub state: String,
+    pub route: CpaTicketRoute,
+}
+
+impl std::fmt::Debug for CpaInferenceTicketNotification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CpaInferenceTicketNotification")
+            .field("material", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct CpaTicketRoute {
+    #[serde(rename = "__cflb")]
+    #[ts(rename = "__cflb")]
+    pub cflb: CpaTicketCookie,
+    #[serde(rename = "__oailb")]
+    #[ts(rename = "__oailb")]
+    pub oailb: CpaTicketCookie,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct CpaTicketCookie {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expires_at: Option<String>,
+}
+
+impl std::fmt::Debug for CpaTicketCookie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CpaTicketCookie")
+            .field("value", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "lowercase")]

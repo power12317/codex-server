@@ -75,6 +75,7 @@ shape (version strings below are illustrative):
     "executionMode": "inference-only",
     "rawBody": true,
     "responseIdentityMapping": true,
+    "ticketSnapshots": true,
     "operations": ["responses", "images/generations", "images/edits"]
   }
 }
@@ -85,6 +86,17 @@ Require protocol version 3, `executionMode: "inference-only"` and the
 `responseIdentityMapping` announces selective identity restoration. Ignore
 unrecognized additive capability fields. `runtimeVersion` is the native package
 version; use the container revision label for the exact fork commit.
+
+`ticketSnapshots: true` optionally supports exchange-scoped source snapshots on
+Responses requests. Set top-level `params.captureTicketSnapshot: true` to receive
+`cpa/inference/ticket`; omission or `false` disables it. This flag never enters
+the model request. A snapshot can precede the start reply or arrive during the
+body stream, and is delivered before the terminal notification. Its params are
+`{requestId, credentialId, model, observedAt, state, route}`, where `route` contains
+`__cflb` and `__oailb`, each with raw `value` and optional RFC3339 `expires_at`.
+`observedAt` is observation time, not a new ticket issue time. Incomplete, deleted
+or expired combinations are not emitted. See the
+[source snapshot contract and acceptance record](codex-runtime-source-ticket_CN.md).
 
 ## Methods
 
@@ -397,13 +409,18 @@ used to infer the response node.
 
 These describe native upstream exchanges, including rejected authentication
 attempts. Diagnostic identities remain native; source identity restoration
-applies to the business response. Authorization/cookie headers are redacted, but
-request bodies can contain full prompts and history. Diagnostics are not another
+applies to the business response. IPC headers preserve their actual values,
+including Authorization, Cookie, Set-Cookie and turn-state. Start and error replies
+also retain all upstream response headers. `accessTokenSha256` remains an additive
+diagnostic field; it does not replace the original Authorization header. Request
+bodies can contain full prompts and history. Diagnostics are not another
 copy of the body stream and do not replace completion/error notifications.
 
 stderr `cpa.worker.started` and `cpa.request.*` events identify credential workers
 and request mapping. Correlate using the inference `requestId` and the actual
 upstream `x-request-id`; no CPA-specific external log ID is required.
+Ordinary logs use a separate redacted header copy and ticket lengths. Raw ticket
+notifications are never serialized into stderr records; IPC values are unchanged.
 
 ## Runnable client example
 

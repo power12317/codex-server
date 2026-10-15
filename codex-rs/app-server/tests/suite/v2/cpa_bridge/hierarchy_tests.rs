@@ -26,8 +26,11 @@ async fn exchange(ws: &mut Socket, request: Value) -> Result<Reply> {
             let message: Value = serde_json::from_str(&text)?;
             match message["method"].as_str() {
                 Some("cpa/inference/body") => bytes.extend(
-                    base64::engine::general_purpose::STANDARD
-                        .decode(message["params"]["bodyBase64"].as_str().unwrap())?,
+                    base64::engine::general_purpose::STANDARD.decode(
+                        message["params"]["bodyBase64"]
+                            .as_str()
+                            .expect("fixture response must contain the expected native fields"),
+                    )?,
                 ),
                 Some("cpa/inference/completed") => return Ok(()),
                 Some("cpa/inference/error") => anyhow::bail!("{message}"),
@@ -44,7 +47,11 @@ async fn exchange(ws: &mut Socket, request: Value) -> Result<Reply> {
         .map(serde_json::from_str)
         .collect::<std::result::Result<Vec<Value>, _>>()?;
     Ok(Reply {
-        native: serde_json::from_str(request["body"].as_str().unwrap())?,
+        native: serde_json::from_str(
+            request["body"]
+                .as_str()
+                .expect("fixture response must contain the expected native fields"),
+        )?,
         request_headers: request["headers"].clone(),
         original_response,
         accepted: accepted["result"].clone(),
@@ -59,9 +66,15 @@ fn request(source: Value, state: &str) -> Value {
 }
 
 fn echo_response(request: &wiremock::Request) -> ResponseTemplate {
-    let body: Value = request.body_json().unwrap();
-    let session = body["client_metadata"]["session_id"].as_str().unwrap();
-    let thread = body["client_metadata"]["thread_id"].as_str().unwrap();
+    let body: Value = request
+        .body_json()
+        .expect("fixture response must contain the expected native fields");
+    let session = body["client_metadata"]["session_id"]
+        .as_str()
+        .expect("fixture response must contain the expected native fields");
+    let thread = body["client_metadata"]["thread_id"]
+        .as_str()
+        .expect("fixture response must contain the expected native fields");
     let events = [
         json!({"type":"response.metadata", "headers":{"session-id":session,"thread-id":thread,"x-codex-turn-state":body["test_state"]}, "client_metadata":body["client_metadata"]}),
         json!({"type":"response.completed", "response":{"id":session, "session_id":session,"thread_id":thread,"prompt_cache_key":body["prompt_cache_key"],
@@ -143,7 +156,7 @@ async fn cpa_hierarchy_title_isolation_and_response_identity_roundtrip() -> Resu
     let returned: Value = serde_json::from_str(
         child.events[0]["client_metadata"]["x-codex-turn-metadata"]
             .as_str()
-            .unwrap(),
+            .expect("fixture response must contain the expected native fields"),
     )?;
     assert_eq!(returned["parent_thread_id"], json!("source-root"));
     assert_eq!(returned["session_id"], json!("source-root"));
@@ -190,7 +203,7 @@ async fn cpa_hierarchy_title_isolation_and_response_identity_roundtrip() -> Resu
         let metadata: Value = serde_json::from_str(
             title.events[0]["client_metadata"]["x-codex-turn-metadata"]
                 .as_str()
-                .unwrap(),
+                .expect("fixture response must contain the expected native fields"),
         )?;
         assert!(metadata.get("turn_id").is_none());
         assert_eq!(metadata["thread_source"], json!("thread_title"));
@@ -210,7 +223,10 @@ async fn cpa_hierarchy_title_isolation_and_response_identity_roundtrip() -> Resu
         last.events[1]["response"]["prompt_cache_key"],
         json!("second-source-cache")
     );
-    let requests = upstream.received_requests().await.unwrap();
+    let requests = upstream
+        .received_requests()
+        .await
+        .expect("fixture response must contain the expected native fields");
     assert_eq!(
         requests
             .iter()
@@ -244,8 +260,12 @@ async fn cpa_http_error_business_projection_keeps_upstream_diagnostics_original(
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(|request: &wiremock::Request| {
-            let body: Value = request.body_json().unwrap();
-            let session = body["client_metadata"]["session_id"].as_str().unwrap();
+            let body: Value = request
+                .body_json()
+                .expect("fixture response must contain the expected native fields");
+            let session = body["client_metadata"]["session_id"]
+                .as_str()
+                .expect("fixture response must contain the expected native fields");
             ResponseTemplate::new(400)
                 .insert_header("session-id", session.to_owned())
                 .insert_header("etag", "original")
@@ -259,15 +279,27 @@ async fn cpa_http_error_business_projection_keeps_upstream_diagnostics_original(
     let mut ws = connect(&home).await?;
     send(&mut ws, request(json!({"session_id":"source"}), "unused")).await?;
     let native = receive(&mut ws, "method", json!("cpa/inference/upstream")).await?;
-    let native_body: Value = serde_json::from_str(native["params"]["body"].as_str().unwrap())?;
+    let native_body: Value = serde_json::from_str(
+        native["params"]["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     let diagnostic = receive(&mut ws, "method", json!("cpa/inference/upstream")).await?;
-    let original: Value = serde_json::from_str(diagnostic["params"]["body"].as_str().unwrap())?;
+    let original: Value = serde_json::from_str(
+        diagnostic["params"]["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     assert_eq!(
         original["error"]["session_id"],
         native_body["client_metadata"]["session_id"]
     );
     let error = receive(&mut ws, "id", json!(2)).await?;
-    let restored: Value = serde_json::from_str(error["error"]["data"]["body"].as_str().unwrap())?;
+    let restored: Value = serde_json::from_str(
+        error["error"]["data"]["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     assert_eq!(
         restored,
         json!({"error":{"session_id":"source","message":"fixture error"}})

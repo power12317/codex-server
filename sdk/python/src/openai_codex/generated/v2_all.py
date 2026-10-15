@@ -1236,6 +1236,24 @@ class CpaInferenceUpstreamNotification(
     ]
 
 
+class CpaTicketCookie(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    expires_at: str | None = None
+    value: str
+
+
+class CpaTicketRoute(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    field__cflb: Annotated[CpaTicketCookie, Field(alias="__cflb")]
+    field__oailb: Annotated[CpaTicketCookie, Field(alias="__oailb")]
+
+
 class CreditsSnapshot(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -8255,6 +8273,19 @@ class ContentItem(
     )
 
 
+class CpaInferenceTicketNotification(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    credential_id: Annotated[str, Field(alias="credentialId")]
+    model: str
+    observed_at: Annotated[str, Field(alias="observedAt")]
+    request_id: Annotated[str, Field(alias="requestId")]
+    route: CpaTicketRoute
+    state: str
+
+
 class ExperimentalFeature(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -9328,6 +9359,23 @@ class ScheduledTaskSummary(BaseModel):
     name: str
     prompt: str
     schedule: ScheduledTaskSchedule
+
+
+class CpaInferenceTicketServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["cpa/inference/ticket"], Field(title="Cpa/inference/ticketNotificationMethod")
+    ]
+    params: CpaInferenceTicketNotification
 
 
 class ThreadStatusChangedServerNotification(BaseModel):
@@ -13226,6 +13274,7 @@ class ServerNotification(
     RootModel[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
+        | CpaInferenceTicketServerNotification
         | CpaInferenceBodyServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification
@@ -13320,6 +13369,7 @@ class ServerNotification(
     root: Annotated[
         ErrorServerNotification
         | CpaInferenceUpstreamServerNotification
+        | CpaInferenceTicketServerNotification
         | CpaInferenceBodyServerNotification
         | CpaInferenceCompletedServerNotification
         | CpaInferenceErrorServerNotification

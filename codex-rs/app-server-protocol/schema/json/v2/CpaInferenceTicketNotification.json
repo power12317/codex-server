@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CpaTicketCookie": {
+      "additionalProperties": false,
+      "properties": {
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "CpaTicketRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "__cflb": {
+          "$ref": "#/definitions/CpaTicketCookie"
+        },
+        "__oailb": {
+          "$ref": "#/definitions/CpaTicketCookie"
+        }
+      },
+      "required": [
+        "__cflb",
+        "__oailb"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Private routing material; never include its values in diagnostic formatting.",
+  "properties": {
+    "credentialId": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "observedAt": {
+      "type": "string"
+    },
+    "requestId": {
+      "type": "string"
+    },
+    "route": {
+      "$ref": "#/definitions/CpaTicketRoute"
+    },
+    "state": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "credentialId",
+    "model",
+    "observedAt",
+    "requestId",
+    "route",
+    "state"
+  ],
+  "title": "CpaInferenceTicketNotification",
+  "type": "object"
+}

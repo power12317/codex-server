@@ -48,26 +48,30 @@ async fn native_tool_catalog_and_namespace_history_reach_wire(lite: bool) -> Res
     for _ in 0..2 {
         let (logged, returned) = exchange(&mut ws, request.clone()).await?;
         assert_eq!(returned, raw.as_bytes());
-        let body: Value = serde_json::from_str(logged["body"].as_str().unwrap())?;
+        let body: Value = serde_json::from_str(
+            logged["body"]
+                .as_str()
+                .expect("fixture response must contain the expected native fields"),
+        )?;
         // Assertions use the HTTP mock's received body, not only preparation logs.
         let actual = upstream
             .received_requests()
             .await
-            .unwrap()
+            .expect("fixture response must contain the expected native fields")
             .into_iter()
             .filter(|r| r.url.path() == "/v1/responses")
             .last()
-            .unwrap();
+            .expect("fixture response must contain the expected native fields");
         assert_eq!(actual.body_json::<Value>()?, body);
         assert_eq!(body["tool_choice"], choice);
         let sent_tools = if lite {
             assert!(body.get("tools").is_none());
             &body["input"]
                 .as_array()
-                .unwrap()
+                .expect("fixture response must contain the expected native fields")
                 .iter()
                 .find(|item| item["type"] == "additional_tools")
-                .unwrap()["tools"]
+                .expect("fixture response must contain the expected native fields")["tools"]
         } else {
             &body["tools"]
         };
@@ -82,7 +86,7 @@ async fn native_tool_catalog_and_namespace_history_reach_wire(lite: bool) -> Res
         assert_eq!(sent_tools, &expected);
         let calls: Vec<_> = body["input"]
             .as_array()
-            .unwrap()
+            .expect("fixture response must contain the expected native fields")
             .iter()
             .filter(|item| item.get("call_id").is_some())
             .cloned()
@@ -126,16 +130,22 @@ async fn runtime_timezone_replaces_current_context_only(timezone: &str) -> Resul
         ]}),
     );
     let (logged, _) = exchange(&mut ws, request).await?;
-    let body: Value = serde_json::from_str(logged["body"].as_str().unwrap())?;
+    let body: Value = serde_json::from_str(
+        logged["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     let texts: Vec<_> = body["input"]
         .as_array()
-        .unwrap()
+        .expect("fixture response must contain the expected native fields")
         .iter()
         .flat_map(|item| item["content"].as_array().into_iter().flatten())
         .filter_map(|item| item["text"].as_str())
         .collect();
     assert_eq!(texts[0], old);
-    let current = texts.last().unwrap();
+    let current = texts
+        .last()
+        .expect("fixture response must contain the expected native fields");
     assert!(
         current.contains(&format!("<timezone>{timezone}</timezone>")),
         "{current}"
@@ -159,7 +169,7 @@ async fn unsupported_tool_error_identifies_array_location() -> Result<()> {
     assert!(
         response["error"]["message"]
             .as_str()
-            .unwrap()
+            .expect("fixture response must contain the expected native fields")
             .contains("tools[1]: unsupported tool type"),
         "{response}"
     );
@@ -167,7 +177,7 @@ async fn unsupported_tool_error_identifies_array_location() -> Result<()> {
         upstream
             .received_requests()
             .await
-            .unwrap()
+            .expect("fixture response must contain the expected native fields")
             .iter()
             .all(|request| request.url.path() != "/v1/responses")
     );
@@ -197,13 +207,25 @@ async fn concurrent_requests_without_turn_id_share_synthetic_context() -> Result
         exchange(&mut first_ws, request.clone()),
         exchange(&mut second_ws, second_request)
     )?;
-    let first_body: Value = serde_json::from_str(first["body"].as_str().unwrap())?;
-    let second_body: Value = serde_json::from_str(second["body"].as_str().unwrap())?;
+    let first_body: Value = serde_json::from_str(
+        first["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
+    let second_body: Value = serde_json::from_str(
+        second["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     assert_eq!(
         first_body["client_metadata"],
         second_body["client_metadata"]
     );
-    uuid::Uuid::parse_str(first_body["client_metadata"]["turn_id"].as_str().unwrap())?;
+    uuid::Uuid::parse_str(
+        first_body["client_metadata"]["turn_id"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     let mut same_conversation = request.clone();
     same_conversation["params"]["request"]["thread_id"] = json!("shared-session");
     let (next, _) = exchange(&mut first_ws, same_conversation).await?;
@@ -214,7 +236,11 @@ async fn concurrent_requests_without_turn_id_share_synthetic_context() -> Result
     let mut separate = request;
     separate["params"]["request"]["session_id"] = json!("separate-session");
     let (next, _) = exchange(&mut first_ws, separate).await?;
-    let next_body: Value = serde_json::from_str(next["body"].as_str().unwrap())?;
+    let next_body: Value = serde_json::from_str(
+        next["body"]
+            .as_str()
+            .expect("fixture response must contain the expected native fields"),
+    )?;
     assert_ne!(
         first_body["client_metadata"]["session_id"],
         next_body["client_metadata"]["session_id"]

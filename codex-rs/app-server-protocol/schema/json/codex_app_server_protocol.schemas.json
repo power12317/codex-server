@@ -4667,6 +4667,26 @@
           "properties": {
             "method": {
               "enum": [
+                "cpa/inference/ticket"
+              ],
+              "title": "Cpa/inference/ticketNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/CpaInferenceTicketNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Cpa/inference/ticketNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "cpa/inference/body"
               ],
               "title": "Cpa/inference/bodyNotificationMethod",
@@ -10933,6 +10953,41 @@
         "title": "CpaInferenceErrorNotification",
         "type": "object"
       },
+      "CpaInferenceTicketNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "description": "Private routing material; never include its values in diagnostic formatting.",
+        "properties": {
+          "credentialId": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "observedAt": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "route": {
+            "$ref": "#/definitions/v2/CpaTicketRoute"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "credentialId",
+          "model",
+          "observedAt",
+          "requestId",
+          "route",
+          "state"
+        ],
+        "title": "CpaInferenceTicketNotification",
+        "type": "object"
+      },
       "CpaInferenceUpstreamNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Actual inference transport exchanges, including attempts made during auth recovery.",
@@ -11059,6 +11114,40 @@
           }
         ],
         "title": "CpaInferenceUpstreamNotification"
+      },
+      "CpaTicketCookie": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "CpaTicketRoute": {
+        "additionalProperties": false,
+        "properties": {
+          "__cflb": {
+            "$ref": "#/definitions/v2/CpaTicketCookie"
+          },
+          "__oailb": {
+            "$ref": "#/definitions/v2/CpaTicketCookie"
+          }
+        },
+        "required": [
+          "__cflb",
+          "__oailb"
+        ],
+        "type": "object"
       },
       "CreditsSnapshot": {
         "properties": {

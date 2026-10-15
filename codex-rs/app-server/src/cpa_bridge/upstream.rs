@@ -1,4 +1,5 @@
 //! Log the same prepared inference request that is handed to the HTTP transport.
+use super::ticket::TicketCapture;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 use axum::http::HeaderMap;
@@ -12,6 +13,7 @@ use codex_http_client::HttpTransport;
 use codex_http_client::Request;
 use codex_http_client::Response;
 use codex_http_client::StreamResponse;
+use futures::StreamExt;
 use serde_json::Value;
 use sha2::Digest;
 use sha2::Sha256;
@@ -26,6 +28,7 @@ pub(super) struct UpstreamTransport {
     pub(super) connection_id: ConnectionId,
     pub(super) request_id: String,
     pub(super) credential_id: String,
+    pub(super) ticket_model: Option<String>,
 }
 
 impl UpstreamTransport {
@@ -52,6 +55,13 @@ impl UpstreamTransport {
                 );
             }
             details.remove("body");
+            if let Some(headers) = details.get_mut("headers").and_then(Value::as_object_mut) {
+                for (name, values) in headers {
+                    if sensitive_log_header(name) {
+                        *values = serde_json::json!(["[REDACTED]"]);
+                    }
+                }
+            }
         }
         let event = if details["kind"] == "response" {
             "cpa.request.upstream.response"
@@ -111,18 +121,47 @@ impl HttpTransport for UpstreamTransport {
             request_id: self.request_id.clone(),
             url: req.url.clone(),
             method: req.method.to_string(),
-            headers: log_headers(&prepared.headers),
+            headers: wire_headers(&prepared.headers),
             body: String::from_utf8_lossy(&prepared.body_bytes()).into_owned(),
             access_token_sha256,
             oai_lb_node: request_node.clone(),
         })
         .await?;
+        let mut capture = self.ticket_model.as_ref().map(|model| {
+            TicketCapture::new(
+                self.request_id.clone(),
+                self.credential_id.clone(),
+                model.clone(),
+                &prepared.headers,
+            )
+        });
+        if let Some(capture) = &mut capture {
+            capture.preserve_known_deadlines(&self.factory);
+        }
         let result = self.inner.stream(req).await;
+        let response_headers = match &result {
+            Ok(response) => Some(&response.headers),
+            Err(TransportError::Http { headers, .. }) => headers.as_ref(),
+            _ => None,
+        };
+        if let (Some(capture), Some(headers)) = (&mut capture, response_headers) {
+            capture.response_headers(headers, chrono::Utc::now());
+            capture.preserve_known_deadlines(&self.factory);
+            if let Some(snapshot) = capture.snapshot(chrono::Utc::now()) {
+                // Dedicated private channel: never pass routing material through notify/record.
+                self.outgoing
+                    .send_server_notification_to_connection_and_wait(
+                        self.connection_id,
+                        ServerNotification::CpaInferenceTicket(snapshot),
+                    )
+                    .await;
+            }
+        }
         let notification = match &result {
             Ok(response) => CpaInferenceUpstreamNotification::Response {
                 request_id: self.request_id.clone(),
                 status_code: response.status.as_u16(),
-                headers: log_headers(&response.headers),
+                headers: wire_headers(&response.headers),
                 body: None,
                 oai_lb_node: response_oai_lb_node(Some(&response.headers), request_node.as_deref()),
             },
@@ -134,7 +173,7 @@ impl HttpTransport for UpstreamTransport {
             }) => CpaInferenceUpstreamNotification::Response {
                 request_id: self.request_id.clone(),
                 status_code: status.as_u16(),
-                headers: headers.as_ref().map(log_headers).unwrap_or_default(),
+                headers: headers.as_ref().map(wire_headers).unwrap_or_default(),
                 body: body.clone(),
                 oai_lb_node: response_oai_lb_node(headers.as_ref(), request_node.as_deref()),
             },
@@ -144,34 +183,73 @@ impl HttpTransport for UpstreamTransport {
             },
         };
         self.notify(notification).await?;
-        result
+        result.map(|mut response| {
+            if let Some(capture) = capture
+                && response
+                    .headers
+                    .get("content-type")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+            {
+                let outgoing = self.outgoing.clone();
+                let connection = self.connection_id;
+                response.bytes = futures::stream::unfold(
+                    (response.bytes, capture, outgoing),
+                    move |(mut bytes, mut capture, outgoing)| async move {
+                        let Some(chunk) = bytes.next().await else {
+                            // Flush a complete final metadata record without changing body bytes.
+                            for snapshot in capture.push(b"\n\n") {
+                                outgoing
+                                    .send_server_notification_to_connection_and_wait(
+                                        connection,
+                                        ServerNotification::CpaInferenceTicket(snapshot),
+                                    )
+                                    .await;
+                            }
+                            return None;
+                        };
+                        if let Ok(chunk) = &chunk {
+                            for snapshot in capture.push(chunk) {
+                                outgoing
+                                    .send_server_notification_to_connection_and_wait(
+                                        connection,
+                                        ServerNotification::CpaInferenceTicket(snapshot),
+                                    )
+                                    .await;
+                            }
+                        }
+                        Some((chunk, (bytes, capture, outgoing)))
+                    },
+                )
+                .boxed();
+            }
+            response
+        })
     }
 }
 
-pub(super) fn log_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
+/// IPC preserves actual header values. Ordinary log redaction uses a separate copy.
+pub(super) fn wire_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
     headers
         .keys()
         .map(|name| {
-            let sensitive = matches!(
-                name.as_str(),
-                "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
-            ) || ["authorization", "api-key", "apikey", "token", "secret"]
-                .iter()
-                .any(|part| name.as_str().contains(part));
             let values = headers
                 .get_all(name)
                 .iter()
-                .map(|value| {
-                    if sensitive {
-                        "[REDACTED]".into()
-                    } else {
-                        String::from_utf8_lossy(value.as_bytes()).into_owned()
-                    }
-                })
+                .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
                 .collect();
             (name.to_string(), values)
         })
         .collect()
+}
+
+fn sensitive_log_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie" | "x-codex-turn-state"
+    ) || ["authorization", "api-key", "apikey", "token", "secret"]
+        .iter()
+        .any(|part| name.contains(part))
 }
 
 fn response_oai_lb_node(headers: Option<&HeaderMap>, request_node: Option<&str>) -> Option<String> {
