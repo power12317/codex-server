@@ -544,6 +544,7 @@ impl MessageProcessor {
             installation_id,
             thread_manager.get_models_manager(),
             outgoing.clone(),
+            analytics_events_client.clone(),
         );
         let turn_processor = TurnRequestProcessor::new(
             auth_manager,

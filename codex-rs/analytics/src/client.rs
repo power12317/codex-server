@@ -115,6 +115,11 @@ pub struct AnalyticsEventsClient {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AnalyticsEventsDestination {
+    AccountScoped {
+        inner: Box<AnalyticsEventsDestination>,
+        account_id: Option<String>,
+        user_id: Option<String>,
+    },
     Http {
         url: String,
     },
@@ -317,10 +322,39 @@ impl AnalyticsEventsClient {
         analytics_enabled: Option<bool>,
     ) -> Self {
         let destination = AnalyticsEventsDestination::from_base_url(base_url);
+        // A CPA worker is dedicated to one credential. Keep its existing queue
+        // bound to that account even if credentials change during a delayed send.
+        let destination = match (
+            auth_manager.cpa_credential_file(),
+            auth_manager.auth_cached(),
+        ) {
+            (Some(_), Some(auth)) => AnalyticsEventsDestination::AccountScoped {
+                inner: Box::new(destination),
+                account_id: auth.get_account_id(),
+                user_id: auth.get_chatgpt_user_id(),
+            },
+            _ => destination,
+        };
         Self {
             queue: (analytics_enabled != Some(false))
                 .then(|| AnalyticsEventsQueue::new(Arc::clone(&auth_manager), destination)),
         }
+    }
+
+    /// Register measured upstream context directly, without fabricating a local
+    /// thread/start or turn/start request/response pair.
+    pub fn track_observed_inference(&self, context: crate::facts::ObservedInferenceContext) {
+        self.record_fact(AnalyticsFact::ObservedInference(context));
+    }
+
+    /// Record an automatic configuration allowance without inventing a user or
+    /// Guardian review. An already observed review outcome remains authoritative.
+    pub fn track_tool_config_allowed(&self, thread_id: String, turn_id: String, item_id: String) {
+        self.record_fact(AnalyticsFact::ToolConfigAllowed {
+            thread_id,
+            turn_id,
+            item_id,
+        });
     }
 
     pub fn disabled() -> Self {
@@ -946,6 +980,19 @@ async fn send_track_events(
     else {
         return;
     };
+    let destination = match destination {
+        AnalyticsEventsDestination::AccountScoped {
+            inner,
+            account_id,
+            user_id,
+        } => {
+            if *account_id != auth.get_account_id() || *user_id != auth.get_chatgpt_user_id() {
+                return;
+            }
+            inner.as_ref()
+        }
+        destination => destination,
+    };
     if auth.is_api_key_auth() {
         events.retain(TrackEventRequest::can_send_with_api_key_auth);
     } else if !auth.uses_codex_backend() {
@@ -1027,6 +1074,7 @@ async fn send_track_events_request(
     }
 
     let url = match destination {
+        AnalyticsEventsDestination::AccountScoped { .. } => return,
         AnalyticsEventsDestination::Http { url } => url,
         #[cfg(debug_assertions)]
         AnalyticsEventsDestination::CaptureFile { .. } => return,

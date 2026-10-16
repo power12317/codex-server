@@ -147,6 +147,7 @@ async fn launch_with_timezone(
             ("LOG_FORMAT", Some("json")),
             ("CODEX_HOME", Some(&state.display().to_string())),
             ("CODEX_CPA_TEST_STDIN_LIFETIME", Some("1")),
+            ("CODEX_CPA_ANALYTICS_TEST_DELAY_SECONDS", Some("30")),
             ("CODEX_CPA_PORT", Some(&port)),
             ("CODEX_APP_SERVER_LOGIN_ISSUER", Some(&upstream.uri())),
             (

@@ -2086,6 +2086,7 @@ dependencies = [
  "codex-api",
  "codex-app-server-protocol",
  "codex-app-server-transport",
+ "codex-apply-patch",
  "codex-arg0",
  "codex-aws-auth",
  "codex-backend-client",
@@ -2158,6 +2159,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "pretty_assertions",
+ "rand 0.9.3",
  "rcgen",
  "rmcp",
  "serde",
@@ -2184,6 +2186,7 @@ dependencies = [
  "url",
  "uuid",
  "wiremock",
+ "zstd",
 ]
 
 [[package]]

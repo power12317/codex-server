@@ -347,6 +347,56 @@ fn analytics_destination_uses_http_without_capture_file() {
     );
 }
 
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn cpa_account_scope_rejects_changed_account_or_user_at_send_time() {
+    let capture_path = unique_capture_path("account-bound");
+    let auth = codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing();
+    let manager = codex_login::AuthManager::from_auth_for_testing(auth.clone());
+    for (account_id, user_id) in [
+        (
+            Some("changed-account".to_string()),
+            auth.get_chatgpt_user_id(),
+        ),
+        (auth.get_account_id(), Some("changed-user".to_string())),
+    ] {
+        let destination = AnalyticsEventsDestination::AccountScoped {
+            inner: Box::new(AnalyticsEventsDestination::CaptureFile {
+                path: capture_path.clone(),
+            }),
+            account_id,
+            user_id,
+        };
+        send_track_events(
+            &manager,
+            &destination,
+            vec![sample_regular_track_event("thread")],
+            &ThreadProducts::default(),
+        )
+        .await;
+        assert!(!capture_path.exists());
+    }
+    let destination = AnalyticsEventsDestination::AccountScoped {
+        inner: Box::new(AnalyticsEventsDestination::CaptureFile {
+            path: capture_path.clone(),
+        }),
+        account_id: auth.get_account_id(),
+        user_id: auth.get_chatgpt_user_id(),
+    };
+    send_track_events(
+        &manager,
+        &destination,
+        vec![sample_regular_track_event("thread")],
+        &ThreadProducts::default(),
+    )
+    .await;
+    assert_eq!(
+        fs::read_to_string(&capture_path).unwrap().lines().count(),
+        1
+    );
+    fs::remove_file(capture_path).unwrap();
+}
+
 #[test]
 #[cfg(not(debug_assertions))]
 fn analytics_destination_ignores_capture_file_in_release() {

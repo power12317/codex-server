@@ -84,6 +84,87 @@ fn model_input() -> Value {
     json!({"model":"mock-model","input":"fixture","stream":true})
 }
 
+#[tokio::test]
+async fn cpa_native_analytics_reuses_sender_without_extra_model_request() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let home = TempDir::new()?;
+    Mock::given(method("POST")).and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(completed(json!({
+            "id":"upstream-result","output":[],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}
+        })), "text/event-stream"))
+        .expect(1).mount(&upstream).await;
+    Mock::given(method("POST"))
+        .and(path("/codex/analytics-events/events"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&upstream)
+        .await;
+    let _runtime = server(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut input = model_input();
+    input["session_id"] = json!("original-cpa-session");
+    input["thread_id"] = json!("original-cpa-thread");
+    let result = exchange(&mut ws, rpc(input, 9901)).await?;
+    let business_completed = tokio::time::Instant::now();
+    assert_eq!(result.reply["result"]["statusCode"], 200);
+    let final_request = wire(&result);
+    let final_thread = &final_request["client_metadata"]["thread_id"];
+    assert_ne!(final_thread, "original-cpa-thread");
+    assert!(
+        !upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|request| request.url.path() == "/codex/analytics-events/events")
+    );
+    let (turn, headers) = timeout(Duration::from_secs(45), async {
+        loop {
+            for request in upstream.received_requests().await.unwrap() {
+                if request.url.path() != "/codex/analytics-events/events" {
+                    continue;
+                }
+                let payload: Value = request.body_json().unwrap();
+                for event in payload["events"].as_array().unwrap() {
+                    if event["event_type"] == "codex_turn_event" {
+                        return (event["event_params"].clone(), request.headers);
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    assert!(business_completed.elapsed() >= Duration::from_secs(29));
+    assert_eq!(turn["thread_id"], *final_thread);
+    assert_eq!(
+        turn["session_id"],
+        final_request["client_metadata"]["session_id"]
+    );
+    assert_eq!(turn["turn_id"], final_request["client_metadata"]["turn_id"]);
+    assert_eq!(turn["model"], final_request["model"]);
+    assert_eq!(turn["input_tokens"], 11);
+    assert_eq!(turn["app_server_client"]["client_name"], "codex-tui");
+    assert_eq!(turn["app_server_client"]["rpc_transport"], "stdio");
+    assert_eq!(
+        headers.get("authorization").unwrap(),
+        "Bearer fake-cpa-access"
+    );
+    assert_eq!(headers.get("chatgpt-account-id").unwrap(), "account");
+    assert!(!turn.to_string().contains("original-cpa-"));
+    assert!(turn["after_last_sampling_ms"].as_u64().unwrap() >= 30_000);
+    assert_eq!(
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|request| request.url.path() == "/v1/responses")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
 #[test_case::test_case("response.metadata", "response.metadata"; "standard")]
 #[test_case::test_case("codex.response.metadata", "codex.response.metadata"; "prefixed")]
 #[test_case::test_case("response.metadata", "codex.response.metadata"; "standard_then_prefixed")]

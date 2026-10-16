@@ -1,4 +1,5 @@
 //! CPA IPC v5 boundary. This module deliberately has no ThreadManager or tool runtime.
+mod analytics;
 mod contexts;
 mod delivery;
 mod identity_response;
@@ -27,6 +28,7 @@ const UPSTREAM: &str = "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
 pub(crate) struct CpaBridge {
+    analytics: Arc<analytics::InferenceAnalytics>,
     credential_id: Option<String>,
     contexts: Mutex<contexts::Contexts>,
     login: Mutex<Option<login::Login>>,
@@ -48,6 +50,7 @@ impl CpaBridge {
         installation_id: String,
         models: codex_models_manager::manager::SharedModelsManager,
         outgoing: Arc<OutgoingMessageSender>,
+        analytics_events_client: codex_analytics::AnalyticsEventsClient,
     ) -> Arc<Self> {
         let credential_id = auth
             .cpa_credential_file()
@@ -56,7 +59,13 @@ impl CpaBridge {
             .as_ref()
             .map(|_| create_model_provider(config.model_provider.clone(), Some(auth.clone())));
 
+        let analytics = analytics::InferenceAnalytics::new(
+            analytics_events_client,
+            auth.clone(),
+            config.clone(),
+        );
         Arc::new(Self {
+            analytics,
             credential_id,
             contexts: Mutex::new(contexts::Contexts::default()),
             login: Mutex::new(None),
@@ -133,6 +142,7 @@ impl CpaBridge {
             params.request_id.clone(),
             diagnostics_rx,
         );
+        observation.set_analytics(self.analytics.exchange(id.connection_id.0));
         observation.record(
             "cpa.request.start",
             json!({
@@ -291,7 +301,10 @@ impl CpaBridge {
                     observation.clone(),
                 )
                 .await
-                .map_err(|error| native_failure(&error))
+                .map_err(|error| {
+                    observation.native_error(&error);
+                    native_failure(&error)
+                })
         }
     }
 }

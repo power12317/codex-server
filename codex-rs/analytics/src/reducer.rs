@@ -526,6 +526,69 @@ impl TurnToolCounts {
 impl AnalyticsReducer {
     pub(crate) async fn ingest(&mut self, input: AnalyticsFact, out: &mut Vec<TrackEventRequest>) {
         match input {
+            AnalyticsFact::ObservedInference(context) => {
+                let Some(connection) = self.connections.get(&context.connection_id) else {
+                    return;
+                };
+                let mut app_server_client = connection.app_server_client.clone();
+                app_server_client
+                    .product_client_id
+                    .clone_from(&context.originator);
+                let runtime = connection.runtime.clone();
+                let first = !self.threads.contains_key(&context.thread_id);
+                let thread = self.threads.entry(context.thread_id.clone()).or_default();
+                thread.connection_id = Some(context.connection_id);
+                thread.originator = Some(context.originator);
+                thread.metadata = Some(ThreadMetadataState {
+                    session_id: context.session_id.clone(),
+                    thread_source: context.thread_source.clone(),
+                    initialization_mode: ThreadInitializationMode::New,
+                    subagent_source: context.subagent_source.clone(),
+                    parent_thread_id: context.parent_thread_id.clone(),
+                });
+                let turn = self.turns.entry(context.turn_id).or_default();
+                turn.connection_id = Some(context.connection_id);
+                turn.thread_id = Some(context.thread_id.clone());
+                turn.num_input_images = Some(context.num_input_images);
+                turn.started_at = Some(context.started_at);
+                if first {
+                    out.push(TrackEventRequest::ThreadInitialized(
+                        ThreadInitializedEvent {
+                            event_type: "codex_thread_initialized",
+                            event_params: ThreadInitializedEventParams {
+                                thread_id: context.thread_id,
+                                session_id: context.session_id,
+                                app_server_client,
+                                runtime,
+                                model: context.model,
+                                ephemeral: true,
+                                is_worktree: None,
+                                thread_source: context.thread_source,
+                                initialization_mode: ThreadInitializationMode::New,
+                                subagent_source: context.subagent_source,
+                                parent_thread_id: context.parent_thread_id,
+                                forked_from_thread_id: None,
+                                created_at: context.created_at,
+                            },
+                        },
+                    ));
+                }
+            }
+            AnalyticsFact::ToolConfigAllowed {
+                thread_id,
+                turn_id,
+                item_id,
+            } => {
+                self.item_review_summaries
+                    .entry(ToolItemKey {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                    })
+                    .or_default()
+                    .final_approval_outcome
+                    .get_or_insert(FinalApprovalOutcome::ConfigAllowed);
+            }
             AnalyticsFact::Initialize {
                 connection_id,
                 params,

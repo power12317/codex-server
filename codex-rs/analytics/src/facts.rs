@@ -237,6 +237,23 @@ pub enum ThreadInitializationMode {
     Resumed,
 }
 
+/// Context observed on an actual upstream model exchange, without a local RPC lifecycle.
+#[derive(Clone)]
+pub struct ObservedInferenceContext {
+    pub connection_id: u64,
+    pub thread_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub model: String,
+    pub originator: String,
+    pub parent_thread_id: Option<String>,
+    pub thread_source: Option<ThreadSource>,
+    pub subagent_source: Option<String>,
+    pub created_at: u64,
+    pub started_at: u64,
+    pub num_input_images: usize,
+}
+
 #[derive(Clone)]
 pub struct TurnTokenUsageFact {
     pub turn_id: String,
@@ -543,6 +560,12 @@ pub struct CodexGoalEvent {
 
 #[allow(dead_code)]
 pub(crate) enum AnalyticsFact {
+    ObservedInference(ObservedInferenceContext),
+    ToolConfigAllowed {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+    },
     Initialize {
         connection_id: u64,
         params: InitializeParams,

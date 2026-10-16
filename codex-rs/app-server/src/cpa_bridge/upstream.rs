@@ -51,6 +51,7 @@ pub(super) struct NativeObservation {
     business: UnboundedSender<Business>,
     images: bool,
     state: Mutex<Observed>,
+    analytics: std::sync::OnceLock<super::analytics::Exchange>,
 }
 
 impl NativeObservation {
@@ -66,7 +67,18 @@ impl NativeObservation {
             business,
             images,
             state: Mutex::new(Observed::default()),
+            analytics: std::sync::OnceLock::new(),
         })
+    }
+
+    pub(super) fn set_analytics(&self, analytics: super::analytics::Exchange) {
+        let _ = self.analytics.set(analytics);
+    }
+
+    pub(super) fn native_error(&self, error: &codex_protocol::error::CodexErr) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.native_error(error);
+        }
     }
 
     pub(super) fn record(&self, event: &'static str, details: Value) {
@@ -101,6 +113,9 @@ impl NativeObservation {
             for bytes in std::mem::take(&mut state.terminal_events) {
                 let _ = self.business.send(Business::Event(bytes));
             }
+        }
+        if let Some(analytics) = self.analytics.get() {
+            analytics.finish(&result);
         }
         let _ = self.business.send(Business::Finished(result));
     }
@@ -164,6 +179,9 @@ impl TransportObserver for NativeObservation {
         .any(|path| url.path().ends_with(path))
     }
     fn request(&self, transport: &str, method: &str, url: &str, headers: &HeaderMap, body: &[u8]) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.request(transport, method, url, headers, body);
+        }
         let access_token_sha256 = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -257,6 +275,9 @@ impl TransportObserver for NativeObservation {
 
 impl ResponsesObserver for NativeObservation {
     fn accepted_event(&self, payload: &str) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.event(payload);
+        }
         let mut state = self
             .state
             .lock()
@@ -285,6 +306,9 @@ impl ResponsesObserver for NativeObservation {
         }
     }
     fn failed_event(&self, payload: &str, error: &codex_api::ApiError) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.event(payload);
+        }
         let mut original = NativeErrorResponse {
             body: Some(payload.into()),
             ..Default::default()

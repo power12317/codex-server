@@ -55,6 +55,7 @@ pub use facts::ImagePreparationMetadata;
 pub use facts::InputError;
 pub use facts::InvocationType;
 pub use facts::McpToolCallElicitation;
+pub use facts::ObservedInferenceContext;
 pub use facts::PluginInstallRequestSource;
 pub use facts::PluginInstallRequested;
 pub use facts::PluginInstallRequestedPlugin;
