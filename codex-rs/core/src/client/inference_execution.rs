@@ -26,7 +26,7 @@ pub trait InferenceObserver: ResponsesObserver + TransportObserver {}
 impl InferenceSession {
     #[expect(
         clippy::await_holding_invalid_type,
-        reason = "a turn exclusively owns its mutable native client while streaming; independent turn contexts use separate locks"
+        reason = "one logical thread leases its native cache while streaming; independent threads remain concurrent"
     )]
     pub async fn execute(
         &self,
@@ -87,8 +87,9 @@ impl InferenceSession {
             "inference-only".into(),
             self.client.state.session_source.clone(),
         );
-        let mut client = self.session.lock().await;
-        client.client = configured_client;
+        let _lease = self.client_gate.lock().await;
+        let mut client = configured_client.new_session();
+        client.turn_state = self.turn_state.clone();
         let sample = async {
             let mut stream = client
                 .stream_once(

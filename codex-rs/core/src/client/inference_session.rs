@@ -20,6 +20,7 @@ pub struct InferenceIdentity {
     pub subagent_header: Option<String>,
     pub agent_name: Option<String>,
     pub window_id: Option<String>,
+    pub context_window_id: Option<String>,
     pub request_kind: Option<String>,
 }
 
@@ -52,6 +53,7 @@ impl InferenceIdentity {
             &self.root_turn_id,
             &self.prompt_cache_key,
             &self.window_id,
+            &self.context_window_id,
             &self.thread_source,
             &self.subagent_kind,
             &self.subagent_header,
@@ -75,15 +77,17 @@ impl InferenceIdentity {
                 Ok(Uuid::new_v5(&session, &serde_json::to_vec(&thread)?).to_string())
             }
         };
+        let thread_id = map_thread(self.thread_key())?;
         Ok(InferenceMapping {
             session_id: session.to_string(),
-            thread_id: map_thread(self.thread_key())?,
+            window_id: format!("{thread_id}:0"),
+            context_window_id: None,
+            thread_id,
             parent_thread_id: self
                 .parent_thread_id
                 .as_deref()
                 .map(|id| map_thread(Some(id)))
                 .transpose()?,
-            window_id: namespace.to_string(),
             turn_id: self.turn_id.clone(),
             parent_turn_id: self.parent_turn_id.clone(),
             root_turn_id: self.root_turn_id.clone(),
@@ -122,6 +126,7 @@ impl InferenceIdentity {
             subagent_header: read("x-openai-subagent"),
             agent_name: read("agent_name"),
             window_id: read("window_id").or_else(|| read("x-codex-window-id")),
+            context_window_id: read("context_window_id"),
             request_kind: read("request_kind"),
         }
     }
@@ -138,6 +143,7 @@ pub struct InferenceMapping {
     pub thread_id: String,
     pub parent_thread_id: Option<String>,
     pub window_id: String,
+    pub context_window_id: Option<String>,
     pub turn_id: Option<String>,
     pub parent_turn_id: Option<String>,
     pub root_turn_id: Option<String>,
@@ -145,7 +151,9 @@ pub struct InferenceMapping {
 
 /// A caller turn's native client and first upstream routing state. No tool runtime.
 pub struct InferenceSession {
-    pub(super) session: tokio::sync::Mutex<ModelClientSession>,
+    // All turns of one logical thread lease its native cache exclusively. Idle turn
+    // contexts retain their ticket, never a ModelClientSession holding the socket.
+    pub(super) client_gate: Arc<tokio::sync::Mutex<()>>,
     pub(super) client: ModelClient,
     pub(super) turn_state: Arc<OnceLock<String>>,
     pub(super) metadata: CodexResponsesMetadata,
@@ -255,10 +263,9 @@ impl InferenceSession {
         metadata.subagent_header = subagent;
         metadata.agent_name.clone_from(&source.agent_name);
         metadata.request_kind = Some(CodexResponsesRequestKind::Turn);
-        let session = client.new_session();
         Ok(Self {
-            turn_state: session.turn_state.clone(),
-            session: tokio::sync::Mutex::new(session),
+            turn_state: Arc::new(OnceLock::new()),
+            client_gate: Arc::new(tokio::sync::Mutex::new(())),
             client,
             metadata,
         })
@@ -270,6 +277,7 @@ impl InferenceSession {
             thread_id: self.metadata.thread_id.clone(),
             parent_thread_id: self.metadata.parent_thread_id.map(|id| id.to_string()),
             window_id: self.metadata.window_id.clone(),
+            context_window_id: self.metadata.context_window_id.map(|id| id.to_string()),
             turn_id: self.metadata.turn_id.clone(),
             parent_turn_id: self.metadata.parent_turn_id.clone(),
             root_turn_id: self.metadata.root_turn_id.clone(),
@@ -280,16 +288,24 @@ impl InferenceSession {
         self.turn_state.get().map(String::as_str)
     }
 
-    pub fn model_client(&self) -> ModelClient {
-        self.client.clone()
+    /// Share the logical thread's native cache and lease, but keep this turn's ticket.
+    pub fn with_model_client(mut self, previous: &Self) -> Self {
+        self.client = previous.client.clone();
+        self.client_gate = previous.client_gate.clone();
+        self
     }
 
-    /// Reuse session-scoped native fallback/auth state while creating a new turn.
-    pub fn with_model_client(mut self, client: ModelClient) -> Self {
-        let session = client.new_session();
-        self.turn_state = session.turn_state.clone();
-        self.session = tokio::sync::Mutex::new(session);
-        self.client = client;
-        self
+    /// Snapshot caller-owned compaction progress without starting an Agent loop.
+    pub fn with_window(&self, number: u64, context_window_id: Uuid) -> Self {
+        let mut metadata = self.metadata.clone();
+        metadata.window_id = format!("{}:{number}", metadata.thread_id);
+        metadata.window_number = Some(number);
+        metadata.context_window_id = Some(context_window_id);
+        Self {
+            client_gate: self.client_gate.clone(),
+            client: self.client.clone(),
+            turn_state: self.turn_state.clone(),
+            metadata,
+        }
     }
 }

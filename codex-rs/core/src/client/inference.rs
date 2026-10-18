@@ -6,6 +6,9 @@ use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
 
+#[path = "inference_input.rs"]
+mod input;
+
 pub(super) struct InferenceRequest {
     pub(super) prompt: Prompt,
     pub(super) effort: Option<ReasoningEffortConfig>,
@@ -37,9 +40,7 @@ impl InferenceRequest {
         }
         let time = super::inference_context::TimeContext::now();
         time.apply(input_items);
-        let original_input = input.clone();
-        let mut input: Vec<ResponseItem> = serde_json::from_value(input)?;
-        preserve_input_fields(&original_input, &serde_json::to_value(&input)?, "input")?;
+        let mut input = input::parse(input_items)?;
         for item in &mut input {
             if let Some(prefix) = item.id_prefix()
                 && let Some(id) = item.id()

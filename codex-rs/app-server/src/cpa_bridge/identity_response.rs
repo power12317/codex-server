@@ -121,6 +121,10 @@ impl IdentityResponse {
                     Some(self.native.window_id.as_str()),
                     self.source.window_id.as_deref(),
                 ),
+                "context_window_id" | "contextwindowid" => (
+                    self.native.context_window_id.as_deref(),
+                    self.source.context_window_id.as_deref(),
+                ),
                 _ => return true,
             };
             let Some(native) = native else {

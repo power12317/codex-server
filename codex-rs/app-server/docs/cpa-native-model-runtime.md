@@ -33,10 +33,33 @@ stream immediately. Results come from a subsequent caller request; no missing
 or aborted tool output is synthesized. No recovery-history buffer is needed.
 Standalone `responses/compact` is not an operation in this protocol.
 
-Logical threads retain their native client and turn state across explicit caller
-requests. Each turn serializes its client session; independent contexts remain
-concurrent. Credential isolation, synthetic turn lifetime and title-request
-ephemerality are unchanged. The worker never silently retries a failed call.
+Logical threads retain their native client across explicit caller requests. Each
+invocation leases a native `ModelClientSession` and drops it before releasing the
+thread lease, returning the WebSocket and its previous-response cache through the
+original native lifecycle. Cached turn contexts retain their own first ticket,
+so a new turn can reuse the socket without inheriting the previous turn's ticket.
+Concurrent requests in the same logical thread serialize; independent threads
+and credentials remain concurrent. Credential isolation, synthetic turn lifetime
+and title-request ephemerality are unchanged. The worker never silently retries
+a failed call.
+
+The caller supplies complete history. Responses output envelopes are converted
+to typed native history: response-only message/function status and output-text
+annotations/logprobs are validated and omitted where native input has no such
+fields. Native custom-call status, namespace, call IDs, tool results, encrypted
+compaction items and `compaction_trigger` controls retain their typed semantics.
+Unknown extensions still fail explicitly. The native client alone selects a
+full request or `previous_response_id` plus incremental input; changed model,
+tools, rules or history do not force an artificial cache hit.
+
+Window metadata follows the native thread/window form: `window_id` is
+`<mapped-thread-id>:<window-number>` and `context_window_id` is a window UUID.
+Ordinary turn changes do not advance it. Caller window-marker changes or a new
+compaction item advance the window once; replaying that item does not. A trigger
+alone does not represent completed compaction. Only compact markers are retained,
+without persisted conversation history or an automatic Agent/summary loop. Each
+invocation receives its own window metadata snapshot while the turn ticket stays
+shared within that turn.
 
 WebSocket routing diagnostics retain only the sanitized `__oailb` node on the
 actual connection. Handshake response cookies take precedence over cookies sent

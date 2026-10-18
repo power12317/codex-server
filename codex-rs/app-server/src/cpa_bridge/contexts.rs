@@ -1,6 +1,8 @@
 //! Bounded worker-local contexts. Synthetic turns have a fixed one-hour lifetime.
 use codex_core::InferenceIdentity;
 use codex_core::InferenceSession;
+use serde_json::Value;
+use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,7 +92,73 @@ impl<T> Cache<T> {
 #[derive(Default)]
 pub(super) struct Contexts {
     turns: Cache<InferenceSession>,
-    clients: HashMap<String, (Instant, codex_core::ModelClient)>,
+    clients: HashMap<String, ClientContext>,
+}
+
+struct ClientContext {
+    last_used: Instant,
+    session: Arc<InferenceSession>,
+    window: Window,
+}
+
+struct Window {
+    number: u64,
+    id: uuid::Uuid,
+    source: (Option<String>, Option<String>),
+    compaction: Option<[u8; 32]>,
+}
+
+impl Window {
+    fn new(source: &InferenceIdentity, request: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            number: 0,
+            id: uuid::Uuid::now_v7(),
+            source: (source.window_id.clone(), source.context_window_id.clone()),
+            compaction: Self::compaction(request),
+        }
+    }
+
+    fn compaction(request: &serde_json::Map<String, Value>) -> Option<[u8; 32]> {
+        let item = request
+            .get("input")?
+            .as_array()?
+            .iter()
+            .rev()
+            .find(|item| {
+                matches!(
+                    item["type"].as_str(),
+                    Some("compaction" | "compaction_summary" | "context_compaction")
+                )
+            })?;
+        // Store only a marker; compaction payloads and conversation contents remain caller-owned.
+        Some(
+            sha2::Sha256::digest(
+                serde_json::json!([item.get("id"), item.get("encrypted_content")]).to_string(),
+            )
+            .into(),
+        )
+    }
+
+    fn observe(&mut self, source: &InferenceIdentity, request: &serde_json::Map<String, Value>) {
+        let supplied = (source.window_id.clone(), source.context_window_id.clone());
+        let compaction = Self::compaction(request);
+        let changed = (supplied.0.is_some() && supplied.0 != self.source.0)
+            || (supplied.1.is_some() && supplied.1 != self.source.1)
+            || (compaction.is_some() && compaction != self.compaction);
+        if changed {
+            self.number += 1;
+            self.id = uuid::Uuid::now_v7();
+        }
+        if supplied.0.is_some() {
+            self.source.0 = supplied.0;
+        }
+        if supplied.1.is_some() {
+            self.source.1 = supplied.1;
+        }
+        if compaction.is_some() {
+            self.compaction = compaction;
+        }
+    }
 }
 
 impl Contexts {
@@ -147,23 +215,30 @@ impl Contexts {
         }
         let now = Instant::now();
         self.clients
-            .retain(|_, (last_used, _)| now.duration_since(*last_used) < TURN_TTL);
-        let existing = self
-            .clients
-            .get_mut(&client_key)
-            .map(|(last_used, client)| {
-                *last_used = now;
-                client.clone()
-            });
+            .retain(|_, context| now.duration_since(context.last_used) < TURN_TTL);
+        let existing = self.clients.get_mut(&client_key).map(|context| {
+            context.last_used = now;
+            context.session.clone()
+        });
         let value = self.turns.get_or_insert(key, now, || {
             let value = create()?;
             Ok(match existing {
-                Some(client) => value.with_model_client(client),
+                Some(client) => value.with_model_client(&client),
                 None => value,
             })
         })?;
-        self.clients.insert(client_key, (now, value.model_client()));
-        Ok(value)
+        let context = self
+            .clients
+            .entry(client_key)
+            .or_insert_with(|| ClientContext {
+                last_used: now,
+                session: value.clone(),
+                window: Window::new(&source, &params.request),
+            });
+        context.window.observe(&source, &params.request);
+        Ok(Arc::new(
+            value.with_window(context.window.number, context.window.id),
+        ))
     }
 }
 

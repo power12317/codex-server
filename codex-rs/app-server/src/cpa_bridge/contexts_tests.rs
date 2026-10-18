@@ -80,3 +80,31 @@ fn capacity_rejects_new_contexts_without_evicting_fresh_state() {
         42
     );
 }
+
+#[test]
+fn cpa_windows_follow_explicit_changes_and_compaction_without_advancing_for_turns_or_triggers() {
+    let mut source = InferenceIdentity::default();
+    let request = serde_json::json!({"input":[]});
+    let mut window = Window::new(&source, request.as_object().unwrap());
+    let first = window.id;
+    source.turn_id = Some("next-turn".into());
+    window.observe(
+        &source,
+        serde_json::json!({"input":[{"type":"compaction_trigger"}]})
+            .as_object()
+            .unwrap(),
+    );
+    assert_eq!((window.number, window.id), (0, first));
+    source.window_id = Some("source-window-2".into());
+    source.context_window_id = Some("source-context-2".into());
+    let compacted = serde_json::json!({"input":[{"type":"compaction","id":"cmp_1","encrypted_content":"opaque"}]});
+    window.observe(&source, compacted.as_object().unwrap());
+    assert_eq!(window.number, 1);
+    assert_ne!(window.id, first);
+    let second = window.id;
+    window.observe(&source, compacted.as_object().unwrap());
+    assert_eq!((window.number, window.id), (1, second));
+    source.context_window_id = Some("source-context-3".into());
+    window.observe(&source, compacted.as_object().unwrap());
+    assert_eq!(window.number, 2);
+}

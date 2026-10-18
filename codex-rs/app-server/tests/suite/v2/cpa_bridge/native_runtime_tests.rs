@@ -643,6 +643,9 @@ mod streaming_tests;
 #[path = "websocket_node_tests.rs"]
 mod websocket_node_tests;
 
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
+
 #[tokio::test]
 async fn cpa_native_partial_output_error_returns_without_retry() -> Result<()> {
     let upstream = MockServer::start().await;

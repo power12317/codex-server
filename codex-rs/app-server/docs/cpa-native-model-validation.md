@@ -5,6 +5,67 @@ not certify the stable v3 bridge or a published Linux image. The fixed reference
 is official Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
 
+## Native continuation and caller-owned windows (2026-10-19)
+
+The model-only entry now leases its logical thread's native session for one
+invocation and returns the socket through `ModelClientSession::drop`. Idle cached
+turn objects retain their own ticket but no longer hold the native socket cache.
+The original native incremental comparison and sender remain unchanged. Typed
+output-to-input adaptation accepts response-only message/function status and
+output-text annotations/logprobs without forwarding those response fields into
+native history. Call identity, namespaces, tool outputs and compaction controls
+remain native typed input; unknown fields still fail explicitly.
+
+Window metadata now uses the mapped thread and compaction window number, with a
+separate context-window UUID. Caller window changes or newly replayed compaction
+items advance it once; ordinary turn changes and compaction triggers alone do
+not. The same turn keeps its first ticket through a window change. Client tools
+remain caller-executed, worker retries remain zero, and IPC stays at v5.
+
+Three real master/worker tests verify four same/cross-turn requests over one
+socket, concurrent turn serialization without ticket mixing, and an eight-request
+tool/compaction sequence including native full sends after rules/tools/model
+changes. All three pass. The full service regression passes 35 unit and 46
+integration tests. The native client test group passes 53 tests, including the
+new typed replay adapter and the ordinary client's existing regressions.
+The unchanged native golden test
+`responses_websocket_v2_incremental_requests_are_reused_across_turns` also passes
+against this checkout (one test, no skipped cases).
+
+The paired CPA `-race` matrix and diagnostic-blocking regression pass 106 leaf
+cases (113 passing nodes including parent tests). Its seven-request continuation
+fixture supplies business histories of lengths `1/3/5/7/9/2/4`; native WebSocket
+business inputs are `1/1/1/7/9/2/1` over exactly one handshake, with the expected
+previous-response IDs. The window advances from 0 to 1, the prompt-cache key stays
+stable, native HTTP zstd remains enabled as configured, and CPA direct model
+egress is zero. The matrix was repeated against the final artifact with all 106
+leaf cases passing in 5.838 seconds; evidence is in
+`/private/tmp/cpa-runtime-continuation-final-artifact.jsonl`.
+
+The exact paired and identity-verified macOS arm64 artifact is
+`/private/tmp/codex-native-continuation-20261019/codex-app-server-final`, SHA256
+`257dabf059f27a2017a2714ced0ee7703c872c840bf35bb1827fb6860ad7603a`.
+It is the final locked standalone build and passes the actual request identity
+probe. After the Rust regression runs, the adapter's three verified-object
+`expect` calls were replaced with conditional access; no conversion policy
+changed. The final paired matrix above covers that exact rebuilt binary. This
+local validation does not establish Linux image publication. Official executable
+and request identity remain at `0.162.1`.
+
+The unfiltered `cargo clippy -p codex-app-server -p codex-core --lib --tests --
+-D warnings` is not clean at the branch baseline: `analytics.rs` has an existing
+await-held analytics lock (line 193), `expect` (line 284) and collapsible condition
+(line 913); `native_model_blackbox_tests.rs:174` has a redundant method closure.
+Both files remain byte-for-byte equal to the starting HEAD. The follow-up check
+uses command-only allowances for `clippy::await_holding_invalid_type`,
+`clippy::expect_used`, `clippy::collapsible_if` and
+`clippy::redundant_closure_for_method_calls`, after `-D warnings`; no product lint
+allowance or unrelated cleanup is included. Logs are under
+`/private/tmp/codex-native-continuation-20261019/`.
+That filtered Clippy command, `cargo fmt --all --check`, documentation formatting
+and diff whitespace checks pass. This is not a claim that unfiltered baseline
+Clippy is clean.
+
 ## WebSocket connection node diagnostics (2026-10-14)
 
 The connection now retains the sanitized `__oailb` node determined by its actual
