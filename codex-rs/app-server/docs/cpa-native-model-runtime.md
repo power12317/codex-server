@@ -146,8 +146,8 @@ gate remains. The worker does not execute tools or invent their results.
 | `model`                                                                        | Selects native model information from the worker's model manager.                                                                                                                                      |
 | `input`                                                                        | Text or a native `ResponseItem` array. Message shorthand is normalized once. Unknown or lossy typed input fields are rejected.                                                                         |
 | `instructions`                                                                 | Native prompt base instructions.                                                                                                                                                                       |
-| Function/custom/namespace tools                                                | Native `ToolSpec` declarations, without registering executors.                                                                                                                                         |
-| `web_search`, `tool_search`                                                    | Native declarations, subject to their typed schema.                                                                                                                                                    |
+| Function/custom/namespace tools                                                | Native `ToolSpec` declarations; complete caller-owned parameter schemas are retained without registering executors.                                                                                    |
+| `web_search`, `tool_search`                                                    | Native declarations; tool-search parameter schemas retain all caller-supplied keywords and nested values.                                                                                              |
 | Hosted `image_generation` declaration                                          | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry.                                                                                 |
 | `tool_choice`                                                                  | Absent or `auto`; other choices cannot be expressed by this native prompt entry and are rejected.                                                                                                      |
 | `parallel_tool_calls`                                                          | Native prompt preference; native model policy still applies (including Lite).                                                                                                                          |
@@ -166,6 +166,16 @@ gate remains. The worker does not execute tools or invent their results.
 Native additional-tool and compaction history items can also be supplied directly
 in `input`. A successful controlled mock test proves the mapping and native path;
 it does not prove that a production model service accepts every hosted-tool option.
+
+Caller-owned function and tool-search schemas use the native `JsonSchema` object's
+complete JSON carrier. They bypass the internal tool normalization/compaction
+policy and retain declarations, defaults, numeric/string/array constraints,
+definitions, boolean subschemas, tuple items and future keywords at every depth.
+There is no schema-key allowlist or runtime round-trip equality gate. Chat-style
+nested function and `input_schema` envelopes normalize to the same native tool
+declarations. Tool names never select executors: `WebSearch`, `ToolSearch`, `Bash`
+and `Agent` declared as functions stay client functions. Both Responses and Lite
+use the native tool serializers; there is no final-wire tools-array overlay.
 
 ## Standalone Images input
 

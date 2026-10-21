@@ -5,6 +5,36 @@ not certify the stable v3 bridge or a published Linux image. The fixed reference
 is official Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
 
+## Client tool schema fidelity (2026-10-21)
+
+Caller-owned function and tool-search parameter schemas now use a complete JSON
+object carrier inside native `JsonSchema`/`ToolSpec` values. They bypass the
+internal tool normalization subset, and the adapter's runtime round-trip equality
+admission checks have been removed. No schema-key or tool-name allowlist is used.
+Native request construction, authentication and sending still own the request.
+
+- `just test -p codex-tools -p codex-core --lib -E 'package(codex-tools) | test(client::inference_tools::tests)'`:
+  **115 passed**, comprising 109 tool tests and six adapter tests.
+- `just test -p codex-app-server --lib --test all cpa_`: **83 passed**.
+- `cargo fmt --all --check` and `git diff --check`: passed.
+
+The permanent fixture retains the WorkBuddy incident's exact 22 function tools.
+Responses and Lite regressions compare every declaration/schema value in actual
+local upstream HTTP requests, including all 41 fields lost by the old adapter,
+original tool names and `strict:false`. Additional unit coverage includes nested
+constraints, definitions, boolean subschemas, tuple items and future keywords.
+Function/custom/namespace tools and the internal schema policy also pass.
+
+A separate controlled HTTP replay used the complete original Chat request
+through the paired CPA v5 checkout at
+`65f134152ad9696b1568b0372f57af02fad4eaa3`. The built Rust master/worker used
+temporary fake credentials and a local model mock. Both Chat turns passed:
+22 exact tool schemas, reasoning effort `high`, live tool chunks before upstream
+completion, complete parameter deltas, `finish_reason:tool_calls`, usage, `[DONE]`
+and function call/result associations. Model sends were exactly two; direct CPA
+model sends and local tool execution were zero. This does not certify acceptance
+by a production account's upstream model or a deployed image.
+
 ## Native continuation and caller-owned windows (2026-10-19)
 
 The model-only entry now leases its logical thread's native session for one

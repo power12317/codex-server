@@ -4,6 +4,7 @@ use codex_protocol::config_types::WebSearchFilters;
 use codex_protocol::config_types::WebSearchUserLocation;
 use codex_tools::FreeformTool;
 use codex_tools::FreeformToolFormat;
+use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
@@ -212,17 +213,15 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
     }
     if value["type"] == "tool_search" {
         ensure_keys(&value, &["type", "execution", "description", "parameters"])?;
+        let parameters = value
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| json!({"type":"object"}));
         let spec = ToolSpec::ToolSearch {
             execution: optional::<String>(&value, "execution")?.unwrap_or_else(|| "server".into()),
             description: optional_description(&value)?,
-            parameters: serde_json::from_value(
-                value
-                    .get("parameters")
-                    .cloned()
-                    .unwrap_or_else(|| json!({"type":"object"})),
-            )?,
+            parameters: caller_schema(&parameters)?,
         };
-        ensure_preserved(&value, &serde_json::to_value(&spec)?)?;
         return Ok((spec, value));
     }
     if value["type"] == "web_search" {
@@ -247,7 +246,6 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
             search_context_size: optional(&value, "search_context_size")?,
             search_content_types: optional(&value, "search_content_types")?,
         };
-        ensure_preserved(&value, &serde_json::to_value(&spec)?)?;
         return Ok((spec, value));
     }
     anyhow::ensure!(
@@ -278,10 +276,6 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
                 .get("parameters")
                 .cloned()
                 .unwrap_or_else(|| json!({"type":"object"}));
-            anyhow::ensure!(
-                parameters.is_object(),
-                "function parameters must be a JSON Schema object"
-            );
             let strict = value
                 .get("strict")
                 .map(|value| serde_json::from_value(value.clone()))
@@ -292,12 +286,11 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
                 description: description.clone(),
                 strict,
                 defer_loading,
-                parameters: serde_json::from_value(parameters.clone())?,
+                parameters: caller_schema(&parameters)?,
                 output_schema: None,
             });
             value["parameters"] = parameters;
             value["description"] = json!(description);
-            ensure_preserved(&value, &serde_json::to_value(&spec)?)?;
             Ok((spec, value))
         }
         Some("custom") => {
@@ -332,7 +325,6 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
                 defer_loading,
                 format: native_format,
             });
-            ensure_preserved(&value, &serde_json::to_value(&spec)?)?;
             Ok((spec, value))
         }
         _ => {
@@ -348,14 +340,11 @@ fn optional<T: serde::de::DeserializeOwned>(value: &Value, key: &str) -> anyhow:
         .transpose()
 }
 
-fn ensure_preserved(caller: &Value, native: &Value) -> anyhow::Result<()> {
-    for (key, value) in caller.as_object().context("tool must be an object")? {
-        anyhow::ensure!(
-            native.get(key) == Some(value),
-            "unsupported or lossy tool field: {key}"
-        );
-    }
-    Ok(())
+fn caller_schema(parameters: &Value) -> anyhow::Result<JsonSchema> {
+    let schema = parameters
+        .as_object()
+        .context("tool parameters must be a JSON Schema object")?;
+    Ok(JsonSchema::from_raw_schema(schema.clone()))
 }
 
 #[cfg(test)]

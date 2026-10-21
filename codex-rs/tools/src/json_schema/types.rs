@@ -32,9 +32,16 @@ pub enum JsonSchemaType {
     Multiple(Vec<JsonSchemaPrimitiveType>),
 }
 
-/// Generic JSON-Schema subset needed for our tool definitions.
+/// Tool parameter schema, built from typed fields or a complete caller-owned object.
+///
+/// Typed fields and deserialization serve the native tool schema normalization
+/// policy. Inference-only callers use [`Self::from_raw_schema`] to preserve their
+/// complete schema without applying that policy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct JsonSchema {
+    /// Complete schema for caller-owned tools; do not mix with typed fields.
+    #[serde(flatten, skip_deserializing)]
+    pub raw_schema: BTreeMap<String, JsonValue>,
     /// Explicit ordinary MCP server input schema limit; never sent as JSON Schema.
     #[serde(skip)]
     pub mcp_input_schema_max_bytes: Option<usize>,
@@ -75,6 +82,15 @@ pub struct JsonSchema {
 }
 
 impl JsonSchema {
+    /// Carry a caller's schema through native tool serialization without
+    /// interpreting, normalizing or filtering any keywords or nested values.
+    pub fn from_raw_schema(schema: serde_json::Map<String, JsonValue>) -> Self {
+        Self {
+            raw_schema: schema.into_iter().collect(),
+            ..Default::default()
+        }
+    }
+
     /// Construct a scalar/object/array schema with a single JSON Schema type.
     fn typed(schema_type: JsonSchemaPrimitiveType, description: Option<String>) -> Self {
         Self {

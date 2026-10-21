@@ -3,6 +3,8 @@
 mod home_tests;
 #[path = "cpa_bridge/native_runtime_tests.rs"]
 mod native_runtime_tests;
+#[path = "cpa_bridge/schema_tests.rs"]
+mod schema_tests;
 
 use anyhow::Result;
 use app_test_support::ChatGptIdTokenClaims;
