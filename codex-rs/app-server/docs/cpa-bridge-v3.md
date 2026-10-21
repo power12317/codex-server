@@ -250,12 +250,18 @@ and image generation run upstream. Image options such as `output_format` are
 carried by the native tool specification. Tool search retains its declared
 client/server execution mode; omission uses the native server mode. No local
 image executor or client-tool execution is added. The parser
-preserves namespace/name/description, grammar, supported JSON Schema constraints
-including `encrypted`, `strict`, `defer_loading`, and explicit search booleans and
-content types. Chat-style nested function definitions and `input_schema` tool
-definitions are normalized without renaming tools. Unsupported fields/schema
-constraints fail with a path such as `tools[3].tools[1]`, rather than being silently
-removed. Function `output_schema` is not a supported wire field and is rejected.
+preserves namespace/name/description, grammar, `strict`, `defer_loading`, and
+explicit search booleans and content types. Caller-owned function and tool-search
+parameter schemas are carried as complete JSON objects in the native `JsonSchema`
+representation, including all nested values, declarations, defaults, constraints,
+boolean subschemas and future keywords. They do not pass through the internal
+tool normalization/compaction policy or a schema-key allowlist. Schema fidelity is
+checked in regression tests, not by a runtime round-trip equality gate. Chat-style
+nested function definitions and `input_schema` tool definitions are normalized
+without renaming tools. Function names do not select hosted tools or local
+executors: a function named `WebSearch`, `ToolSearch`, `Bash` or `Agent` remains a
+client function. Invalid tool envelopes still report their array location.
+Function `output_schema` is not a supported wire field and is rejected.
 
 Both ordinary Responses and Responses Lite serialize native `ToolSpec` values.
 Lite uses the native `additional_tools` prefix and namespace convention; no raw

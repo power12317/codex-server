@@ -1,0 +1,935 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "description": "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- This tool allows CodeBuddy Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as CodeBuddy Code is a multimodal LLM.\n- This tool can read PDF files (.pdf). PDFs are processed page by page, extracting both text and visual content for analysis.\n- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.\n- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.\n- You can call multiple tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.\n- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n",
+      "name": "Read",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "The path to the file to read (can be absolute or relative)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+            "type": "number"
+          },
+          "offset": {
+            "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+            "type": "number"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provided path.\n- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.\n",
+      "name": "Write",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "The content to write to the file",
+            "type": "string"
+          },
+          "file_path": {
+            "description": "The path to the file to write (can be absolute or relative)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Performs exact string replacements in files.\n\nUsage:\n- This tool reads the file's current contents from disk and matches `old_string` against them directly; a prior `Read` is not required. If `old_string` does not match, read the file to get its latest contents and retry.\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.\n- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.\n\nCRITICAL REQUIREMENTS:\n- The tool will fail if `old_string` and `new_string` are the same\n- The tool will fail if `old_string` doesn't match the file contents exactly (including whitespace)\n- This tool is for MODIFYING content only - if `old_string` equals `new_string`, you are not making any changes\n\nWARNING:\n- NEVER use this tool to \"verify\" content or as a no-op operation\n- NEVER pass identical values for `old_string` and `new_string`\n- If you don't need to change anything, don't use this tool\n- Make sure the text matches exactly, including whitespace\n",
+      "name": "Edit",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "The path to the file to modify (can be absolute or relative)",
+            "type": "string"
+          },
+          "new_string": {
+            "description": "The new text to replace the old text with. must be different from old_string. If they are identical, the tool will fail.",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "The text to replace",
+            "type": "string"
+          },
+          "replace_all": {
+            "default": false,
+            "description": "Replace all occurrences of old_string (default false)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_path",
+          "old_string",
+          "new_string"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Supports pagination with `limit` (max results, default 100) and `offset` (skip N results, default 0) parameters\n- Use this tool when you need to find files by name patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead\n- You can call multiple tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.\n",
+      "name": "Glob",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 100,
+            "description": "Maximum number of results to return. Defaults to 100.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Number of results to skip from the beginning. Defaults to 0.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The glob pattern to match files against",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "A powerful search tool built on ripgrep\n\n  Usage:\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\\\s+\\\\w+\")\n  - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n  - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts\n  - Pagination support: Use `head_limit` to limit output (default unlimited) and `offset` to skip first N results (default 0)\n  - Use Agent tool for open-ended searches requiring multiple rounds\n  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\\\{\\\\}` to find `interface{}` in Go code)\n  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\\\{[\\\\s\\\\S]*?field`, use `multiline: true`\n",
+      "name": "Grep",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "-A": {
+            "description": "Number of lines to show after each match (rg -A). Requires output_mode: \"content\", ignored otherwise.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-B": {
+            "description": "Number of lines to show before each match (rg -B). Requires output_mode: \"content\", ignored otherwise.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-C": {
+            "description": "Alias for context.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "-i": {
+            "description": "Case insensitive search (rg -i)",
+            "type": "boolean"
+          },
+          "-n": {
+            "description": "Show line numbers in output (rg -n). Requires output_mode: \"content\", ignored otherwise.",
+            "type": "boolean"
+          },
+          "context": {
+            "description": "Number of lines to show before and after each match (rg -C). Requires output_mode: \"content\", ignored otherwise.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "glob": {
+            "description": "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob",
+            "type": "string"
+          },
+          "head_limit": {
+            "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). When unspecified, shows all results from ripgrep.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "multiline": {
+            "description": "Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.",
+            "type": "boolean"
+          },
+          "offset": {
+            "description": "Skip first N lines/entries before applying head_limit, equivalent to \"| tail -n +N | head -N\". Works across all output modes. Defaults to 0.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output_mode": {
+            "description": "Output mode: \"content\" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), \"files_with_matches\" shows file paths (supports head_limit), \"count\" shows match counts (supports head_limit). Defaults to \"files_with_matches\".",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "File or directory to search in (rg PATH). Defaults to current working directory.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The regular expression pattern to search for in file contents",
+            "type": "string"
+          },
+          "type": {
+            "description": "File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Executes a given bash command and returns its output.\n\nThe working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile.\n\nIMPORTANT: The user's default shell is zsh. Generate commands using syntax compatible with this shell.\n\nIMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user:\n\n- Read files: Use Read (NOT cat/head/tail)\n- Edit files: Use Edit (NOT sed/awk)\n- Write files: Use Write (NOT echo >/cat <<EOF)\n- Communication: Output text directly (NOT echo/printf)\n\nIMPORTANT: Avoid using this tool to run `find`, `grep`, or `rg` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user:\n\n- File search: Use Glob (NOT find or ls)\n- Content search: Use Grep (NOT grep or rg)\n\nWhile the Bash tool can do similar things, it’s better to use the built-in tools as they provide a better user experience and make it easier to review tool calls and give permission.\n\n# Instructions\n- If your command will create new directories or files, first use this tool to run `ls` to verify the parent directory exists and is the correct location.\n- Always quote file paths that contain spaces with double quotes in your command (e.g., cd \"path with spaces/file.txt\").\n- Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it. In particular, never prepend `cd <current-directory>` to a `git` command — `git` already operates on the current working tree, and the compound triggers a permission prompt.\n- You may specify an optional timeout in milliseconds (up to 600000ms). When the command may run longer than a few seconds (installers, build steps, long-running helper binaries, data processing) prefer to **omit the `timeout` parameter entirely** — the system default (120000ms) is controlled by `BASH_DEFAULT_TIMEOUT_MS` and lets the user tune it without editing prompts. Only specify an explicit `timeout` when the command has a known short upper bound (e.g. a quick probe, a health check).\n- Non-interactive runs (`--print`/`-p`, `--output-format stream-json`) exit the process as soon as the main agent finishes its turn, even if earlier commands spawned background or long-running child processes. When designing multi-step workflows (skills, scripts that kick off build/analysis pipelines), either await the child process in the foreground (do not `nohup ... &` + return immediately) or plan the turns so the final step collects the artifact/exit status before the agent returns.\n- You can use the `run_in_background` parameter to run the command in the background. Prefer setting this to `true` for known long-running commands — installs, builds, image pulls, long tests, servers, etc. Examples: `yarn install/package/build`, `npm install/build`, `pnpm install`, `docker build/pull`, `cargo build`, `make`, `mvn package`, `go build`, `gradle build`. Once backgrounded you will receive a `task_id`; **you do NOT need to poll** — when the command finishes you will be automatically notified via a `<task-notification>` message in your next turn. Use the `TaskOutput` tool only when the notification arrives and you actually need the output. You do not need to use '&' at the end of the command when using this parameter.\n- If you forget `run_in_background` on a long command and it hits the foreground timeout, the command will **auto-background instead of being killed** (no SIGTERM, no state loss). The tool result will tell you the new `task_id`; you will receive a `<task-notification>` when it finishes. This covers most long commands; the only exception is `sleep`, which is never auto-backgrounded because its timeout is usually the point of the command.\n- When issuing multiple commands:\n  - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. Example: if you need to run \"git status\" and \"git diff\", send a single message with two Bash tool calls in parallel.\n  - If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together.\n  - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.\n  - DO NOT use newlines to separate commands (newlines are ok in quoted strings).\n- For git commands:\n  - For creating commits, use the `/commit` command — it handles git safety protocol, HEREDOC formatting, and pre-commit hook recovery.\n  - For committing, pushing, and opening a PR, use the `/commit-push-pr` command.\n  - Prefer creating a new commit rather than amending an existing commit.\n  - Before running destructive operations (e.g., `git reset --hard`, `git push --force`, `git checkout --`), consider whether there is a safer alternative. Only use destructive operations when they are truly the best approach.\n  - Never skip hooks (`--no-verify`) or bypass signing (`--no-gpg-sign`, `-c commit.gpgsign=false`) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.\n- Avoid unnecessary `sleep` commands:\n  - Do not sleep between commands that can run immediately — just run them.\n  - If your command is long running and you would like to be notified when it finishes — use `run_in_background`. No sleep needed.\n- Do not emulate a managed background task with shell detachment such as `nohup`, `setsid`, or a trailing `&`. Those processes are outside the task protocol and may be reclaimed when the shell, sandbox, session, or CLI exits. Use `run_in_background: true` so the process has a task id, captured output, completion notification, and `TaskStop` lifecycle.\n  - Do not retry failing commands in a sleep loop — diagnose the root cause.\n  - If waiting for a background task you started with `run_in_background`, you will be automatically notified when it completes — do NOT sleep, poll, or proactively check on its progress.\n  - If you must poll an external process, use a check command (e.g. `gh run view`) rather than sleeping first.\n  - If you must sleep, keep the duration short (1-5 seconds) to avoid blocking the user.\n- For GitHub operations (issues, PR checks, releases, comments), use the `gh` command via the Bash tool. If given a GitHub URL, use `gh` to get the information. Example: view PR comments via `gh api repos/foo/bar/pulls/123/comments`.\n",
+      "name": "Bash",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "The command to execute",
+            "type": "string"
+          },
+          "dangerouslyDisableSandbox": {
+            "description": "Set to true ONLY when you are confident the command requires operating outside the sandbox and expect the user to approve it.\n\nWhen true, the tool asks the user for explicit consent and — if granted — runs the command with no sandbox isolation. The user can still refuse.\n\nDo NOT set this preemptively. Only use it after a prior sandboxed attempt has failed due to sandbox policy (SANDBOX PERMISSION DENIED in a previous result) or when the task semantically cannot run sandboxed (e.g. installing a system package, modifying files outside the workspace).",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "Clear, concise description of what this command does in active voice.\nNever use words like \"complex\" or \"risk\" in the description.\n\nFor simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):\n  - ls → \"List files in current directory\"\n  - git status → \"Show working tree status\"\n  - npm install → \"Install package dependencies\"\n\nFor commands that are harder to parse at a glance (piped commands, obscure flags):\n  - find . -name \"*.tmp\" -exec rm {} \\; → \"Find and delete all .tmp files recursively\"\n  - git reset --hard origin/main → \"Discard all local changes and match remote main\"\n  - curl -s url | jq '.data[]' → \"Fetch JSON from URL and extract data array elements\"\n\nLanguage MUST follow the <response_language> in system prompt, or the user's input language (most likely Chinese).",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "Set to true to run this command in the background. Use BashOutput to read the output later.",
+            "type": "boolean"
+          },
+          "timeout": {
+            "description": "Optional timeout in milliseconds. Omit to use the system default; the effective max is clamped by `BASH_MAX_TIMEOUT_MS` (env) / `settings.env.BASH_MAX_TIMEOUT_MS`. See the tool description for the concrete default/max values active in this session.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Use this tool to create a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.\nIt also helps the user understand the progress of the task and overall progress of their requests.\n\n## When to Use This Tool\n\nUse this tool proactively in these scenarios:\n\n- Complex multi-step tasks - When a task requires 3 or more distinct steps or actions\n- Non-trivial and complex tasks - Tasks that require careful planning or multiple operations\n- Plan mode - When using plan mode, create a task list to track the work\n- User explicitly requests task list - When the user directly asks you to use task management\n- User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)\n- After receiving new instructions - Immediately capture user requirements as tasks\n- When you start working on a task - Mark it as in_progress BEFORE beginning work\n- After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation\n\n## When NOT to Use This Tool\n\nSkip using this tool when:\n- There is only a single, straightforward task\n- The task is trivial and tracking it provides no organizational benefit\n- The task can be completed in less than 3 trivial steps\n- The task is purely conversational or informational\n\nNOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.\n\n## Task Fields\n\n- **subject**: A brief, actionable title in imperative form (e.g., \"Fix authentication bug in login flow\")\n- **description**: Detailed description of what needs to be done, including context and acceptance criteria\n- **activeForm**: Present continuous form shown in spinner when task is in_progress (e.g., \"Fixing authentication bug\"). This is displayed to the user while you work on the task.\n\n**IMPORTANT**: Task descriptions must have two forms:\n- subject: The imperative form describing what needs to be done (e.g., \"Run tests\", \"Build the project\")\n- activeForm: The present continuous form shown during execution (e.g., \"Running tests\", \"Building the project\")\n\n## Examples\n\n### Creating a task for a multi-step feature\n```json\n{\n    \"subject\": \"Add dark mode toggle to Settings page\",\n    \"description\": \"Implement a toggle component in the settings page that allows users to switch between light and dark mode. Should persist preference to localStorage.\",\n    \"activeForm\": \"Adding dark mode toggle to Settings page\"\n}\n```\n\n### Creating a task for running tests\n```json\n{\n    \"subject\": \"Run tests and ensure they pass\",\n    \"description\": \"Execute the test suite and verify all tests pass. Fix any failing tests before proceeding.\"\n}\n```\n\n## Tips\n\n- Create specific, actionable items\n- Break complex tasks into smaller, manageable steps\n- Use clear, descriptive task names\n- After creating tasks, use TaskList to verify your task list\n- Use TaskUpdate to mark tasks as in_progress when starting and completed when done\n",
+      "name": "TaskCreate",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "activeForm": {
+            "description": "Present continuous form shown in spinner when in_progress (e.g., \"Running tests\")",
+            "type": "string"
+          },
+          "description": {
+            "description": "A detailed description of what needs to be done",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {},
+            "description": "Arbitrary metadata to attach to the task",
+            "type": "object"
+          },
+          "owner": {
+            "description": "Task owner (agent name). Use to assign the task to a specific teammate.",
+            "type": "string"
+          },
+          "subject": {
+            "description": "A brief title for the task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "description"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Use this tool to retrieve a task by its ID from the task list.\n\n## When to Use This Tool\n\n- When you need the full description and context before starting work on a task\n- To understand task dependencies (what it blocks, what blocks it)\n- After being assigned a task, to get complete requirements\n\n## Output\n\nReturns full task details:\n- **subject**: Task title\n- **description**: Detailed requirements and context\n- **status**: 'pending', 'in_progress', or 'completed'\n- **blocks**: Tasks waiting on this one to complete\n- **blockedBy**: Tasks that must complete before this one can start\n\n## Tips\n\n- After fetching a task, verify its blockedBy list is empty before beginning work.\n- Use TaskList to see all tasks in summary form.\n",
+      "name": "TaskGet",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "taskId": {
+            "description": "The ID of the task to retrieve",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Use this tool to update a task in the task list.\n\n## When to Use This Tool\n\n**Mark tasks as resolved:**\n- When you have completed the work described in a task\n- When a task is no longer needed or has been superseded\n- IMPORTANT: Always mark your assigned tasks as resolved when you finish them\n- After resolving, call TaskList to find your next task\n\n- ONLY mark a task as completed when you have FULLY accomplished it\n- If you encounter errors, blockers, or cannot finish, keep the task as in_progress\n- When blocked, create a new task describing what needs to be resolved\n- Never mark a task as completed if:\n  - Tests are failing\n  - Implementation is partial\n  - You encountered unresolved errors\n  - You couldn't find necessary files or dependencies\n\n**Delete tasks:**\n- When a task is no longer relevant or was created in error\n- Setting status to `deleted` permanently removes the task\n\n**Update task details:**\n- When requirements change or become clearer\n- When establishing dependencies between tasks\n\n## Fields You Can Update\n\n- **status**: The task status (see Status Workflow below)\n- **subject**: Change the task title (imperative form, e.g., \"Run tests\")\n- **description**: Change the task description\n- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., \"Running tests\")\n- **owner**: Change the task owner (agent name)\n- **metadata**: Merge metadata keys into the task (set a key to null to delete it)\n- **addBlocks**: Mark tasks that cannot start until this one completes\n- **addBlockedBy**: Mark tasks that must complete before this one can start\n\n## Status Workflow\n\nStatus progresses: `pending` → `in_progress` → `completed`\n\nUse `deleted` to permanently remove a task.\n\n## Staleness\n\nMake sure to read a task's latest state using `TaskGet` before updating it.\n\n## Examples\n\nMark task as in progress when starting work:\n```json\n{\"taskId\": \"1\", \"status\": \"in_progress\"}\n```\n\nMark task as completed after finishing:\n```json\n{\"taskId\": \"1\", \"status\": \"completed\"}\n```\n\nDelete a task that's no longer needed:\n```json\n{\"taskId\": \"3\", \"status\": \"deleted\"}\n```\n\nAdd a dependency between tasks:\n```json\n{\"taskId\": \"2\", \"addBlockedBy\": [\"1\"]}\n```\n",
+      "name": "TaskUpdate",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "activeForm": {
+            "description": "Present continuous form shown in spinner when in_progress (e.g., \"Running tests\")",
+            "type": "string"
+          },
+          "addBlockedBy": {
+            "description": "Task IDs that block this task",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "addBlocks": {
+            "description": "Task IDs that this task blocks",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "New description for the task",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {},
+            "description": "Metadata keys to merge into the task. Set a key to null to delete it.",
+            "type": "object"
+          },
+          "owner": {
+            "description": "New owner for the task",
+            "type": "string"
+          },
+          "status": {
+            "description": "New status for the task",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "deleted"
+            ],
+            "type": "string"
+          },
+          "subject": {
+            "description": "New subject for the task",
+            "type": "string"
+          },
+          "taskId": {
+            "description": "The ID of the task to update",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "- Retrieves output from a running or completed task (background shell, agent, or remote session)\n- Takes a task_id parameter identifying the task\n- Returns the task output along with status information\n- Use block=true (default) to wait for task completion\n- Use block=false for non-blocking check of current status\n- Task IDs can be found using the /tasks command\n- Works with all task types: background shells, async agents, and remote sessions\n",
+      "name": "TaskOutput",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "description": "Whether to wait for task completion (default: true, up to timeout). Pass false for a non-blocking status check.",
+            "type": "boolean"
+          },
+          "filter": {
+            "description": "Optional regex pattern applied only to output read by this call (background shell tasks only)",
+            "type": "string"
+          },
+          "full": {
+            "description": "Return the current accumulated output snapshot instead of only output added since the previous read (background shell tasks only)",
+            "type": "boolean"
+          },
+          "task_id": {
+            "description": "The ID of the background task to retrieve",
+            "type": "string"
+          },
+          "timeout": {
+            "default": 60000,
+            "description": "Timeout in milliseconds (0-600000, default: 60000)",
+            "type": "number"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "\n- Fetches content from a specified URL and processes it using an AI model\n- Takes a URL and a prompt as input\n- Fetches the URL content, converts HTML to markdown\n- Processes the content with the prompt using a small, fast model\n- Returns the model's response about the content\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions. All MCP-provided tools start with \"mcp__\".\n  - The URL must be a fully-formed valid URL\n  - HTTP URLs will be automatically upgraded to HTTPS\n  - The prompt should describe what information you want to extract from the page\n  - This tool is read-only and does not modify any files\n  - Results may be summarized if the content is very large\n  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL\n  - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new WebFetch request with the redirect URL to fetch the content.\n  - IMPORTANT: WebFetch is for text-based web content. For direct media or binary URLs, download with Bash, preserve the real extension (infer it from curl's `%{content_type}` if needed), then open with Read.\n",
+      "name": "WebFetch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "description": "The prompt to run on the fetched content",
+            "type": "string"
+          },
+          "url": {
+            "description": "The URL to fetch content from",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "\n- Searches the web and uses the results to inform responses\n- Provides up-to-date information for current events and recent data\n- Returns search result information formatted as search result blocks\n- Use this tool for accessing information beyond the knowledge cutoff\n- Searches are performed automatically within a single API call\n- You MUST use the current time provided in context when searching for recent information.\n\nWhen to search:\n  - For any factual question about the present-day world, you MUST search before answering; search before EVERY such question.\n  - Your confidence on a topic is NOT an excuse to skip search. Present-day facts — who holds a role, what something costs, whether a law still applies, what's newest in a category — cannot come from training data.\n  - Even seemingly familiar questions — for example asking about the price of a product or who currently leads a country — can be outdated, because prices and officeholders change frequently.\n  - Proactively search instead of answering from your priors and offering to check.\n\nUsage notes:\n  - The query must preserve the meaning of the user's request; keep the entity names, versions, dates and terms the user mentioned, and do not substitute or fill them in from prior knowledge.\n  - Domain filtering is supported to include or block specific websites.\n",
+      "name": "WebSearch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "allowed_domains": {
+            "description": "Only include search results from these domains.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "blocked_domains": {
+            "description": "Never include search results from these domains",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "freshness": {
+            "description": "Filter search results by time range. Supports d[N], m[N], and y[N] for the last N calendar days, months, and years:\n- d[N]: N is an integer from 1 to 30;\n- m[N]: N is an integer from 1 to 12;\n- y[N]: N is an integer from 1 to 5.\n\nN may be omitted and defaults to 1. The current partial calendar unit counts as 1. For example, d1 means today, m1 means the current month to date, and y1 means the current year to date. Omit this parameter to disable time filtering.",
+            "pattern": "^(?:d(?:[1-9]|[12]\\d|30)?|m(?:[1-9]|1[0-2])?|y[1-5]?)$",
+            "type": "string"
+          },
+          "query": {
+            "description": "The search query to use",
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on implementation choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- Users will always be able to select \"Other\" to provide custom text input\n- Use multiSelect: true to allow multiple answers to be selected for a question\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n\nExample:\n```json\n{\"questions\": [{\"question\": \"Which approach should we use?\", \"header\": \"Approach\", \"options\": [{\"label\": \"Option A (Recommended)\", \"description\": \"Simple and direct\"}, {\"label\": \"Option B\", \"description\": \"More flexible but complex\"}]}]}\n```\n\n",
+      "name": "AskUserQuestion",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "User answers collected by the permission component",
+            "type": "object"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "description": "Optional metadata for tracking and analytics purposes. Not displayed to user.",
+            "properties": {
+              "source": {
+                "description": "Optional identifier for the source of this question (e.g., \"remember\" for /remember command). Used for analytics tracking.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "questions": {
+            "description": "Questions to ask the user (1-4 questions)",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "header": {
+                  "description": "Very short label displayed as a chip/tag (max 12 chars). Examples: \"Auth method\", \"Library\", \"Approach\".",
+                  "maxLength": 12,
+                  "type": "string"
+                },
+                "multiSelect": {
+                  "default": false,
+                  "description": "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.",
+                  "type": "boolean"
+                },
+                "options": {
+                  "description": "The available choices for this question. Must have 2-4 options. Each option MUST be an object with \"label\" and \"description\" fields (not a plain string). The \"label\" field is used as a key to look up the user's answer, so it MUST NOT have leading or trailing spaces (e.g. {\"label\":\"Auth method\"} is correct, {\" label\":\"Auth method\"} or {\"label \":\"Auth method\"} with spaces around the key is NOT). Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). Do NOT include an \"Other\" or \"其他\" option — the UI automatically provides a free-text input field below the predefined options so the user can type a custom answer if none of the choices fit. Including such an option will result in a duplicate UI element. IMPORTANT: Always format options as objects like [{\"label\": \"Option 1\", \"description\": \"Description 1\"}, {\"label\": \"Option 2\", \"description\": \"Description 2\"}], never as plain strings.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "description": "Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications. Must NOT contain leading or trailing spaces.",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "The display text for this option that the user will see and select. Must NOT contain leading or trailing spaces. Should be concise (1-5 words) and clearly describe the choice.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 4,
+                  "minItems": 2,
+                  "type": "array"
+                },
+                "question": {
+                  "description": "The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: \"Which library should we use for date formatting?\" If multiSelect is true, phrase it accordingly, e.g. \"Which features do you want to enable?\"",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "question",
+                "header",
+                "options"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Execute a deferred tool by name. Use this to invoke tools discovered via ToolSearch without needing them in the active tools list.\n\nUsage:\n- First use ToolSearch to discover a tool and learn its parameter schema\n- Then call this tool with the exact tool name and parameters\n- Parameters are validated against the tool's schema before execution\n- The target tool's permission checks and hooks are applied normally\n\nExample:\nDeferExecuteTool({ toolName: \"ImageGen\", params: { prompt: \"a sunset over mountains\" } })\n\nNotes:\n- If parameter validation fails, a detailed error with the expected schema is returned\n- You can skip ToolSearch if you already know the tool name and parameters from a previous turn\n- This tool follows standard permission checks (may require approval depending on permissions configuration)\n",
+      "name": "DeferExecuteTool",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "params": {
+            "additionalProperties": {},
+            "description": "The parameters to pass to the target tool. Must match the tool's parameter schema (as returned by ToolSearch in a previous turn).",
+            "type": "object"
+          },
+          "toolName": {
+            "description": "The exact name of the deferred tool to execute (as returned by ToolSearch).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "toolName",
+          "params"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Manage one-time and recurring automations. Different modes need different fields — see the `mode` field for the required-parameter map. When the user explicitly selects or mentions an expert, connectors, or skills for a created automation, preserve those selections in expertId, expertMarketplace, connectorIds, and skills. Do not invent capability ids. Do not show raw RRULE strings to the user; describe schedules in natural language.",
+      "name": "automation_update",
+      "parameters": {
+        "additionalProperties": true,
+        "properties": {
+          "connectorIds": {
+            "description": "Connector config ids explicitly selected by the user. Never invent connector ids.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cwds": {
+            "description": "Comma-separated working directories for the automation.",
+            "type": "string"
+          },
+          "expertId": {
+            "description": "Expert id explicitly selected by the user for this automation. Never invent an id.",
+            "type": "string"
+          },
+          "expertMarketplace": {
+            "description": "Marketplace of the explicitly selected expert. Use only together with expertId.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Automation ID (required for view, update, and delete. Not needed for list and create)",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Required. One of \"list\" | \"view\" | \"create\" | \"update\" | \"delete\". Required fields per mode: list — none; view — id; create — name, prompt, scheduleType, status, plus rrule if recurring or scheduledAt if once; update — id (other fields optional; do not resend fields the user did not ask to change — omitted ones are preserved); delete — id.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Human-readable name for the automation",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt/instruction to execute when the automation runs",
+            "type": "string"
+          },
+          "rrule": {
+            "description": "RFC 5545 RRULE string for recurring schedules (required when scheduleType is \"recurring\"). Supports DAILY, HOURLY, WEEKLY, MONTHLY and YEARLY; FREQ must be explicit. Per-frequency requirements: HOURLY needs INTERVAL=n and optionally BYDAY; DAILY needs BYHOUR+BYMINUTE (INTERVAL=n means every n days); WEEKLY needs BYDAY+BYHOUR+BYMINUTE (INTERVAL=2 for biweekly); MONTHLY needs BYMONTHDAY(1-31)+BYHOUR+BYMINUTE; YEARLY needs BYMONTH(1-12)+BYMONTHDAY+BYHOUR+BYMINUTE. Example for HOURLY: \"FREQ=HOURLY;INTERVAL=2\" runs every 2 hours (do NOT add BYHOUR/BYMINUTE); \"FREQ=HOURLY;INTERVAL=6;BYDAY=MO,TU,WE,TH,FR\" runs every 6 hours on weekdays. A single RRULE can express multiple selected days/dates — do NOT create one automation per day: use comma-separated BYDAY (e.g. \"FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=9;BYMINUTE=0\" for \"every Mon/Wed/Fri at 09:00\") and comma-separated BYMONTHDAY (e.g. \"FREQ=MONTHLY;BYMONTHDAY=1,15,28;BYHOUR=9;BYMINUTE=0\" for \"the 1st, 15th, and 28th of every month at 09:00\").",
+            "type": "string"
+          },
+          "scheduleType": {
+            "description": "\"once\" for one-time execution, \"recurring\" for repeated execution",
+            "type": "string"
+          },
+          "scheduledAt": {
+            "description": "ISO 8601 datetime for one-time execution (required when scheduleType is \"once\")",
+            "type": "string"
+          },
+          "skills": {
+            "description": "Skill names explicitly selected by the user for this automation.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "\"ACTIVE\" or \"PAUSED\"",
+            "type": "string"
+          },
+          "validFrom": {
+            "description": "ISO 8601 date/datetime for schedule validity start (optional)",
+            "type": "string"
+          },
+          "validUntil": {
+            "description": "ISO 8601 date/datetime for schedule validity end (optional)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Present files and previews to the user as the final result of a task. This is the single entry point for showing results. Call this after producing files the user should view, inspect, or download. Pass all related items together; the order expresses viewing priority — put the item the user should see first at the beginning. The first item is automatically opened/focused for the user. Each entry can be either an absolute local file path, a file:// URI, or an http/https URL:\n- Local files (images, reports, pptx, video, code, etc.) are shown as artifact cards.\n- Local HTML files (.html/.htm) are BOTH opened in a live preview panel AND listed as artifact cards.\n- `.genie` files MUST be included as the last entry; pass the path as-is, never mention it to the user.\n- http/https URLs (including a localhost dev server you started) are opened in the built-in browser preview panel. For localhost URLs the tool checks reachability; if nothing is listening but the HTML file exists on disk, it is served via the built-in 127.0.0.1 preview. Otherwise it returns guidance — never start a server bound to 0.0.0.0.\n- Do NOT pass Ardot design file URLs (https://ardot.tencent.com/file/... or test.ardot...). Those canvases are already shown as MCP App artifact panels after create_design/open_design; present_files will skip opening them in the built-in browser.",
+      "name": "present_files",
+      "parameters": {
+        "additionalProperties": true,
+        "properties": {
+          "cwd": {
+            "description": "The current working directory (absolute path). Recommended so the desktop app can route previews to the owning session, and required for localhost URLs so the tool can locate local files as fallback when the server is not reachable.",
+            "type": "string"
+          },
+          "explanation": {
+            "description": "Brief explanation of what was produced / why this tool is being used.",
+            "type": "string"
+          },
+          "files": {
+            "description": "Array of items to present, ordered by descending viewing priority. Each item is either an absolute local file path or file:// URI (e.g. /Users/foo/report.pdf, /Users/foo/index.html, /Users/foo/.wbapp_xxx.genie) or an http/https URL (e.g. http://localhost:8080 for a local server you started, or a remote page). Do not include Ardot design URLs (https://ardot.tencent.com/file/<id>); the canvas is already an MCP App artifact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Show visual content — SVG graphics, diagrams, charts, or interactive HTML widgets — that renders inline alongside your text response. Call widget_guidelines (modules: diagram|mockup|interactive|chart|art) before your first show_widget call to load required design guidance. widget_code MUST be a raw SVG/HTML fragment (no <html>/<head>/<body>/<!DOCTYPE>); for SVG use a viewBox starting with \"0 0 680 \".",
+      "name": "show_widget",
+      "parameters": {
+        "additionalProperties": true,
+        "properties": {
+          "loading_messages": {
+            "description": "A JSON-encoded string array of 1–4 loading messages shown while the visual renders, each roughly 5 words long. Write in the same language the user is using. Example: '[\"Preparing chart data\",\"Rendering visualization\",\"Applying styles\",\"Almost ready\"]'",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short identifier for this visual, written in the same language the user is using (follow <response_language>). Must be specific and disambiguating — if the conversation has multiple visuals, this title alone should tell you which one is being referenced. Spaces and hyphens are converted to underscores automatically. Also used as the download filename.",
+            "type": "string"
+          },
+          "widget_code": {
+            "description": "SVG or HTML code to render. For SVG: raw code starting with <svg> tag. For HTML: raw HTML fragment, do NOT include DOCTYPE, <html>, <head>, or <body> tags.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "widget_code",
+          "loading_messages"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Returns required context for show_widget (CSS variables, colors, typography, layout rules, examples). Call before your first show_widget call. Call again later if you need a different module. Do NOT mention or narrate this call to the user — it is an internal setup step.",
+      "name": "widget_guidelines",
+      "parameters": {
+        "additionalProperties": true,
+        "properties": {
+          "modules": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Which module(s) to load. Pick all that fit. Options: diagram, mockup, interactive, art, chart. Pass as an array (e.g. [\"diagram\",\"chart\"]), a JSON-encoded string array, or a comma-separated list like \"diagram,chart\"."
+          }
+        },
+        "required": [
+          "modules"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Use this tool to list all tasks in the task list.\n\n## When to Use This Tool\n\n- To see what tasks are available to work on (status: 'pending', no owner, not blocked)\n- To check overall progress on the project\n- To find tasks that are blocked and need dependencies resolved\n- After completing a task, to check for newly unblocked work or claim the next available task\n- **Prefer working on tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones\n\n## Output\n\nReturns a summary of each task:\n- **id**: Task identifier (use with TaskGet, TaskUpdate)\n- **subject**: Brief description of the task\n- **status**: 'pending', 'in_progress', or 'completed'\n- **owner**: Agent ID if assigned, empty if available\n- **blockedBy**: List of open task IDs that must be resolved first (tasks with blockedBy cannot be claimed until dependencies resolve)\n\nUse TaskGet with a specific task ID to view full details including description and comments.\n",
+      "name": "TaskList",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Execute a skill within the main conversation\n\nWhen users ask you to perform tasks, check if any of the available skills below match. Skills provide specialized capabilities and domain knowledge.\n\nWhen users reference a \"slash command\" or \"/<something>\" (e.g., \"/commit\", \"/review-pr\"), they are referring to a skill. Use this tool to invoke it.\n\nHow to invoke:\n- Use this tool with the skill name and optional arguments\n- Examples:\n  - `skill: \"pdf\"` - invoke the pdf skill\n  - `skill: \"commit\", args: \"-m 'Fix bug'\"` - invoke with arguments\n  - `skill: \"ms-office-suite:pdf\"` - invoke using fully qualified name\n\nImportant:\n- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n- NEVER mention a skill without actually calling this tool\n- Do not invoke a skill that is already running\n- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)\n- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again\n- If the name matches a deferred tool listed in <available_deferred_tools> (e.g., \"Workflow\"), do NOT use this Skill tool — use ToolSearch + DeferExecuteTool instead\n\n<available_skills>\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/weixinpay/1.6.110/skills\n- weixinpay-feedback: 【微信支付官方】问题反馈。当用户使用微信AI支付/AI专属卡的开通/绑定或支付/管理过程遇到异常或错误（尤其是同一环节连续/反复报错、重试仍失败），主动引导用户上报问题。开通/绑定过程的问题通过反馈收集表链接反馈；支付/管理问题或用户直接想要反馈时通过工具反馈。关键词：微信AI支付反馈、Agent支付反馈、AI专属卡反馈、微信支付反馈。\n- weixinpay-pay: 【微信支付官方】微信支付AI专属卡支付能力。普通支付在商户下单后由系统自动触发工程化支付卡片，无需智能体介入；本技能主要指导「重新支付」：用户取消/关闭支付后想对同一笔订单再付一次时，智能体须先询问并确认订单，再将该订单上次支付所用的 WeixinPay-Required 值作为 paymentCode 调用 mcp__weixinpay__weixinpay_retry_pay 重新触发支付，无需重新下单。关键词：重新支付、再次支付、重新付款、重付、取消后再付一次、微信AI支付、微信Agent支付。\n- weixinpay-register: 【微信支付官方】用于用户开通/绑定微信AI支付或者AI专属卡功能，或查询开通/绑定状态。用于用户要开通、绑定、激活在 AI 对话中使用微信支付的能力。也用于回答用户\"我是否已开通、如何查看或管理微信AI支付\"等开通状态咨询。关键词：微信支付AI专属卡、微信AI支付、开通微信支付、绑定微信支付、激活AI支付、开通/绑定AI专属卡、绑定智能体钱包、是否开通AI支付、是否开通AI专属卡、查询开通状态、…\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/tencent-docs-plugin/5.8.3-wb.41334564.gdb0e9b51.hb7e8a97fb563/skills\n- tencent-docs: 腾讯文档个人版（docs.qq.com）-在线云文档平台，是创建、编辑、管理文档的首选 skill。涉及\"新建/创建/编辑/读取/查看/搜索文档\"、\"保存文件\"、\"云文档\"、\"腾讯文档\"、\"docs.qq.com\"等操作，请优先使用本 skill。支持能力：(1) 创建各类在线文档（文档/Word/Excel/幻灯片/思维导图/流程图/智能表格/收集表）(2) 管理知识库空间（创建空间、查询空间…\n- tencent-saas-docs: 腾讯文档企业版（saas.docs.qq.com）-在线云文档平台，是创建、编辑、管理文档的首选 skill。涉及\"新建/创建/编辑/读取/查看/搜索文档\"、\"企业文档\"、\"团队文档\"、\"saas.docs.qq.com\"等操作，请优先使用本 skill。支持能力：(1) 创建各类在线文档（文档/Word/Excel/幻灯片/思维导图/流程图/智能表格/收集表）(2) 管理知识库空间（创建空间、…\nskills under folder: /Users/momo/.workbuddy/plugins/cache/codebuddy-plugins-official/agent-browser\n- agent-browser: Use this skill when the user needs browser automation, including opening web pages, taking screenshots, extracting page content, clicking elements, filling forms, or testing web flows. This skill use…\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/workbuddy-sheetagent/5.8.3-wb.41334564.gdb0e9b51.hb7e8a97fb563/skills\n- workbuddy-sheet-generation: 生成一份全新的 Excel/xlsx 工作簿。触发条件是**意图为\"生成新表\"**——用户明确请求 \"创建/生成/新建/做一份/整理成一份新表/汇总成新表/from scratch\" 一个 XLSX 文件。 支持三类输入：① 纯文字需求；② 以 pdf/docx/pptx 附件作为内容参考； ③ 以源 .xlsx/.xls/.csv/.tsv 作为**内容参考素材**（读其数据后生成一份**新**工作簿， 不做原地编辑；由 `extract.py` 统一抽取为 markdown）。 **不适用**：用户意图是编辑 / 分析 / 透视 / 清洗源表本身（应走 sheetagent 或本地编辑链…\n- workbuddy-sheetagent: 编辑、查询、分析、清洗、透视、排序、筛选、格式化既有 Excel/xlsx/xls/csv 表格文件， 构造公式、生成图表、增删行列、合并单元格。 当用户上传、引用或指向一份**既有**表格文件、并对其做上述行为时使用。 当用户意图是从零产出一份新工作簿时改走 workbuddy-sheet-generation。 提供比 openpyxl 更强大的表格处理能力。\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/workbuddy-pptx/5.8.3-wb.41334564.gdb0e9b51.hb7e8a97fb563/skills\n- workbuddy-pptx: 创建、理解与编辑专业的 PowerPoint 演示文稿。适用于根据主题、大纲、文档、数据或参考材料生成完整 .pptx；读懂已有 PPT 并回答关于它的问题（某一页讲什么、全文结构等）；以及对已有 pptx 改标题、改某一页、增删页等编辑。触发词：做PPT、生成PPT、改PPT、看这份PPT、这一页讲什么、pptx、幻灯片。\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/workbuddy-docx\n- workbuddy-docx: 专业 Word 文档（.docx）创作与美化助手。用于生成研报、论文、公文、合同等垂类专业 Word 文档，或对已有 .docx 进行排版美化。当用户需要写文档、生成 Word、排版或美化 .docx 时调用。\nskills under folder: /Users/momo/.workbuddy/plugins/cache/workbuddy-builtin/workbuddy-docx/5.8.3-wb.41334564.gdb0e9b51.hb7e8a97fb563/skills\n- tdoc-orchestrator: 文档创作与美化的统一编排入口（本地通道）。当用户意图涉及文档写作或排版美化时调用。职责：识别意图 → 编排 stage 能力链（S1 创作 / S2 美化 / S3 HTML→DOCX 转换：经 `html-to-doc`）→ 委派 doc-writer/doc-formatter/doc-converter 执行；S3 create 后即 `present_files` 占位预览，转换完成本 …\nskills under folder: /Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/resources/plugins/workbuddy-builtin/skills\n- buddy-image-processing: Process existing images with text and watermark removal, general enhancement, portrait beautification, image restoration, and general matting.\n- buddy-multimodal-generation: Generate 3D models or apply template-based image-to-video effects. Use ImageGen for image generation and VideoGen for general video generation.\n- cloud-service: 网站和小程序需要后端、服务端或数据库时的托管方案（对标 Supabase）：云数据库、文件存储、用户认证（邮箱、手机短信验证码、微信登录）、免密钥大模型调用。应用要存数据、登录注册、传文件、调 AI 或做小程序（微信小程序）开发时优先使用。询问用户后端或数据库选型时列为推荐选项\n- expert-manager: 专家包的全生命周期运营：转化(从开源仓库/本地项目创建专家包)、修改已有专家、合规检查、批量更新、质量审查。 触发词：创建专家、转化专家、转成专家、生成专家包、导入专家、convert expert、修改专家、编辑专家、更新专家、modify expert、检查专家、审查专家包、专家合规、专家运营、expert ops。\n- geo-map-compliance-guard: ALWAYS TRIGGER map compliance skill for any map generation, visualization, routing, or location service request to enforce strict China map data compliance rules, including approved data-source white…\n- library: Route here (资料库/知识库/网盘/空间) when users create, generate, beautify, upload, edit, share, organize (整理/归档/理一理), publish, download, search or retrieve HTML pages (工作台/看板/收集表/汇报页), docs (文档/周报/笔记), tables…\n- marketplace-skill-installer: 在 WorkBuddy 对话中通过一句话搜索并安装 Skill。 触发词：安装 skill、安装技能、install skill、添加技能、装个 X 技能、帮我安装 X、search skill。\n- recommend-connectors: When a user task requires an external app, service, API, MCP server, authorization, or third-party data and no connected tool covers it, search for real Connectors and recommend them with an inline c…\n- recommend-experts: When a task needs professional judgment, deep research, a specialist role, or multi-role collaboration and no Expert is selected in the current session, search for real Experts or Expert Teams and re…\n- 发布为应用: 将生成内容发布为在线链接，或取消发布已上线的应用。适合网站、小游戏等交互式内容，支持任意可作为单端口 HTTP 服务运行的项目（静态站点 / PDF / Node.js / Python / Go），也支持微信小程序。当用户想把本地项目部署、发布、上线、发布小程序、生成分享链接、在云端预览或下线分享链接时使用。\n- skill-creator: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends WorkBuddy's capabilities with specialized knowledge, wo…\n- wecom-media-upload: 通过 A2ASendMessage 给企业微信聊天 Agent 发送本地文件（文件/图片/语音/视频）前，必须先用本 Skill 上传到企业微信 third_aibot 媒体库，再把上传返回的 media_url 放进 attachments，作为独立的文件 part 与文本一起发送。\n- wecom-wedrive-reference: Fetch the WeCom WeDrive files a user attached as references. Load this Skill whenever the host injects a `<wecom_wedrive_references>` block, or whenever the message carries `@wedrive#<file_id>:\"<name>\"` badges. These attachments have no local copy — only a file id. It owns the host-managed WeCom au…\n- workbuddy-finance-skill: 金融/投资/股票/基金/ETF/板块/指数/宏观/外汇/大宗商品/财报/估值/持仓/交易/量化/选股/期权/衍生品/投行建模/技术指标/行情等——金融场景总入口，优先级高于其他金融skill。涉及任一上述领域和相关金融场景时（包括字面未明说但本质相关），都务必**第一时间优先加载本skill**。\n- workbuddy-local-office-edit: 通过本地 editor_sdk 实时读写本机磁盘上的 Office/WPS 类型文件——文件打开后用户在编辑器中实时可见，编辑所见即所得，保存用 save_file 即可、不要主动 close_file。适用于本地 doc/docx/dot/wps/wpt、xls/xlsx/xlt/csv/tsv、ppt/pptx/pps/pot 等文件的打开、编辑、保存与新建；含宏格式可打开但宏不执行，et/ett/dps/dpt 不支持。按 doc/sheet/slide 三类调用对应工具，调用任一编辑工具前先用 edsdk.py schema 查它单个的参数、不要凭摘要猜参数。所有操作经本目录 eds…\n- workbuddy-office-routing: Load this Skill before handling local Office/WPS files such as doc/docx/dot/wps/wpt, xls/xlsx/xlt/csv/tsv, or ppt/pptx/pps/pot, and before creating a new local document, spreadsheet, or presentation. Load first whenever the user uploads, mentions, previews, edits, or asks to create such a local fil…\n</available_skills>\n",
+      "name": "Skill",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "description": "Optional arguments for the skill",
+            "type": "string"
+          },
+          "command": {
+            "description": "(Legacy) The skill name (no arguments). E.g., \"pdf\" or \"xlsx\"",
+            "type": "string"
+          },
+          "skill": {
+            "description": "The skill name. E.g., \"commit\", \"review-pr\", or \"pdf\"",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Launch a new agent to handle a complex, multi-step task in an isolated context.\n\nAvailable agent types and their tool access:\n<avaliable_subagents>\n- general-purpose: handles multi-step research, codebase exploration, and execution. Use when the task needs iterative investigation or substantial autonomous work. (Tools: *)\n- statusline-setup: Use this agent to configure the user's Codebuddy Code status line setting.(Tools:Read,Write,Edit,ToolSearch,DeferExecuteTool,SendMessage,MessageColleague,SpeakInChannel,ChannelTasks,CreateColleague,CreateChannel,ListColleagues,ExitPlanMode)\n- Explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. \"src/components/**/*.tsx\"), search code for keywords (eg. \"API endpoints\"), or answer questions about the codebase (eg. \"how do API endpoints work?\"). When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions.(Tools:Read,Bash,PowerShell,Glob,Grep,TaskCreate,TaskGet,TaskUpdate,TaskList,WebFetch,WebSearch,Skill,SendMessage,SendUserMessage,ToolSearch,DeferExecuteTool,MessageColleague,SpeakInChannel,ChannelTasks,CreateColleague,CreateChannel,ListColleagues,ExitPlanMode)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a multi-step task before writing code. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. Read-only: it designs but does not modify files or exit plan mode; the caller reviews the plan and implements it.(Tools:Read,Bash,Glob,Grep,TaskCreate,TaskGet,TaskUpdate,TaskList,WebFetch,WebSearch,Skill,ToolSearch,DeferExecuteTool,TeamCreate,TeamDelete,SendMessage,SendUserMessage,MessageColleague,SpeakInChannel,ChannelTasks,CreateColleague,CreateChannel,ListColleagues,ExitPlanMode)\n- sheet-agent: 表格子代理，调用时文件路径必须传入完整 local_path 或 file_id/sheet_id。 (workbuddy-sheetagent@workbuddy-builtin)(Tools:Read,AskUserQuestion,WebSearch,WebFetch,mcp__sheetagent__resolve_local_excel,mcp__sheetagent__read_table,mcp__sheetagent__get_cell_ranges,mcp__sheetagent__set_cell_range,mcp__sheetagent__search_data,mcp__sheetagent__run_command,SendMessage,MessageColleague,SpeakInChannel,ChannelTasks,CreateColleague,CreateChannel,ListColleagues,ExitPlanMode)\n- doc-converter: 格式转换子 Agent（Stage 3，本地通道）。职责单一：把 doc-formatter 产出的 HTML 高保真转换为 .docx 并**强制**打开预览。\n- 触发：Orchestrator 传入 html_output_path（.html 文件）\n- 执行：一键转换脚本 `convert_doc.py`（内部完成：预检 → create → open → insert →\n  save 直接写交付路径 → verify，全流程自包含）→ 脚本成功后\n  `present_files` 打开成品预览；脚本失败时如实报错（JSON `error` 标注失败阶段）\n- 产出：由 `pipeline-state.yaml` 的 `output_docx_path` 决定（用户指定路径或 `stage3/<文件名>.docx`）\n职责边界：只做「HTML→DOCX 格式转换 + 强制打开预览」，不做编辑、不做注入、不做创作。\n转换失败时给出降级信息（源 HTML 或 markdown_fallback），不用本地代码兜底生成 .docx。\n转换完成后本 Agent 即结束（本 skill 调用随之结束）；本 Agent 与本 skill 均不承担任何后续编辑（S3 即链路终点，编辑属独立 skill `workbuddy-office-routing` 的职责，由编排层在识别到 edit_only 时直接转交）。\n (workbuddy-docx@workbuddy-builtin:agents)(Tools:)\n- doc-formatter: 文档美化子 Agent（Stage 2）。职责单一：把「具体内容」生成/美化为一份新的 HTML 版式，**恒产 html**。按「有无参考版式文档」两路路由：有可读 ref_doc（作**风格来源**）→ html-imitate 提风格仿写；无 ref_doc → html-template（选内置模板）。内容来源可为 Stage1 的 md、用户直接输入、或用户上传文档解析出的内容。**不做任何注入/编辑**——把材料填进模板骨架、保留模板原格式产 docx 的「对齐注入」属于编辑性质，**由编排层识别后直接转给独立 skill `workbuddy-office-routing` 处理，不进本 skill、不进本 Agent**。\n (workbuddy-docx@workbuddy-builtin:agents)(Tools:)\n- doc-writer: 创作子 Agent（Stage 1）。接收 Orchestrator 派发的创作意图，加载匹配的 L2 领域 Expert Skill 或 L1 通用写作兜底。\n输出的 Markdown 是流水线中间产物（供 Stage 2 排版消费），不是最终交付物——禁止直接输出给用户。\n职责边界：只做 Expert Skill 匹配 + 加载驱动，不碰排版/输出/导出。\n (workbuddy-docx@workbuddy-builtin:agents)(Tools:)\n- engine-capabilities: engine-capabilities (workbuddy-docx@workbuddy-builtin:references)(Tools:)\n</avaliable_subagents>\nThe types listed above are the available choices for this session. Some additional registered agents are not listed due to the display limit.\nUse `subagent_type` to select a type; it defaults to `general-purpose`. Match the type to the work and its tool access. Read-only agents (for example, Explore and Plan) must only receive research or planning tasks and must not be asked to modify files.\nKey notes:\n- Always provide a concise 3–5 word `description`.\n- The agent's result is returned only to you, not directly to the user. Summarize the outcome yourself, and verify actual file changes before reporting work as complete.\n- Write a self-contained prompt. Include the goal, relevant context, what is already known or ruled out, and concrete pointers such as file paths or line numbers. Do not delegate synthesis with vague instructions such as \"based on your findings, fix it.\"\n- Start independent agents concurrently in the same message. Use `run_in_background` only when you do not need the result before continuing.\n- To communicate with a running named agent, use `SendMessage` with its `name`. To continue an agent after it finishes, create a new Agent call with its `resume` ID.\n- When working in a team, give each teammate a unique `name` so it can coordinate through `SendMessage` and the shared task list. Use `mode` and `max_turns` when needed.\n",
+      "name": "Agent",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "A short (3-5 word) description of the task. Defaults to `name` when omitted.",
+            "type": "string"
+          },
+          "max_turns": {
+            "description": "Maximum number of agentic turns (API round-trips) before stopping.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Permission mode for spawned teammate (e.g., \"plan\" to require plan approval).",
+            "enum": [
+              "acceptEdits",
+              "bypassPermissions",
+              "default",
+              "plan",
+              "dontAsk",
+              "auto"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "Model to use for this agent. Accepts a model ID, name, alias, or a routing value: \"default\" inherits from the parent, \"lite\" favors fast and cost-effective models, and \"reasoning\" favors enhanced reasoning models.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running. The name \"team-lead\" is reserved for the leader created by TeamCreate — do NOT use it for spawned teammates; pick a role-based name like \"pm\", \"ui-designer\", \"fe-dev\", etc. Names must be unique within a team.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the agent to perform",
+            "type": "string"
+          },
+          "resume": {
+            "description": "Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "Set to true to run this agent in the background. Use TaskOutput to read the output later.",
+            "type": "boolean"
+          },
+          "subagent_type": {
+            "description": "The type of specialized agent to use for this task",
+            "type": "string"
+          },
+          "team_name": {
+            "description": "Deprecated; ignored. The session has a single implicit active team.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "description": "Load tool schemas before invoking deferred tools.\n\nDeferred tools are NOT directly callable — use ToolSearch to load their schema, then DeferExecuteTool to invoke.\n\n## Lookup modes\n\n1. Exact (preferred): `tool_names: [\"ImageGen\"]` — use when you know the tool name.\n2. Search: `queries: [\"image generation\"]` — use when unsure which tool fits.\n\n## Rules\n- Known tool name → use `tool_names`, never guess parameters without loading schema.\n- Found tools are invoked via DeferExecuteTool with validated parameters.\n\nThe following deferred tools are available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with `tool_names` to load schemas before calling them:\n\n<available_deferred_tools>\nagent_mail_download_attachment: Download an Agent Mail email attachment to the local filesystem. This tool is exclusively for the Agent Mail service — do NOT use it for other purposes. Requires message_id and attachment_id (obtained from agentmail read_mail or search_mail). Optionally specify output_dir (absolute path) to control where the file is saved. If output_dir is not provided, prefer the current session working directory (cwd) as the save location. Falls back to the system temporary directory only if no session working directory is known. SECURITY: the downloaded file originates from an UNTRUSTED email and is marked non-executable + quarantined automatically. You MUST NOT execute, open, or run it. Only save it for the user to review. Execution requires the user's explicit, separate confirmation outside of this tool.\nagent_mail_upload_attachment: Upload a local file as an Agent Mail email attachment. This tool is exclusively for the Agent Mail service — do NOT use it for other purposes. Returns a file_id that can be referenced in agentmail send_mail to attach the file to an outgoing email. The file_path must be an absolute path to an existing file.\nAudioTranscribe: Transcribes a local audio file to text (long-audio ASR). Supports Chinese, English and dialects, with speaker separation.\nconnect_cloud_service: Connects to the current IDE session to retrieve credentials for authorized cloud service API calls. MUST be called BEFORE any `miora_*` tool to obtain the required `clientTempToken` — pass that value as the `tempKey` argument to those tools. Also used by the neodata-financial-search skill.\nconnect_open_platform: Obtains a short-lived Open Platform token for the active skill to access user-scoped platform services.\nconversation_search: Search past user conversations and memories (facts & prior decisions) for cross-session context.\ndomain_search: Agentic search for finance, investment, commercial decision-making and business analysis, with multiple authoritative sources. returns a synthesized summary and some raw results.\nim_get_messages: Read messages from a specific IM conversation (channel/group).\n\nRequires a conversationId (obtained from im_list_conversations).\nReturns the most recent messages in chronological order.\nim_list_conversations: List the current user's IM conversations (channels/groups).\n\nReturns a JSON array of conversations with id, name, last message preview, and unread count.\nUse this to discover available channels before reading messages.\nImageGen: Generate images from text descriptions using AI models.\nLibraryUpload: Add a single local file to the user's library as a new item so it can be searched, cited, and opened later. The item type is chosen from the file extension (.md/.markdown → document, .csv → table, .html/.htm → saved page, anything else → the original file). Use when the user asks to upload, save, add, or attach a specific local file to their library. Files up to 100 MiB are supported.\nlist_installed_plugins: List installed connectors and their state. Omit `connectorName` for a summary, or pass an exact `connectorName` for details. `bound` means previously connected and `enabled` means enabled for this conversation; `status` reports actual connection availability. Use the exact `pluginName` with reconnect_plugin for an authentication failure or user-requested reconnection, even when `status` is connected. To enable a connector, ask the user to enable it from the plus menu in the bottom-left corner of the chat window.\nLSP: Interact with Language Server Protocol (LSP) servers to get code intelligence features.\nreconnect_plugin: Ask the user to restore an MCP or CLI connector after an authentication failure or when the user requests reconnection. CLI connectors recheck current authorization and reuse it when valid; otherwise they run authentication. MCP connectors use their reauthorization flow. Cached connected status alone is not proof that upstream credentials work. Pass the exact pluginName returned by list_installed_plugins.\nsearch_and_install_skills: Find uninstalled skills and install skills the user requested.\nsearch_plugins: Read-only discovery for recommend-connectors and recommend-experts. Search available candidates that match the user's request — their pipeline, accounts, contracts, tickets, playbooks, or company data — when no existing tool covers it. Covers two categories via `type`: connector and expert. Returns real, currently valid candidates. Connector results include only Connectors not yet bound to the current account. A locally installed plugin does not mean this account has connected it. Bound Connectors are excluded even when disabled, disconnected, or awaiting reauthorization. Never installs, connects, or enables anything, and is the only source for candidates (do not use web search). When relevant candidates are returned, use a single suggest_plugin_install call to present up to three candidates in one card instead of listing them in text.\nskill_management: List or disable user-installed skills that are currently enabled.\nsuggest_plugin_install: Recommend Plugins to the user through an inline card in the message stream. The card can contain Connectors or Experts. Use this tool only after search_plugins has returned the candidates. IMPORTANT: this tool may be invoked at most once per response. Never emit two or more calls, including sequential or parallel calls; only one recommendation card can be pending in a session. To recommend multiple candidates, include 1–3 candidates of the same `type` in that call. The `type` must be connector or expert. Pass exact result `id` values in `pluginId1` and optional `pluginId2`/`pluginId3`; do not use arrays or an `item` wrapper. Example: `{ \"type\": \"expert\", \"pluginId1\": \"ExpertA\", \"pluginId2\": \"ExpertB\" }`.\nTaskStop: Stop a running background worker or shell by ID. The agent_id returned by Agent() is the task_id (same string). Prefer InterruptAgent for workers. Do not use this to wait for completion.\nuninstall_plugin: Uninstall connectors by their exact `name` values from `list_installed_plugins`. A connector with `bound:true enabled: false` is still installed. If the user only wants to switch it off, ask them to switch it off from the plus menu in the bottom-left corner of the chat window.\nVideoGen: Generates short videos from text descriptions or input images and saves them locally as MP4 files.\nworkbuddy_cloud_service: 为网站和微信小程序接入托管后端（对标 Supabase、Firebase）：云数据库与权限、文件存储、用户认证（邮箱、手机号短信验证码、微信登录）与数据隔离、免密钥大模型调用。应用要存数据、登录注册、传文件、调 AI、管理数据与用户，或做微信小程序开发时使用。\nworkbuddy_sites_deploy: Publishes a local project (static site, small game or Node/Python/Go HTTP app) as an online link, or takes it offline again with action \"unpublish\".\nworkbuddy_sites_unpublish: Takes a previously published site offline by its local project directory, so the shared link stops working.\n\nmcp__agent-mail\nmcp__agent-mail__ClearTrash\nmcp__agent-mail__DeleteMessage\nmcp__agent-mail__ForwardMessage\nmcp__agent-mail__GetMe\nmcp__agent-mail__GetMessage\nmcp__agent-mail__ListAttachments\nmcp__agent-mail__ListMessages\nmcp__agent-mail__PermanentDeleteMessage\nmcp__agent-mail__ReplyMessage\nmcp__agent-mail__SearchMessages\nmcp__agent-mail__SendMessage\n\nmcp__genie-baas\nmcp__genie-baas__workbuddy_cloudservice_db_describe_table\nmcp__genie-baas__workbuddy_cloudservice_db_exec_sql\nmcp__genie-baas__workbuddy_cloudservice_db_list_rls\nmcp__genie-baas__workbuddy_cloudservice_db_list_tables\nmcp__genie-baas__workbuddy_cloudservice_llm_list_models\nmcp__genie-baas__workbuddy_cloudservice_storage_list_objects\nmcp__genie-baas__workbuddy_cloudservice_storage_list_owners\nmcp__genie-baas__workbuddy_cloudservice_user_list_end_users\nmcp__genie-baas__workbuddy_miniprogram_inspect_virtual_payment\n\nmcp__sheetagent\nmcp__sheetagent__calculate_formulas\nmcp__sheetagent__calculate_single_formula\nmcp__sheetagent__fill_formula\nmcp__sheetagent__get_cell_ranges\nmcp__sheetagent__read_table\nmcp__sheetagent__resolve_local_excel\nmcp__sheetagent__run_command\nmcp__sheetagent__search_data\nmcp__sheetagent__set_cell_range\n\nmcp__space-library\nmcp__space-library__library_search\n\nmcp__weixinpay\nmcp__weixinpay__weixinpay_feedback\nmcp__weixinpay__weixinpay_register\nmcp__weixinpay__weixinpay_retry_pay\n</available_deferred_tools>\n\n",
+      "name": "ToolSearch",
+      "parameters": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "queries": {
+            "description": "Keyword-based search query using MiniSearch full-text search engine. Supports prefix matching, fuzzy matching, and relevance ranking. Must be an array of keyword strings.For better results, include BOTH Chinese and English keywords (e.g., [\"获取时间\", \"get time\"] or [\"文件搜索\", \"file search\", \"glob\"]).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tool_names": {
+            "description": "Exact, fully-qualified tool name(s) to look up — e.g., [\"mcp__time__current_time\", \"LSP\", \"mcp__cnb__cnb_create_pull\"]. Do NOT use partial names, descriptions, or keywords.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "top_k": {
+            "default": 3,
+            "description": "Maximum number of tools to return with full details (default: 3, max: 20). Only applies when using \"queries\". Ignored when using \"tool_names\". Additional matching tools beyond this limit are shown as additional candidates.",
+            "exclusiveMinimum": 0,
+            "maximum": 20,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "strict": false
+    }
+  }
+]

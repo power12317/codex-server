@@ -17,10 +17,63 @@ fn normalizes_function_envelopes_without_losing_schema_or_choice() {
 }
 
 #[test]
-fn reports_unsupported_tool_and_schema_at_their_location() {
+fn caller_schemas_are_preserved_in_all_function_envelopes_and_native_serializers() {
+    let parameters = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "default": "ab", "minLength": 2, "maxLength": 12, "pattern": "[a-z]+"},
+            "limit": {"type": "number", "default": 3, "minimum": 0, "exclusiveMinimum": 0, "maximum": 20},
+            "items": {"type": "array", "minItems": 1, "maxItems": 4, "items": [{"const": null}, false]},
+            "boolean": true
+        },
+        "required": ["query"],
+        "additionalProperties": {"anyOf": [false, {"$ref": "#/$defs/item"}]},
+        "$defs": {"item": {"type": "string", "minLength": 1}},
+        "definitions": {"legacy": {"default": null}},
+        "future_constraint": {"nested": {"type": "future_type"}}
+    });
+    let function = json!({"type":"function", "name":"WebSearch", "description":"client function", "parameters":parameters, "strict":false});
+    let mut nested = function.clone();
+    nested.as_object_mut().unwrap().remove("type");
+    for tool in [
+        function.clone(),
+        json!({"type":"function", "function":nested}),
+        json!({"name":"WebSearch", "description":"client function", "input_schema":parameters, "strict":false}),
+    ] {
+        let request = json!({"tools":[tool]});
+        let parsed = InferenceTools::parse(request.as_object().unwrap()).unwrap();
+        assert_eq!(
+            codex_tools::create_tools_json_for_responses_api(&parsed.native).unwrap(),
+            vec![function.clone()]
+        );
+        assert_eq!(
+            codex_tools::create_tools_json_for_responses_lite(&parsed.native).unwrap(),
+            vec![
+                json!({"type":"namespace", "name":"functions", "description":"", "tools":[function]})
+            ]
+        );
+    }
+
+    let tools = json!([
+        {"type":"namespace", "name":"external", "description":"client tools", "tools":[function]},
+        {"type":"tool_search", "execution":"client", "description":"search", "parameters":parameters}
+    ]);
+    let request = json!({"tools":tools});
+    let parsed = InferenceTools::parse(request.as_object().unwrap()).unwrap();
+    assert_eq!(serde_json::to_value(&parsed.native).unwrap(), tools);
+    assert_eq!(
+        codex_tools::create_tools_json_for_responses_lite(&parsed.native).unwrap(),
+        tools.as_array().unwrap().clone()
+    );
+}
+
+#[test]
+fn reports_invalid_tool_envelopes_at_their_location() {
     for tool in [
         json!({"type":"computer"}),
-        json!({"type":"function", "name":"run", "parameters":{"type":"object", "unknown_constraint":true}}),
+        json!({"type":"function", "name":"run", "parameters":[]}),
+        json!({"type":"tool_search", "parameters":null}),
     ] {
         let request = json!({"tools":[tool]});
         let error = InferenceTools::parse(request.as_object().unwrap())

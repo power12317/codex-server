@@ -1,5 +1,36 @@
 # Codex Server inference validation record
 
+## 2026-10-21 caller-owned tool schema fidelity
+
+The inference adapter now carries complete caller-owned parameter schema objects
+in native `JsonSchema`/`ToolSpec` values. It no longer deserializes those objects
+through the internal tool normalization subset or rejects a request using the
+adapter's serialization round-trip comparison. No schema-key or tool-name
+allowlist is used. Ordinary native tool construction keeps its own schema policy.
+
+- `just test -p codex-tools --lib`: **109 passed**.
+- `just test -p codex-core --lib client::inference_tools::tests`: **6 passed**.
+- `just test -p codex-app-server --lib --test all cpa_`: **89 passed**.
+- `cargo fmt --all --check` and `git diff --check`: passed.
+
+The retained WorkBuddy fixture contains the incident's exact 22 function tools.
+Both Responses and Lite tests compare the actual local upstream HTTP request,
+including every parameter value, original names and `strict:false`. Tests also
+cover recursive/boolean/tuple schemas, definitions, unknown future keywords,
+function/custom/namespace tools, parameter deltas and call/result history. The
+server does not execute the returned client command or start an extra model turn.
+
+A separate controlled HTTP replay used the incident's complete original Chat
+request through the paired CPA v3 checkout at
+`39322f24fa6d78adc36436af6adac005ee07c147`. It used temporary fake credentials,
+the built Rust master/worker and a local model mock. Both Chat turns passed:
+22 exact tool schemas, reasoning effort `high`, tool chunks before upstream
+completion, reassembled arguments, `finish_reason:tool_calls`, usage and `[DONE]`.
+The follow-up retained the function call/result association. Worker model sends
+were exactly two; CPA direct model sends and local tool execution were zero.
+This is local contract validation, not production-account or deployed-image
+acceptance by the real upstream service.
+
 ## 2026-10-15 source snapshots and original IPC values
 
 The current main extension retains IPC v3 and adds opt-in exchange-scoped ticket

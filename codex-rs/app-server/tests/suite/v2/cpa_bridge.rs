@@ -15,6 +15,8 @@ mod images_tests;
 mod oailb_tests;
 #[path = "cpa_bridge/parser_tests.rs"]
 mod parser_tests;
+#[path = "cpa_bridge/schema_tests.rs"]
+mod schema_tests;
 #[path = "cpa_bridge/ticket_tests.rs"]
 mod ticket_tests;
 #[path = "cpa_bridge/time_context_tests.rs"]
