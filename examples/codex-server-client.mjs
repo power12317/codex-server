@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Codex Server v3: one request per connection, with no external dependencies.
+// Codex Server model-only extensions: one request per connection, no dependencies.
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 
@@ -14,7 +14,7 @@ if (!capabilitiesOnly && (!credential || !model)) {
 }
 
 const socket = new WebSocket(
-  process.env.CODEX_SERVER_URL ?? "ws://127.0.0.1:38317/cpa/v1/ws",
+  process.env.CODEX_SERVER_URL ?? "ws://127.0.0.1:38317/",
 );
 const queue = [];
 let waiter;
@@ -87,13 +87,20 @@ try {
   send({ method: "initialized" });
   const capabilities = await rpc(2, "cpa/capabilities/read", {});
   if (
-    capabilities.protocolVersion !== 3 ||
+    !["cpa/inference/body", "cpa/inference/event"].includes(
+      capabilities.businessNotification,
+    ) ||
+    !["http-body-eof", "native-terminal"].includes(
+      capabilities.completionSemantics,
+    ) ||
+    typeof capabilities.diagnosticsCompleted !== "boolean" ||
     capabilities.executionMode !== "inference-only" ||
-    !capabilities.rawBody ||
-    !capabilities.operations?.includes("responses")
+    capabilities.rawBody !== true ||
+    !Array.isArray(capabilities.operations) ||
+    !capabilities.operations.includes("responses")
   ) {
     throw new Error(
-      "Server does not support the required v3 inference transport",
+      "Server lacks the required inference byte stream, completion lifecycle or Responses operation",
     );
   }
   if (capabilitiesOnly) {
@@ -133,13 +140,22 @@ try {
         },
       },
     });
-    for (;;) {
+    let businessDone = false;
+    let diagnosticsDone = !capabilities.diagnosticsCompleted;
+    let failure;
+    while (!businessDone || !diagnosticsDone) {
       const message = await nextMessage();
-      if (message.error && (message.id === 3 || message.id === 4)) {
-        throw new Error(JSON.stringify(message.error));
+      if (message.error && message.id === 3) {
+        failure = JSON.stringify(message.error);
+        businessDone = true;
+      }
+      if (message.error && message.id === 4) {
+        console.error("Cancellation failed:", JSON.stringify(message.error));
       }
       if (message.params?.requestId !== requestId) continue;
-      if (message.method === "cpa/inference/body") {
+      if (message.method === "cpa/inference/diagnostics/completed") {
+        diagnosticsDone = true;
+      } else if (message.method === capabilities.businessNotification) {
         if (
           !process.stdout.write(
             Buffer.from(message.params.bodyBase64, "base64"),
@@ -148,11 +164,13 @@ try {
           await once(process.stdout, "drain");
         }
       } else if (message.method === "cpa/inference/completed") {
-        break;
+        businessDone = true;
       } else if (message.method === "cpa/inference/error") {
-        throw new Error(JSON.stringify(message.params));
+        failure = JSON.stringify(message.params);
+        businessDone = true;
       }
     }
+    if (failure) throw new Error(failure);
   }
 } catch (error) {
   console.error(error.message ?? String(error));

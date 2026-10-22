@@ -1,4 +1,4 @@
-// Real IPC v3 master/worker probe using only local upstreams and fake credentials.
+// Real master/worker source-ticket probe using local upstreams and fake credentials.
 // Run with CODEX_TEST_BINARY=/absolute/path/to/codex-app-server node this-file.mjs.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -11,8 +11,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const binary = process.env.CODEX_TEST_BINARY;
-assert(binary, "CODEX_TEST_BINARY must select a real v3 worker");
-const fixture = await mkdtemp(join(tmpdir(), "codex-ticket-v3-"));
+assert(binary, "CODEX_TEST_BINARY must select a real source-ticket worker");
+const fixture = await mkdtemp(join(tmpdir(), "codex-ticket-"));
 const calls = [];
 let logs = "";
 let child;
@@ -141,7 +141,7 @@ Cookie = "__cflb=request-${side}; __oailb=old-${side}"
     await delay(250);
   }
   assert(ready);
-  socket = new WebSocket(`ws://127.0.0.1:${port}/cpa/v1/ws`);
+  socket = new WebSocket(`ws://127.0.0.1:${port}/`);
   const messages = [];
   socket.addEventListener("message", (event) =>
     messages.push(JSON.parse(event.data)),
@@ -168,7 +168,10 @@ Cookie = "__cflb=request-${side}; __oailb=old-${side}"
   send({ method: "initialized" });
   send({ id: 2, method: "cpa/capabilities/read", params: {} });
   const capabilities = (await waitFor((m) => m.id === 2)).result;
-  assert.equal(capabilities.protocolVersion, 3);
+  assert.equal(capabilities.businessNotification, "cpa/inference/body");
+  assert.equal(capabilities.completionSemantics, "http-body-eof");
+  assert.equal(capabilities.diagnosticsCompleted, false);
+  assert.equal(capabilities.responsesWebsocket, false);
   assert.equal(capabilities.ticketSnapshots, true);
   const cases = [
     ["left", "header", undefined],
@@ -270,7 +273,8 @@ Cookie = "__cflb=request-${side}; __oailb=old-${side}"
   }
   console.log(
     JSON.stringify({
-      protocolVersion: 3,
+      businessNotification: capabilities.businessNotification,
+      completionSemantics: capabilities.completionSemantics,
       ticketSnapshots: true,
       realWorkerRequests: calls.length,
       snapshots: 3,

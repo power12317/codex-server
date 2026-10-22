@@ -1,11 +1,16 @@
-# Codex Server v3 来源票据快照与 IPC 原值传输
+# Codex Server 来源票据快照与 IPC 原值传输
 
-日期：2026-10-15。
+来源票据功能验收日期：2026-10-15。
+
+2026-10-23 接口调整后，客户端使用根路径 WebSocket 与实际能力字段。
+下方记录保留来源票据的采集、隐私和有效期行为；历史验收不代表旧客户端
+可以不更新地址和能力判断直接接入。当前接口以英文 API 文档为准。
 
 本次只修改 codex-server main。基于本地 `c56e646d0` 的官方 0.162.1
 运行时，按用户确认将此前本地 main 的升级和身份修正一起发布。保留
-`protocolVersion: 3`、`cpa/inference/body`、官方可执行文件名称和请求身份，
-不合并实验 v5 分支，不修改 CPA、CPAMP 或 NewAPI。
+`cpa/inference/body`、官方可执行文件名称和请求身份，
+并以 `ticketSnapshots: true` 声明源票据能力，不使用私有协议数字，
+不合并实验原生分支，不修改 CPA、CPAMP 或 NewAPI。
 
 ## 可选协议扩展
 
@@ -110,8 +115,7 @@ Cookie `exp`、已知 Jar 期限、SSE 分块、忽略模型文本、并发凭�
 | 最终二进制身份检查                 | `codex-app-server 0.162.1`、`codex-tui/0.162.1` 与原生平台后缀通过。        |
 | Rust/文档/示例格式及 diff 空白检查 | 通过。                                                                      |
 
-最终 macOS arm64 联调产物：
-`/private/tmp/codex-source-ticket-v3-20261015/codex-app-server`。
+当时的 macOS arm64 联调产物已保留为不可变快照。
 SHA256：`bd50bf6ad82e5259c5db73f161d704f6ca6474051c879828ff455624876a84f5`。
 测试日志位于 `/private/tmp/codex-ticket-final-service-tests.log`、
 `/private/tmp/codex-ticket-http-tests.log`、
@@ -122,7 +126,7 @@ SHA256：`bd50bf6ad82e5259c5db73f161d704f6ca6474051c879828ff455624876a84f5`。
 
 ## 兼容与部署范围
 
-旧 CPA 不发送采集标志，因此不会收到未知 ticket 通知，正常 v3 推理保留。
+旧 CPA 不发送采集标志，因此不会收到未知 ticket 通知，原有推理行为保留。
 IPC 原值传输按用户要求始终生效，包括未开启快照的请求。
 新客户端连接旧 server 时，缺少 `ticketSnapshots` 应视为不支持来源快照，
 继续原有推理，不发送新参数。

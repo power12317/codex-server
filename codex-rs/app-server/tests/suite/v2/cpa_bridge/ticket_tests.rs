@@ -86,7 +86,10 @@ async fn cpa_ticket_snapshot_is_opt_in_private_and_ordered(
     )
     .await?;
     let capabilities = receive(&mut ws, "id", json!(1)).await?;
-    assert_eq!(capabilities["result"]["protocolVersion"], 3);
+    assert_eq!(
+        capabilities["result"]["businessNotification"],
+        "cpa/inference/body"
+    );
     assert_eq!(capabilities["result"]["ticketSnapshots"], true);
     let mut request = start(json!({"model":"mock-model","input":[],"stream":true}));
     if let Some(capture) = capture {

@@ -1,5 +1,42 @@
 # Codex Server inference validation record
 
+## 2026-10-23 capabilities and root WebSocket
+
+The public master and dedicated worker listener now accept the root WebSocket
+path. The retired versioned bridge path rejects upgrades with HTTP 404. Official
+initialization, health routes, authentication and runtime identity are retained.
+Model-only `cpa/*` methods remain explicit fork extensions; there is no private
+protocol number or replacement contract identifier.
+
+Main advertises `businessNotification: "cpa/inference/body"`,
+`completionSemantics: "http-body-eof"`, `diagnosticsCompleted: false`,
+`responsesWebsocket: false` and `ticketSnapshots: true`. HTTP EOF keeps its
+existing meaning; clients parse the business response to determine model success.
+Source tickets, identity restoration, immediate business bytes, cancellation and
+zero worker model retries retain their existing behavior. Clients select required
+behaviors from capabilities rather than matching a whole branch template.
+
+Validation used only local upstreams and synthetic credentials:
+
+- **22** app-server library tests and **76** real master/worker integration tests
+  passed, including the complete schemas, explicit controls, stream/error/cancel,
+  independent credentials, identity/time replacement and source-ticket cases.
+- The dedicated worker root-path/retired-path test passed. The actual master
+  capability probe passed, including both branch examples against the same worker.
+- **320** protocol tests passed; the manual fixture writer was run separately for
+  stable and experimental exports, including the Python SDK generation step.
+- The actual identity probe passed with `codex-app-server 0.162.1`, official
+  `codex-tui` originator and the unchanged native User-Agent.
+- The source-ticket probe made **5** model requests and received **3** expected
+  snapshots, preserving raw IPC headers and private ordinary logs.
+- **5** release-preparation checks, Rust formatting, example syntax, changed
+  documentation links and the whitespace check passed.
+
+The immutable local worker has SHA256
+`bc6777f84d336e2934919db61e67310d2629a429b06ffc673d394abdfa7d3d45`.
+This is an artifact checksum for reproduction, not an interface compatibility gate.
+Earlier dated sections below describe their own historical checkpoints.
+
 ## 2026-10-21 caller-owned tool schema fidelity
 
 The inference adapter now carries complete caller-owned parameter schema objects
@@ -21,7 +58,7 @@ function/custom/namespace tools, parameter deltas and call/result history. The
 server does not execute the returned client command or start an extra model turn.
 
 A separate controlled HTTP replay used the incident's complete original Chat
-request through the paired CPA v3 checkout at
+request through the paired CPA checkout at
 `39322f24fa6d78adc36436af6adac005ee07c147`. It used temporary fake credentials,
 the built Rust master/worker and a local model mock. Both Chat turns passed:
 22 exact tool schemas, reasoning effort `high`, tool chunks before upstream
@@ -33,7 +70,7 @@ acceptance by the real upstream service.
 
 ## 2026-10-15 source snapshots and original IPC values
 
-The current main extension retains IPC v3 and adds opt-in exchange-scoped ticket
+The current main extension retains business delivery and adds opt-in exchange-scoped ticket
 snapshots. Per the latest user requirement, IPC request/response/error headers
 now preserve original values; this supersedes historical notification-redaction
 claims below. Ordinary logs use a separate redacted copy. The current contract,
@@ -59,7 +96,7 @@ Release preparation now accepts official stable manifests with development
 lockfile versions and normalizes implicit workspace members and qualified local
 dependency references. It still rejects unexpected versions before writing.
 The capability revision now identifies the actual stable merge target rather
-than the obsolete initial fork base. Protocol v3 and client identity names remain
+than the obsolete initial fork base. Model-only extension methods and client identity names remain
 unchanged; the compiled version drives version headers and User-Agent.
 
 Validation of this merged stable source:
@@ -108,7 +145,7 @@ of this Codex merge. No remote push, tag or image publication is performed.
 ## 2026-10-09 standalone image operations and native normalization correction
 
 Audit and fetched main baseline: `1ddf40146790e805a9b3a488ffde36364b17b29c`.
-Image operations and the optional `imageApi` enum remain on the v3 bridge.
+Image operations and the optional `imageApi` enum remain on the model-only bridge.
 Worker-owned authentication, provider/network selection, mask/multiple images,
 raw JSON/SSE output, cancellation and transport EOF semantics are retained.
 
@@ -178,7 +215,7 @@ worker remains unsupported and must not trigger direct upstream fallback.
 Baseline: `3628694b0`. The inference tool parser now accepts hosted
 `image_generation` and native `tool_search` declarations, including forced tool
 selection. Hosted image options are serialized by `ToolSpec`; they do not
-register local tool execution. The v3 request envelope, native inference builder,
+register local tool execution. The model-only request envelope, native inference builder,
 identity handling and replace-only time processing are unchanged.
 
 - CPA unit and real-process integration suite: **52/52 passed** with
@@ -329,10 +366,10 @@ of production CPA traffic.
   exact bytes for unchanged events, EOF fragments, immediate heartbeat forwarding,
   JSON bodies and the framing buffer limit.
 
-The capability extension keeps protocol v3, `rawBody: true` and the existing
+The capability extension keeps `rawBody: true` and the existing
 base64 body channel, and advertises `responseIdentityMapping: true`. Read-only
 inspection of CPA's current Go adapter confirmed ordinary additive JSON decoding
-and its existing v3/inference-only/rawBody checks; no CPA or CPAMP files changed.
+and its then-current inference-only/rawBody checks; no CPA or CPAMP files changed.
 The outer CPA session scope remains an isolation boundary. Only source values
 actually received by Codex can be restored. Context state is worker-local and is
 not restored after restart; requests still carry their own conversation history.
@@ -378,11 +415,11 @@ all tool combinations by the real upstream service has not been exercised.
 Synthetic turn continuity is worker-local and resets on restart; identity mapping
 changes mean an upgrade uses different upstream conversation/cache IDs.
 
-## v3 validation
+## Historical model-only validation
 
-Contract: V3-SEP-20260927. The current tests start a real directory master and
-per-account app-server children against mock HTTP services. v2 results below are
-historical and do not establish v3 correctness.
+The tests at this checkpoint started a real directory master and per-account
+app-server children against mock HTTP services. Earlier results below are
+historical and do not certify the current capabilities or root-path migration.
 
 - All 11 CPA/master tests pass, including a truly tokenless placeholder followed
   by OAuth and immediate inference, 401 refresh into the original file, concurrent
@@ -395,10 +432,10 @@ historical and do not establish v3 correctness.
   `codex-api::files::tests::upload_openai_file_reports_blob_transport_diagnostics_without_sas`
   remains failing locally at its existing `message.contains("failed after")`
   assertion. This file-upload implementation and test were not modified.
-- CPA's real-process `TestCodexRuntimeForkV3OAuthAndModeSwitch` passed against
+- CPA's real-process `the then-current OAuth/mode-switch matrix` passed against
   the new binary: tokenless OAuth, immediate inference, 401 refresh, original-file
   persistence, actual logs, native routing after disable, and streaming after
-  reenable. Coordinator log: `/tmp/cpa-master-v3-fork.log`.
+  reenable. The coordinator retained the corresponding historical run log.
 - An additional 239 native client, login and TUI notification-routing tests passed.
 - Final focused rerun: 12/12 master/bridge and raw-byte transport tests passed.
   Scoped `just fix` completed without warnings across the seven changed crates.
@@ -672,7 +709,7 @@ succeeded and left the merged upstream lock unchanged; Bazel reported advisory
 dependency-version/annotation warnings.
 
 All 41 fork-added files survived. Aside from this validation record, the only
-changed fork-added files are the current upstream provenance in the v3 document,
+changed fork-added files are the current upstream provenance in the extension document,
 bridge capability constant, and Docker label. No compatibility source rewrite
 was required for the upstream model catalog/provider changes, Responses Lite
 tool-catalog construction, auth-storage telemetry, or Responses error handling.
@@ -709,7 +746,7 @@ Validation on the macOS arm64 development host:
   cause remains unresolved; no assertion was removed or relaxed. This is not a
   claim that the complete API suite passed.
 
-The protocol remains v3, with the existing TCP/WebSocket methods and port 38317.
+The model-only boundary retains the existing TCP/WebSocket methods and port 38317.
 Worker home names, legacy migration, source identity/turn state, no-turn-ID
 fallback, inference-only behavior and CPA log correlation remain unchanged.
 The dedicated `cpa-managed-auth`/immutable-SHA dual-architecture image workflow

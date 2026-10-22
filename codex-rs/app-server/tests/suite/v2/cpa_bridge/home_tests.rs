@@ -24,8 +24,8 @@ async fn cpa_legacy_home_migrates_to_credential_name_with_state_intact() -> Resu
     )
     .await?;
     assert_eq!(
-        receive(&mut ws, "id", json!(50)).await?["result"]["protocolVersion"],
-        json!(3)
+        receive(&mut ws, "id", json!(50)).await?["result"]["businessNotification"],
+        json!("cpa/inference/body")
     );
     assert!(!legacy_home.exists());
     assert_eq!(std::fs::read(named_home.join("config.toml"))?, config);

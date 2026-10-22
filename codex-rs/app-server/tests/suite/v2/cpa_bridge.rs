@@ -61,7 +61,7 @@ async fn connect(home: &TempDir) -> Result<Socket> {
         }
     })
     .await?;
-    let (mut ws, _) = client_async(format!("ws://{socket}/cpa/v1/ws"), stream).await?;
+    let (mut ws, _) = client_async(format!("ws://{socket}/"), stream).await?;
     send(&mut ws, json!({"id":0,"method":"initialize","params":{"clientInfo":{"name":"cpa-tests","version":"1"},"capabilities":{"experimentalApi":true}}})).await?;
     let initialized = receive(&mut ws, "id", json!(0)).await?;
     assert!(initialized.get("result").is_some(), "{initialized}");
@@ -217,7 +217,10 @@ async fn cpa_lossless_single_inference_and_identity_contract() -> Result<()> {
     )
     .await?;
     let caps = receive(&mut ws, "id", json!(1)).await?;
-    assert_eq!(caps["result"]["protocolVersion"], json!(3));
+    assert_eq!(
+        caps["result"]["businessNotification"],
+        json!("cpa/inference/body")
+    );
     assert_eq!(
         caps["result"]["runtimeVersion"],
         json!(env!("CARGO_PKG_VERSION"))
@@ -452,8 +455,8 @@ async fn cpa_cancel_before_headers_and_disconnect_leave_runtime_alive() -> Resul
     )
     .await?;
     assert_eq!(
-        receive(&mut ws, "id", json!(4)).await?["result"]["protocolVersion"],
-        json!(3)
+        receive(&mut ws, "id", json!(4)).await?["result"]["businessNotification"],
+        json!("cpa/inference/body")
     );
     Ok(())
 }
@@ -519,7 +522,10 @@ async fn cpa_fresh_placeholder_oauth_immediate_inference_and_disable() -> Result
     )
     .await?;
     let caps = receive(&mut ws, "id", json!(10)).await?;
-    assert_eq!(caps["result"]["protocolVersion"], json!(3));
+    assert_eq!(
+        caps["result"]["businessNotification"],
+        json!("cpa/inference/body")
+    );
     assert_eq!(caps["result"]["manualOAuth"], json!(true));
     send(&mut ws, json!({"id":11,"method":"thread/list","params":{}})).await?;
     assert_eq!(
@@ -617,7 +623,10 @@ async fn cpa_fresh_placeholder_oauth_immediate_inference_and_disable() -> Result
     )
     .await?;
     let caps = receive(&mut ws, "id", json!(15)).await?;
-    assert_eq!(caps["result"]["protocolVersion"], json!(3));
+    assert_eq!(
+        caps["result"]["businessNotification"],
+        json!("cpa/inference/body")
+    );
     send(
         &mut ws,
         start(json!({"model":"mock-model","stream":true,"input":[]})),
@@ -683,7 +692,7 @@ async fn cpa_tcp_path_and_manual_callback_binding() -> Result<()> {
     let mut ws = connect(&home).await?;
     let port = std::fs::read_to_string(home.path().join("port"))?;
     let stream = TcpStream::connect(format!("127.0.0.1:{port}")).await?;
-    let err = client_async(format!("ws://127.0.0.1:{port}/"), stream)
+    let err = client_async(format!("ws://127.0.0.1:{port}/cpa/v1/ws"), stream)
         .await
         .unwrap_err();
     let tokio_tungstenite::tungstenite::Error::Http(response) = err else {
@@ -771,8 +780,8 @@ async fn cpa_file_watcher_stops_runtime_and_restarts_same_credential() -> Result
     )
     .await?;
     assert_eq!(
-        receive(&mut ws, "id", json!(32)).await?["result"]["protocolVersion"],
-        json!(3)
+        receive(&mut ws, "id", json!(32)).await?["result"]["businessNotification"],
+        json!("cpa/inference/body")
     );
     Ok(())
 }
@@ -917,8 +926,8 @@ async fn cpa_nested_unicode_ids_have_independent_persistent_runtimes() -> Result
     )
     .await?;
     assert_eq!(
-        receive(&mut ws, "id", json!(41)).await?["result"]["protocolVersion"],
-        json!(3)
+        receive(&mut ws, "id", json!(41)).await?["result"]["businessNotification"],
+        json!("cpa/inference/body")
     );
     send(
         &mut ws,
@@ -950,8 +959,8 @@ async fn cpa_nested_unicode_ids_have_independent_persistent_runtimes() -> Result
     )
     .await?;
     assert_eq!(
-        receive(&mut ws, "id", json!(44)).await?["result"]["protocolVersion"],
-        json!(3)
+        receive(&mut ws, "id", json!(44)).await?["result"]["businessNotification"],
+        json!("cpa/inference/body")
     );
     assert_eq!(
         std::fs::read(private_home.join("retained"))?,

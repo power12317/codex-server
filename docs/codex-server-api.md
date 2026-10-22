@@ -4,9 +4,11 @@ Codex Server is a long-running inference service. A master process accepts clien
 connections and supervises one native worker per enabled credential. Any client
 can implement this protocol; CPA is one existing integration, not a dependency.
 
-This guide describes the implemented **v3 inference-only API**. Historical names
-such as `cpa/inference/start`, `CODEX_CPA_AUTH_DIR` and `/cpa/v1/ws` are retained
-for compatibility. They are not placeholders for new `server/*` methods.
+This guide describes model-only `cpa/*` fork extensions carried by the official
+app-server message envelope. The connection uses official `initialize` /
+`initialized` shapes. Inference, credential, OAuth, diagnostics and source-ticket
+methods are extensions; they do not start an Agent turn or execute client tools.
+The existing `CODEX_CPA_*` environment names are retained.
 
 ## Transport and startup
 
@@ -16,7 +18,7 @@ Follow the [installation guide](install.md) or
 | Endpoint                            | Behavior                                                                                         |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `GET http://127.0.0.1:38317/readyz` | Returns `ok` once the listener is serving. It does not verify credentials or model availability. |
-| `ws://127.0.0.1:38317/cpa/v1/ws`    | One JSON object per WebSocket text message.                                                      |
+| `ws://127.0.0.1:38317/`             | One JSON object per WebSocket text message.                                                      |
 
 `CODEX_CPA_PORT` changes the port. The master binds to loopback; there is no
 listen-address setting. Clients on other machines use an SSH tunnel or an
@@ -66,7 +68,6 @@ shape (version strings below are illustrative):
 {
   "id": 2,
   "result": {
-    "protocolVersion": 3,
     "runtimeVersion": "...",
     "upstreamRevision": "...",
     "manualOAuth": true,
@@ -74,6 +75,10 @@ shape (version strings below are illustrative):
     "upstreamBodyLogs": true,
     "executionMode": "inference-only",
     "rawBody": true,
+    "businessNotification": "cpa/inference/body",
+    "completionSemantics": "http-body-eof",
+    "diagnosticsCompleted": false,
+    "responsesWebsocket": false,
     "responseIdentityMapping": true,
     "ticketSnapshots": true,
     "operations": ["responses", "images/generations", "images/edits"]
@@ -81,11 +86,38 @@ shape (version strings below are illustrative):
 }
 ```
 
-Require protocol version 3, `executionMode: "inference-only"` and the
-`responses` operation. `rawBody` means the `bodyBase64` byte-stream transport;
-`responseIdentityMapping` announces selective identity restoration. Ignore
-unrecognized additive capability fields. `runtimeVersion` is the native package
-version; use the container revision label for the exact fork commit.
+Require the behaviors your client uses, including `executionMode: "inference-only"`,
+`rawBody` and the requested operation. Choose the byte channel from
+`businessNotification`; decode `bodyBase64` once. Do not require every capability
+to match one fixed template. Ignore unknown additive fields. `runtimeVersion` and
+`upstreamRevision` are informational product/source metadata, not compatibility gates.
+Use the image revision label for the exact fork commit.
+
+The existing main and native implementations differ as follows:
+
+| Capability             | main                 | native                |
+| ---------------------- | -------------------- | --------------------- |
+| `businessNotification` | `cpa/inference/body` | `cpa/inference/event` |
+| `completionSemantics`  | `http-body-eof`      | `native-terminal`     |
+| `diagnosticsCompleted` | `false`              | `true`                |
+| `responsesWebsocket`   | `false`              | `true`                |
+| `ticketSnapshots`      | `true`               | `false`               |
+
+`http-body-eof` means normal HTTP body EOF; the client must parse Responses or
+Images output to determine model success. `native-terminal` means the native
+parser accepted model/image success. Both use the payload-free
+`cpa/inference/completed {requestId}` notification. When `diagnosticsCompleted`
+is true, keep the independent diagnostic route until
+`cpa/inference/diagnostics/completed`, whether it arrives before or after business
+completion/error. When false, do not wait for that notification.
+
+`responsesWebsocket` describes implementation support, not a guarantee for every
+provider, model or configuration. Unsupported per-request transport requirements,
+including prewarming on an HTTP-only route, fail specifically. Missing optional
+`ticketSnapshots` means false; require support before setting
+`captureTicketSnapshot: true`. Native rejects required snapshots before model
+execution rather than claiming ticket success. `responseIdentityMapping` describes
+selective restoration of caller identities.
 
 `ticketSnapshots: true` optionally supports exchange-scoped source snapshots on
 Responses requests. Set top-level `params.captureTicketSnapshot: true` to receive
@@ -188,20 +220,20 @@ name with one available to the account:
 }
 ```
 
-| Field          | Requirements and meaning                                                                                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| RPC `id`       | Correlates this control reply. It is distinct from the inference `requestId`.                                                                                                              |
+| Field          | Requirements and meaning                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| RPC `id`       | Correlates this control reply. It is distinct from the inference `requestId`.                                                                    |
 | `requestId`    | Nonempty JSON string. Use a fresh UUID for each inference. Active IDs must be unique within the credential worker, including across connections. |
-| `credentialId` | Existing enabled relative credential filename. |
-| `operation`    | `responses`, `images/generations` or `images/edits`.                                                                                                                                       |
-| `sourceFormat` | Nonempty source label; `openai-response` is used here. It does not convert Chat/Claude envelopes. |
-| `sessionId`    | Nonempty caller isolation scope. Keep it stable across requests belonging to the same logical scope. |
-| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; image operations use the contract below. |
+| `credentialId` | Existing enabled relative credential filename.                                                                                                   |
+| `operation`    | `responses`, `images/generations` or `images/edits`.                                                                                             |
+| `sourceFormat` | Nonempty source label; `openai-response` is used here. It does not convert Chat/Claude envelopes.                                                |
+| `sessionId`    | Nonempty caller isolation scope. Keep it stable across requests belonging to the same logical scope.                                             |
+| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; image operations use the contract below.                   |
 
 For `operation: "responses"`, pass required history in `request.input`. Nonempty
 `previous_response_id` and `conversation` require caller history reconstruction;
 null or empty references are absence. `generate: true` is normal execution;
-`generate: false` requires WebSocket prewarming, which this v3 HTTP entry does not
+`generate: false` requires WebSocket prewarming, which this HTTP entry does not
 implement. `background: true` requires an asynchronous retrieval lifecycle that
 is also unavailable. These unsupported modes fail before model generation.
 Explicit `store` booleans enter the native DTO without creating local conversations.
@@ -218,7 +250,7 @@ HTTP business extensions use a native extension map before serialization.
 
 Supported tools include native `function`, `custom`, `namespace`, `web_search`,
 `tool_search` and hosted `image_generation`, with the detailed field policy in the
-[v3 contract](../codex-rs/app-server/docs/cpa-bridge-v3.md#native-request-mapping).
+[model-only extension contract](../codex-rs/app-server/docs/cpa-bridge.md#native-request-mapping).
 Client-side function/custom tools execute in the calling application. Preserve
 their call IDs and send results plus required history in subsequent requests.
 There is no local tool loop. Native web search and image generation run at the
@@ -280,7 +312,7 @@ terminal events when `imageApi` is `responses`. Transport failures and cancellat
 produce `cpa/inference/error`, including after a partial image was transferred.
 The same `requestId` correlates the RPC, worker diagnostics and upstream exchange.
 
-The protocol remains v3. Both sides need image-aware code and must negotiate the
+Both sides need image-aware code and must negotiate the
 operation before sending the new `imageApi` field. Independent
 `responses/compact` remains unsupported; ordinary Responses summary prompts,
 `compaction_trigger` and `compaction` items use the existing Responses path.
@@ -308,7 +340,7 @@ Known response identity fields matching the request's mapped native IDs are
 restored to source values. A matching generated field is removed when that source
 field was absent. Model text, `response.id`, item IDs, `call_id`, tool payloads,
 business `metadata` and opaque `turn_state` are not rewritten. See the
-[identity contract](../codex-rs/app-server/docs/cpa-bridge-v3.md#response-identity-projection)
+[identity contract](../codex-rs/app-server/docs/cpa-bridge.md#response-identity-projection)
 for supported locations and aliases.
 
 ### Runtime date and timezone
@@ -375,8 +407,11 @@ A failure before the start result is returned as the original RPC's error:
   "id": 3,
   "error": {
     "code": -32000,
-    "message": "generate=false requires WebSocket prewarming, which the IPC v3 HTTP entry does not implement; no model request was sent",
-    "data": { "httpStatus": 400, "body": "{\"error\":{\"type\":\"request_adaptation_error\",\"message\":\"...\"}}" }
+    "message": "generate=false requires WebSocket prewarming, which the HTTP entry does not implement; no model request was sent",
+    "data": {
+      "httpStatus": 400,
+      "body": "{\"error\":{\"type\":\"request_adaptation_error\",\"message\":\"...\"}}"
+    }
   }
 }
 ```
@@ -468,5 +503,5 @@ dispatcher for concurrent requests and its own Responses event/tool handling.
 
 The current schemas live in
 [`cpa.rs`](../codex-rs/app-server-protocol/src/protocol/v2/cpa.rs). The enclosing
-`v2` source directory is the native app-server schema layout; the service
-capability's `protocolVersion` is still 3.
+`v2` source directory is the official app-server type layout. It does not
+introduce a versioned service URL or a private protocol-number gate.

@@ -5,7 +5,7 @@
 - For the same official release, entry point and target platform, preserve upstream names and version information byte-for-byte: Cargo packages/binaries, version output, initialize metadata, User-Agent, originator and telemetry identity.
 - Never invent product/client names, version numbers or suffixes. Compare with the matching official source and release artifact before changing identity-related code.
 - Preserve official target distinctions: `codex-cli` builds `codex`; `codex-app-server` builds `codex-app-server`. Do not rename a target or fake another entry point's version output.
-- Internal bridge protocol versions and isolated experimental image package names are not product versions; preserve their existing separation.
+- CPA methods are model-only app-server extensions. Describe actual behavior with capabilities; do not add private protocol numbers or use product/source metadata as a gate. Keep isolated experimental image package names separate from official runtime identity.
 
 ## Working conventions
 
@@ -16,12 +16,12 @@
 
 ## Focused checks
 
-| Change | Command |
-| --- | --- |
-| Service/worker behavior | From `codex-rs`: `cargo test -p codex-app-server --lib --test all cpa_` |
-| Runtime identity | `CODEX_TEST_BINARY=/absolute/path/to/codex-app-server node deploy/cpa-runtime/check-identity.mjs` |
-| Release stamping | `python3 deploy/cpa-runtime/test_prepare_release.py` (Python 3.11+) |
-| Rust formatting | From `codex-rs`: `cargo fmt --all --check` |
+| Change                  | Command                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| Service/worker behavior | From `codex-rs`: `cargo test -p codex-app-server --lib --test all cpa_`                           |
+| Runtime identity        | `CODEX_TEST_BINARY=/absolute/path/to/codex-app-server node deploy/cpa-runtime/check-identity.mjs` |
+| Release stamping        | `python3 deploy/cpa-runtime/test_prepare_release.py` (Python 3.11+)                               |
+| Rust formatting         | From `codex-rs`: `cargo fmt --all --check`                                                        |
 
 ## References
 

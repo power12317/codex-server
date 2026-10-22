@@ -1,4 +1,4 @@
-//! Opt-in CPA IPC v3. No request may enter the agent/tool execution pipeline.
+//! Model-only CPA extensions to the app-server envelope. No agent/tool execution.
 use crate::JsonSchema;
 use crate::TS;
 use serde::Deserialize;
@@ -13,7 +13,6 @@ pub struct CpaCapabilitiesReadParams {}
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaCapabilitiesReadResponse {
-    pub protocol_version: u32,
     pub runtime_version: String,
     pub upstream_revision: String,
     #[serde(rename = "manualOAuth")]
@@ -24,10 +23,18 @@ pub struct CpaCapabilitiesReadResponse {
     pub execution_mode: String,
     /// Responses byte-stream transport (`bodyBase64`), not parsed IPC events.
     pub raw_body: bool,
+    /// Business byte notification carried by the app-server envelope.
+    pub business_notification: String,
+    /// Whether completion represents HTTP EOF or an accepted native terminal outcome.
+    pub completion_semantics: String,
+    /// Diagnostics have an independent `cpa/inference/diagnostics/completed` terminal.
+    pub diagnostics_completed: bool,
+    /// The Responses implementation supports native WebSocket transport.
+    pub responses_websocket: bool,
     /// Known response identity fields are restored to caller values. Other payloads are opaque.
     #[serde(default)]
     pub response_identity_mapping: bool,
-    /// Opt-in, exchange-scoped source ticket snapshots. The business stream remains IPC v3.
+    /// Opt-in, exchange-scoped source ticket snapshots, independent of business bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub ticket_snapshots: Option<bool>,

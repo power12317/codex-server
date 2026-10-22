@@ -1,8 +1,9 @@
-# Codex Server inference protocol v3
+# Codex Server model-only inference extensions
 
-Contract identifier: **V3-SEP-20260927**. This is the inference-only contract for
-Codex Server clients, including CPA. The historical `cpa/*` methods, endpoint path
-and environment variables remain wire-compatible; they do not require CPA.
+These `cpa/*` methods are fork extensions carried by the official app-server
+message envelope for Codex Server clients, including third-party clients and CPA.
+They do not start official Agent turns or execute client tools. Capabilities
+describe actual behavior without a private protocol number or contract identifier.
 
 Start with the [third-party API reference](../../../docs/codex-server-api.md) for
 connection setup, complete request examples, credentials, errors and cancellation.
@@ -33,7 +34,7 @@ persistent CODEX_HOME and reads/writes the shared original credential file.
 
 ## Connection and control
 
-The default endpoint is `ws://127.0.0.1:38317/cpa/v1/ws`. No bridge key or
+The default endpoint is `ws://127.0.0.1:38317/`. No bridge key or
 Authorization header is required. `initialize` / `initialized` remain.
 
 The local bridge imposes no WebSocket frame or message size limit, including
@@ -44,12 +45,16 @@ return master capabilities:
 
 ```json
 {
-  "protocolVersion": 3,
   "runtimeVersion": "...",
   "upstreamRevision": "...",
   "executionMode": "inference-only",
   "operations": ["responses", "images/generations", "images/edits"],
   "rawBody": true,
+  "businessNotification": "cpa/inference/body",
+  "completionSemantics": "http-body-eof",
+  "diagnosticsCompleted": false,
+  "responsesWebsocket": false,
+  "ticketSnapshots": true,
   "responseIdentityMapping": true,
   "manualOAuth": true,
   "upstreamLogs": true,
@@ -156,7 +161,7 @@ No function call is executed.
 
 Capabilities additionally advertise `images/generations` and `images/edits`.
 These operations require the optional envelope field `imageApi`, with exactly
-`images` or `responses`; ordinary `responses` rejects this field. Older v3 workers
+`images` or `responses`; ordinary `responses` rejects this field. Older workers
 must be treated as unsupported when the required operation is absent. There is
 no direct-upstream fallback and no independent `responses/compact` operation.
 
@@ -192,7 +197,7 @@ bridge lifecycle. No local image execution or agent loop is introduced.
 
 ## Compatible native request construction
 
-The v3 HTTP entry normalizes CPA's business input before the native builder.
+The HTTP entry normalizes CPA's business input before the native builder.
 It accepts string input/content and inferable message/function wrappers, consumes
 response display status/annotations, and preserves text, encrypted reasoning,
 compaction and tool call/result relationships. A missing result `call_id` is
@@ -214,7 +219,7 @@ no post-serialization request overlay is used. Existing unowned string tracking
 metadata remains available. Native identity, auth/device fields and stale
 transport/Lite/timing mirrors are consumed or rebuilt, not used as equality gates.
 
-The protocol remains v3 with `rawBody: true`. This entry does not provide upstream
+The HTTP extension advertises `rawBody: true`. This entry does not provide upstream
 WebSocket continuation or `generate: false` prewarming. Nonempty external
 response/conversation references require caller history reconstruction; null and
 empty references are absence. `generate: true` and `background: false` are normal
@@ -234,7 +239,7 @@ with zero worker inference retries. Official 0.162.1 identity is unchanged.
 `rawBody: true` identifies the existing `bodyBase64` byte-stream transport, not a
 promise that every upstream byte is unchanged. The additive
 `responseIdentityMapping: true` capability announces selective inverse mapping;
-protocol version 3 and `inference-only` mode remain unchanged.
+`inference-only` mode remains unchanged.
 
 Each request has its own source/native mapping. Known session/thread/parent-thread,
 cache, window and turn/root-turn/parent-turn fields are restored only when their
@@ -324,16 +329,16 @@ are consumed instead of being sent as unknown Responses parameters.
 
 Field handling:
 
-| Fields                                                                | Policy                                                                                                                       |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| model/input/instructions/tools/reasoning/service_tier                 | Parse and build using native types; normalize text messages and supported tool envelopes.                                    |
-| session/thread/cache/turn identities                                  | Resolve once using the identity and lifecycle rules above.                                                                   |
-| headers/authorization/cookies and reserved device metadata            | Worker-owned; caller values cannot override the transport.                                                                   |
-| tool_choice/text/include and unknown top-level extensions             | Retain as documented request options, subject to tool-choice validation; extensions are not a guarantee of upstream support. |
-| non-reserved flat client_metadata                                     | Retain string tracking fields; consume display objects and stale transport mirrors. |
-| previous_response_id/conversation                                    | Null/empty is absence; nonempty references require caller-side history reconstruction. |
-| generate/background/store/stream                                     | Consume normal generation and foreground defaults; preserve explicit store; downstream stream preferences do not change native SSE. Unsupported prewarm/background lifecycles fail specifically. |
-| response HTTP body                                                    | Restore matching known envelope identity fields, then forward as ordered base64 chunks; preserve opaque content.             |
+| Fields                                                     | Policy                                                                                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| model/input/instructions/tools/reasoning/service_tier      | Parse and build using native types; normalize text messages and supported tool envelopes.                                                                                                        |
+| session/thread/cache/turn identities                       | Resolve once using the identity and lifecycle rules above.                                                                                                                                       |
+| headers/authorization/cookies and reserved device metadata | Worker-owned; caller values cannot override the transport.                                                                                                                                       |
+| tool_choice/text/include and unknown top-level extensions  | Retain as documented request options, subject to tool-choice validation; extensions are not a guarantee of upstream support.                                                                     |
+| non-reserved flat client_metadata                          | Retain string tracking fields; consume display objects and stale transport mirrors.                                                                                                              |
+| previous_response_id/conversation                          | Null/empty is absence; nonempty references require caller-side history reconstruction.                                                                                                           |
+| generate/background/store/stream                           | Consume normal generation and foreground defaults; preserve explicit store; downstream stream preferences do not change native SSE. Unsupported prewarm/background lifecycles fail specifically. |
+| response HTTP body                                         | Restore matching known envelope identity fields, then forward as ordered base64 chunks; preserve opaque content.                                                                                 |
 
 The `sourceFormat` label does not convert whole Chat/Claude conversations into
 Responses. Every client supplies the Responses request envelope and history.

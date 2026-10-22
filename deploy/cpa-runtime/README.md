@@ -86,7 +86,7 @@ services:
 Use the same runtime UID as CPA (the example matches a root CPA container).
 The shared auth directory is `/cpa-auth`; private state is stored in the CPA
 directory's `./codex-data`, mounted at `/var/lib/codex`.
-The loopback endpoint is `ws://127.0.0.1:38317/cpa/v1/ws`, with `/readyz` on that
+The loopback endpoint is `ws://127.0.0.1:38317/`, with `/readyz` on that
 same internal port. The existing CPA and gost services need no port changes.
 
 `credentialId` is CPA's original path relative to the shared auth directory,
@@ -135,7 +135,7 @@ OAuth uses the linked `codex-login` library. Enabled children retain applicable
 native background activities. Refresh runs on credential access/401 recovery;
 no independent account heartbeat or synthetic analytics event is added.
 
-See the [third-party API](../../docs/codex-server-api.md), [v3 contract](../../codex-rs/app-server/docs/cpa-bridge-v3.md) and
+See the [third-party API](../../docs/codex-server-api.md), [model-only extension contract](../../codex-rs/app-server/docs/cpa-bridge.md) and
 [validation record](../../codex-rs/app-server/docs/cpa-bridge-validation.md).
 
 Pushes to `main` run `.github/workflows/cpa-runtime-image.yml`.
@@ -157,10 +157,10 @@ transport. For example, when the service uses host networking on a Linux server:
 ssh -N -L 38317:127.0.0.1:38317 user@server
 ```
 
-The remote client then connects to `ws://127.0.0.1:38317/cpa/v1/ws` on its own
+The remote client then connects to `ws://127.0.0.1:38317/` on its own
 machine. An authenticated reverse proxy is another option: run it in a network
 namespace that can reach the listener, enable WebSocket upgrades, preserve the
-`/cpa/v1/ws` path, and set timeouts appropriate to inference streams. TLS and client
+`/` path, and set timeouts appropriate to inference streams. TLS and client
 access control belong at that boundary. Possession of a `credentialId` is not a
 client-authorization check; exposed clients can invoke the service's control API.
 
@@ -186,7 +186,8 @@ docker build -f deploy/cpa-runtime/Dockerfile \
 Use `codex-server:local` in Compose for that build. The existing
 `.github/workflows/cpa-runtime-image.yml` filename is retained; its repository
 guard and image labels point to `power12317/codex-server`. Runtime executable,
-credential filenames, state locations and protocol v3 identifiers are unchanged.
+credential filenames and state locations are unchanged. Model-only extensions
+are described through factual capabilities.
 
 ## Runtime release identity
 
@@ -202,7 +203,8 @@ accepts official stable manifests whose local lockfile packages still use
 `0.0.0`, including implicit workspace members; it does not resolve or upgrade
 third-party dependencies. Docker runs this synchronization again in its build
 copy. `cpa/capabilities/read` reports the compiled runtime version and selected
-upstream release commit; protocol v3 and the client identity names are unchanged.
+upstream release commit as informational metadata. Client identity names remain
+unchanged; capabilities describe supported extension behavior.
 
 The official release contains two distinct targets: the `codex-cli` package
 builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds

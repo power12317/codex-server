@@ -1,4 +1,4 @@
-//! Compatible business input for the mainline native request builder and v3 HTTP bridge.
+//! Compatible business input for the mainline native request builder and HTTP bridge.
 use super::*;
 use anyhow::Context;
 use codex_api::ResponsesGenerationOptions;
@@ -173,13 +173,13 @@ fn validate_state(request: &Map<String, Value>) -> anyhow::Result<Map<String, Va
             .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
         {
             anyhow::bail!(
-                "{key} requires reconstructed caller history; the IPC v3 HTTP entry does not reconstruct stored conversations"
+                "{key} requires reconstructed caller history; the HTTP entry does not reconstruct stored conversations"
             );
         }
     }
     if optional::<bool>(Some(request), "generate")? == Some(false) {
         anyhow::bail!(
-            "generate=false requires WebSocket prewarming, which the IPC v3 HTTP entry does not implement; no model request was sent"
+            "generate=false requires WebSocket prewarming, which the HTTP entry does not implement; no model request was sent"
         );
     }
     let _: Option<bool> = optional(Some(request), "stream")?;
@@ -274,7 +274,7 @@ fn validate_state(request: &Map<String, Value>) -> anyhow::Result<Map<String, Va
     Ok(extensions)
 }
 
-/// Builds the native typed request once; the mainline v3 HTTP sender is unchanged.
+/// Builds the native typed request once; the mainline HTTP sender is unchanged.
 pub async fn prepare_inference_request(
     session: &InferenceSession,
     config: &crate::config::Config,

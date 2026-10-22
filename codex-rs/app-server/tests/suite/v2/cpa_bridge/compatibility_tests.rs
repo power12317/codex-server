@@ -1,4 +1,4 @@
-//! Compatibility at the mainline v3 HTTP sender boundary, without local tools.
+//! Compatibility at the mainline HTTP sender boundary, without local tools.
 use super::*;
 use base64::Engine;
 use pretty_assertions::assert_eq;

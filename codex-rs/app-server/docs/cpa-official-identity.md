@@ -11,9 +11,9 @@ commit `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
 replacement name. The official release publishes both CLI and app-server
 artifacts. Their version output is intentionally different:
 
-| Entry | Official output | Main output |
-| --- | --- | --- |
-| `codex --version` | `codex-cli 0.162.1` | `codex-cli 0.162.1` |
+| Entry                        | Official output            | Main output                |
+| ---------------------------- | -------------------------- | -------------------------- |
+| `codex --version`            | `codex-cli 0.162.1`        | `codex-cli 0.162.1`        |
 | `codex-app-server --version` | `codex-app-server 0.162.1` | `codex-app-server 0.162.1` |
 
 The output includes the same trailing newline. Main's CLI and app-server Cargo
@@ -27,8 +27,9 @@ binary unchanged. Its entrypoint executes `/usr/local/bin/codex-app-server`.
 There is no binary rename, CLI impersonation or custom version suffix to remove.
 The workspace and deployment stamp both select `0.162.1`. Release preparation
 normalizes only local workspace package versions and does not rename packages or
-alter third-party dependency versions. Bridge protocol version `3` is a separate
-IPC contract, not a product version.
+alter third-party dependency versions. Model-only `cpa/*` extensions advertise
+actual behavior through capabilities; their metadata does not replace or gate
+the official product identity.
 
 One actual mismatch existed in the supervisor: its `initialize` response used
 the hand-written `codex-cpa-master/0.162.1`. It now parses the official initialize
@@ -50,9 +51,9 @@ The comparison uses downloaded official **aarch64-apple-darwin** binaries and
 locally built binaries on the same macOS host. The compressed assets were checked
 against the SHA256 digests published by the release API before execution:
 
-| Official asset | SHA256 |
-| --- | --- |
-| `codex-aarch64-apple-darwin.zst` | `8b9a9ee96c7d765ae721771a845bc31db3dcdfc936933e62a1cfc5ad67bdf9d7` |
+| Official asset                              | SHA256                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------ |
+| `codex-aarch64-apple-darwin.zst`            | `8b9a9ee96c7d765ae721771a845bc31db3dcdfc936933e62a1cfc5ad67bdf9d7` |
 | `codex-app-server-aarch64-apple-darwin.zst` | `1133291038c8fb2bd777b5f037d791a410f212cee5fc59f858b3fc776003baca` |
 
 These are real release artifacts, not renamed fork binaries or binaries copied

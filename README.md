@@ -30,18 +30,19 @@ contain full request/response payloads; clients decide whether to retain them.
 1. [Install and start the service](docs/install.md).
 2. [Connect a third-party application](docs/codex-server-api.md).
 3. [Deploy with containers or integrate with CPA](deploy/cpa-runtime/README.md).
-4. [Read the identity and request-mapping contract](codex-rs/app-server/docs/cpa-bridge-v3.md).
+4. [Read the identity and request-mapping contract](codex-rs/app-server/docs/cpa-bridge.md).
 
 The default endpoints are:
 
 | Endpoint                            | Purpose                                          |
 | ----------------------------------- | ------------------------------------------------ |
 | `GET http://127.0.0.1:38317/readyz` | Listener readiness; not an account-health check. |
-| `ws://127.0.0.1:38317/cpa/v1/ws`    | JSON-RPC-style control and inference stream.     |
+| `ws://127.0.0.1:38317/`             | JSON-RPC-style control and inference stream.     |
 
-Protocol version **3** retains the `cpa/*` method names, `/cpa/v1/ws` path,
-`CODEX_CPA_*` settings and credential-file format for compatibility. These names
-do not require the CPA application. The executable remains `codex-app-server`.
+The `cpa/*` methods are model-only extensions carried by the official app-server
+envelope. Clients select supported behaviors from capabilities. Existing
+`CODEX_CPA_*` settings and credential-file formats are retained; these names do
+not require the CPA application. The executable remains `codex-app-server`.
 This listener does not expose an HTTP `POST /v1/responses` endpoint or native
 `thread/start` / `turn/start` methods; callers use `cpa/inference/start`.
 

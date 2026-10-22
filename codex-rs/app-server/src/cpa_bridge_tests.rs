@@ -2,6 +2,29 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn capabilities_describe_actual_delivery_and_ticket_support() {
+    assert_eq!(
+        serde_json::to_value(capabilities()).expect("capabilities"),
+        json!({
+            "runtimeVersion": env!("CARGO_PKG_VERSION"),
+            "upstreamRevision": UPSTREAM,
+            "manualOAuth": true,
+            "upstreamLogs": true,
+            "upstreamBodyLogs": true,
+            "executionMode": "inference-only",
+            "rawBody": true,
+            "businessNotification": "cpa/inference/body",
+            "completionSemantics": "http-body-eof",
+            "diagnosticsCompleted": false,
+            "responsesWebsocket": false,
+            "responseIdentityMapping": true,
+            "ticketSnapshots": true,
+            "operations": ["responses", "images/generations", "images/edits"]
+        })
+    );
+}
+
+#[test]
 fn image_operations_require_the_declared_business_representation() {
     for operation in ["images/generations", "images/edits"] {
         for image_api in ["images", "responses"] {

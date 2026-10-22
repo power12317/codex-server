@@ -81,7 +81,7 @@ async function handshakeSequence(binary, entry, originator) {
   const responses = [];
   try {
     for (const client of clients) {
-      const socket = await openSocket(`ws://127.0.0.1:${port}${master ? '/cpa/v1/ws' : ''}`, child);
+      const socket = await openSocket(`ws://127.0.0.1:${port}/`, child);
       try {
         responses.push(await initialize(socket, client, 1));
       } finally {

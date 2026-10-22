@@ -1,4 +1,4 @@
-//! CPA IPC v3 boundary. This module deliberately has no ThreadManager or tool runtime.
+//! Model-only CPA extension boundary, without a ThreadManager or tool runtime.
 mod contexts;
 mod identity_response;
 mod login;
@@ -520,13 +520,16 @@ impl CpaBridge {
 
 pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
     CpaCapabilitiesReadResponse {
-        protocol_version: 3,
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         upstream_revision: UPSTREAM.into(),
         manual_oauth: true,
         upstream_logs: true,
         upstream_body_logs: true,
         raw_body: true,
+        business_notification: "cpa/inference/body".into(),
+        completion_semantics: "http-body-eof".into(),
+        diagnostics_completed: false,
+        responses_websocket: false,
         response_identity_mapping: true,
         ticket_snapshots: Some(true),
         execution_mode: "inference-only".into(),
