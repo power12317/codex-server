@@ -1,4 +1,6 @@
 //! CPA TCP contract tests use a shared fake credential file and a mock upstream.
+#[path = "cpa_bridge/compatibility_tests.rs"]
+mod compatibility_tests;
 #[path = "cpa_bridge/continuity_tests.rs"]
 mod continuity_tests;
 #[path = "cpa_bridge/hierarchy_tests.rs"]
@@ -457,100 +459,43 @@ async fn cpa_cancel_before_headers_and_disconnect_leave_runtime_alive() -> Resul
 }
 
 #[tokio::test]
-async fn cpa_managed_401_recovery_refreshes_shared_storage() -> Result<()> {
+async fn cpa_managed_401_preserves_error_without_refresh_or_resend() -> Result<()> {
     let upstream = MockServer::start().await;
-    app_test_support::mount_workspace_routing(&upstream).await;
     let home = TempDir::new()?;
     let _runtime = server(&upstream, &home).await?;
-    let auth: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
-    Mock::given(method("POST")).and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(/*s*/ 200).set_body_json(json!({"access_token":"fake-refreshed", "refresh_token":"fake-refresh-next", "id_token":auth["id_token"]}))).expect(/*r*/ 1).mount(&upstream).await;
+    let before: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
     Mock::given(method("POST"))
-        .and(path("/v1/responses"))
-        .and(wiremock::matchers::header(
-            "authorization",
-            "Bearer fake-cpa-access",
-        ))
-        .respond_with(ResponseTemplate::new(/*s*/ 401).set_body_string("private-error-never-echo"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
         .mount(&upstream)
         .await;
-    Mock::given(method("POST")).and(path("/v1/responses")).and(wiremock::matchers::header("authorization","Bearer fake-refreshed"))
-        .respond_with(ResponseTemplate::new(/*s*/ 200).insert_header("content-type","text/event-stream").set_body_string("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"refreshed\"}}\n\n")).expect(/*r*/ 1).mount(&upstream).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(
+            json!({"error":{"message":"original controlled error","code":"fixture_401"}}),
+        ))
+        .expect(1)
+        .mount(&upstream)
+        .await;
     let mut ws = connect(&home).await?;
     send(
         &mut ws,
         start(json!({"model":"mock-model","stream":true,"input":[]})),
     )
     .await?;
-    let mut transport_logs = Vec::new();
-    let accepted = timeout(Duration::from_secs(/*secs*/ 30), async {
-        loop {
-            if let Some(Ok(Message::Text(text))) = ws.next().await {
-                let message: Value = serde_json::from_str(&text)?;
-                if message["id"] == 2 {
-                    break Ok::<_, anyhow::Error>(message);
-                }
-                if message["method"] == "cpa/inference/upstream"
-                    && message["params"]["kind"] != "body"
-                {
-                    transport_logs.push(message["params"].clone());
-                }
-            }
-        }
-    })
-    .await??;
-    let calls: Vec<_> = upstream
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .map(|r| {
-            (
-                r.url.path().to_owned(),
-                r.headers.get("authorization").is_some(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        accepted["result"]["statusCode"],
-        json!(200),
-        "{accepted}; calls={calls:?}"
+    let result = receive(&mut ws, "id", json!(2)).await?;
+    assert_eq!(result["error"]["data"]["httpStatus"], 401);
+    assert!(
+        result["error"]["data"]["body"]
+            .as_str()
+            .unwrap()
+            .contains("original controlled error")
     );
-    receive(&mut ws, "method", json!("cpa/inference/completed")).await?;
-    let upstream_requests = upstream.received_requests().await.unwrap();
-    let inference: Vec<_> = upstream_requests
-        .iter()
-        .filter(|r| r.url.path() == "/v1/responses")
-        .collect();
-    assert_eq!(transport_logs.len(), inference.len() * 2);
-    use sha2::Digest;
-    for (logs, actual) in transport_logs.chunks_exact(/*chunk_size*/ 2).zip(inference) {
-        let token = actual.headers["authorization"]
-            .to_str()?
-            .strip_prefix("Bearer ")
-            .unwrap();
-        assert_eq!(
-            (
-                logs[0]["kind"].clone(),
-                logs[0]["accessTokenSha256"].clone(),
-                logs[1]["kind"].clone(),
-                logs[1]["statusCode"].clone()
-            ),
-            (
-                json!("request"),
-                json!(format!("{:x}", sha2::Sha256::digest(token.as_bytes()))),
-                json!("response"),
-                json!(if token == "fake-refreshed" { 200 } else { 401 })
-            )
-        );
-        if token != "fake-refreshed" {
-            assert_eq!(logs[1]["body"], json!("private-error-never-echo"));
-        }
-    }
-    let saved: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
-    assert_eq!(saved["access_token"], json!("fake-refreshed"));
-    assert_eq!(saved["refresh_token"], json!("fake-refresh-next"));
-    assert_eq!(saved["unknown_field"], json!({"keep":true}));
+    let after: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
+    assert_eq!(after["access_token"], before["access_token"]);
+    assert_eq!(after["refresh_token"], before["refresh_token"]);
+    assert_eq!(after["unknown_field"], before["unknown_field"]);
     assert!(!home.path().join("auth.json").exists());
     Ok(())
 }

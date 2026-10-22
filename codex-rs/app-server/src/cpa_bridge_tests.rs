@@ -31,18 +31,17 @@ fn request_semantics_are_preserved_and_unsupported_state_is_rejected() {
     let params: CpaInferenceStartParams = serde_json::from_value(json!({"requestId":"r", "credentialId":"worker", "operation":"responses", "sourceFormat":"openai-response", "sessionId":"scope", "request":request})).unwrap();
     validate(&params).unwrap();
     assert_eq!(Value::Object(params.request.clone()), request);
+    // Business parsing belongs to the native input adapter. Frame validation
+    // must not reject explicit false/null controls before normalization.
     for (key, value) in [
         ("previous_response_id", json!(null)),
-        ("generate", json!(false)),
-        ("background", json!(true)),
+        ("generate", json!(true)),
+        ("background", json!(false)),
         ("store", json!(true)),
         ("stream", json!(false)),
     ] {
         let mut changed = params.clone();
         changed.request.insert(key.into(), value);
-        assert_eq!(
-            validate(&changed).unwrap_err().data,
-            Some(json!({"httpStatus":400}))
-        );
+        validate(&changed).unwrap();
     }
 }

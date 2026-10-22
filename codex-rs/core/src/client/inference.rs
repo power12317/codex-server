@@ -1,146 +1,194 @@
-//! Prepare one caller-owned Responses request without creating an agent turn.
+//! Compatible business input for the mainline native request builder and v3 HTTP bridge.
 use super::*;
-use codex_protocol::ResponseItemId;
+use anyhow::Context;
+use codex_api::ResponsesGenerationOptions;
+use codex_api::ResponsesTextFormat;
 use codex_protocol::models::BaseInstructions;
+use serde::de::DeserializeOwned;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
+use std::collections::HashMap;
 
-const WORKER_OWNED_METADATA_KEYS: &[&str] = &[
-    "x-codex-installation-id",
-    "x-codex-turn-metadata",
-    "x-codex-window-id",
-    "x-codex-parent-thread-id",
-    "x-codex-routing-hint",
-    "x-codex-turn-state",
-    "x-openai-subagent",
-    "installation_id",
-    "session_id",
-    "thread_id",
-    "turn_id",
-    "window_id",
-    "context_window_id",
-    "parent_thread_id",
-    "parent_turn_id",
-    "root_turn_id",
-    "agent_name",
-    "request_kind",
-    "thread_source",
-    "subagent_kind",
-    "turn_trigger",
-    "sandbox",
-    "sandbox_mode",
-    "auto_review_enabled",
-    "node_repl_auto_review_required",
-    "node_repl_disabled",
-    "workspaces",
-    "tool_namespaces_info",
-    "turn_started_at_unix_ms",
-    "history_ingest_requested",
-    "analytics_enabled",
-    "mcp_attribution",
-];
+#[path = "inference_input.rs"]
+mod input;
 
-/// Uses the native prompt/model builder and request options, without response parsing
-/// or a tool runtime. Caller-only Responses options survive serialization explicitly.
-pub async fn prepare_inference_request(
-    session: &InferenceSession,
-    model_info: &ModelInfo,
-    request: &Map<String, Value>,
-) -> anyhow::Result<(Value, ApiResponsesOptions)> {
-    let client = &session.session.client;
-    let metadata = &session.metadata;
-    let mut input = request.get("input").cloned().unwrap_or_else(|| json!([]));
-    if input.is_string() {
-        input = json!([{"type":"message","role":"user","content":[{"type":"input_text","text":input}]}]);
-    }
-    let input_items = input
-        .as_array_mut()
-        .ok_or_else(|| anyhow::anyhow!("input must be text or an array"))?;
-    for item in &mut *input_items {
-        if item.get("role").is_some() && item.get("type").is_none() {
-            item["type"] = json!("message");
+#[derive(Debug, Clone, Default)]
+pub(super) struct NativeRequestControls {
+    pub tool_choice: Option<Value>,
+    pub include: Option<Vec<String>>,
+    pub format: Option<ResponsesTextFormat>,
+    pub context: Option<ReasoningContext>,
+    pub verbosity: Option<VerbosityConfig>,
+    pub parallel_tool_calls: Option<bool>,
+    pub stream_options: Option<StreamOptions>,
+    pub store: Option<bool>,
+    pub generation: ResponsesGenerationOptions,
+    pub client_metadata: HashMap<String, String>,
+}
+
+pub(super) struct InferenceRequest {
+    pub(super) prompt: Prompt,
+    pub(super) effort: Option<ReasoningEffortConfig>,
+    pub(super) summary: ReasoningSummaryConfig,
+    pub(super) service_tier: Option<String>,
+    pub(super) controls: NativeRequestControls,
+}
+
+impl InferenceRequest {
+    pub(super) fn parse(
+        config: &crate::config::Config,
+        request: &Map<String, Value>,
+    ) -> anyhow::Result<Self> {
+        let extensions = validate_state(request)?;
+        let mut input = request.get("input").cloned().unwrap_or_else(|| json!([]));
+        if input.is_string() {
+            input = json!([{"type":"message","role":"user","content":input}]);
         }
-        if item["type"] == "message" && item["content"].is_string() {
-            item["content"] = json!([{"type":"input_text","text":item["content"]}]);
+        let items = input
+            .as_array_mut()
+            .context("input must be text or an array")?;
+        let input = input::parse(items)?;
+        let tools = super::inference_tools::InferenceTools::parse(request)?;
+        let native = tools.native;
+        let reasoning = object(request, "reasoning")?;
+        let text = object(request, "text")?;
+        let stream_options = object(request, "stream_options")?;
+        let effort =
+            optional(reasoning, "effort")?.or_else(|| config.model_reasoning_effort.clone());
+        let summary = optional(reasoning, "summary")?
+            .or(config.model_reasoning_summary)
+            .unwrap_or_default();
+        let mut generation = ResponsesGenerationOptions {
+            max_output_tokens: optional(Some(request), "max_output_tokens")?,
+            temperature: optional(Some(request), "temperature")?,
+            top_p: optional(Some(request), "top_p")?,
+            truncation: optional(Some(request), "truncation")?,
+            prompt_cache_retention: optional(Some(request), "prompt_cache_retention")?,
+            safety_identifier: optional(Some(request), "safety_identifier")?,
+            user: optional(Some(request), "user")?,
+            extensions,
+        };
+        for alias in ["max_completion_tokens", "max_tokens"] {
+            if let Some(value) = optional::<u64>(Some(request), alias)? {
+                if let Some(existing) = generation.max_output_tokens {
+                    anyhow::ensure!(
+                        existing == value,
+                        "conflicting max_output_tokens and {alias}"
+                    );
+                } else {
+                    generation.max_output_tokens = Some(value);
+                }
+            }
         }
-    }
-    let time = super::inference_context::TimeContext::now();
-    time.apply(input_items);
-    let mut input: Vec<ResponseItem> = serde_json::from_value(input)?;
-    for item in &mut input {
-        if let Some(prefix) = item.id_prefix()
-            && let Some(id) = item.id()
-            && let Some((actual, suffix)) = id.split_once('_')
-            && !suffix.is_empty()
-            && actual != prefix
-        {
-            item.set_id(Some(ResponseItemId::with_suffix(prefix, suffix)));
-        }
-    }
-    anyhow::ensure!(
-        !input.iter().any(|item| matches!(item, ResponseItem::Other)),
-        "unsupported input item"
-    );
-    let tools = super::inference_tools::InferenceTools::parse(request)?;
-    let prompt = Prompt {
-        input,
-        tools: tools.native.into(),
-        parallel_tool_calls: request
-            .get("parallel_tool_calls")
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()?
-            .unwrap_or(true),
-        base_instructions: BaseInstructions {
-            text: request
-                .get("instructions")
-                .map(|v| serde_json::from_value(v.clone()))
-                .transpose()?
-                .unwrap_or_default(),
+        let controls = NativeRequestControls {
+            tool_choice: tools.choice,
+            include: optional(Some(request), "include")?,
+            format: text
+                .and_then(|o| o.get("format"))
+                .filter(|v| !v.is_null())
+                .map(|v| {
+                    let mut format = v.clone();
+                    if let Some(o) = format.as_object_mut() {
+                        for key in ["name", "strict", "type"] {
+                            if o.get(key).is_some_and(Value::is_null) {
+                                o.remove(key);
+                            }
+                        }
+                        if !o.contains_key("type") && o.contains_key("schema") {
+                            o.insert("type".into(), json!("json_schema"));
+                        }
+                    }
+                    serde_json::from_value(format).context("invalid text.format")
+                })
+                .transpose()?,
+            context: optional(reasoning, "context")?,
+            verbosity: optional(text, "verbosity")?,
+            parallel_tool_calls: optional(Some(request), "parallel_tool_calls")?,
+            stream_options: optional(stream_options, "reasoning_summary_delivery")?.map(
+                |reasoning_summary_delivery| StreamOptions {
+                    reasoning_summary_delivery,
+                },
+            ),
+            store: optional(Some(request), "store")?,
+            generation,
+            client_metadata: caller_metadata(request)?,
+        };
+        let service_tier =
+            optional(Some(request), "service_tier")?.or_else(|| config.service_tier.clone());
+        let prompt = Prompt {
+            input,
+            tools: native.into(),
+            parallel_tool_calls: controls.parallel_tool_calls.unwrap_or(true),
+            base_instructions: BaseInstructions {
+                text: optional(Some(request), "instructions")?.unwrap_or_default(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        output_schema: request
-            .get("text")
-            .and_then(|t| t.get("format"))
-            .and_then(|f| f.get("schema"))
-            .cloned(),
-        output_schema_strict: request
-            .get("text")
-            .and_then(|t| t.get("format"))
-            .and_then(|f| f.get("strict"))
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()?
-            .unwrap_or(true),
-        cyber_access_program: None,
-    };
-    let reasoning = request.get("reasoning");
-    let effort = reasoning
-        .and_then(|r| r.get("effort"))
-        .map(|v| serde_json::from_value(v.clone()))
-        .transpose()?;
-    let summary = reasoning
-        .and_then(|r| r.get("summary"))
-        .map(|v| serde_json::from_value(v.clone()))
-        .transpose()?
-        .unwrap_or(ReasoningSummaryConfig::None);
-    let service_tier = request
-        .get("service_tier")
-        .map(|v| serde_json::from_value(v.clone()))
-        .transpose()?;
-    let built = client.build_responses_request(
-        &prompt,
-        model_info,
-        effort,
-        summary,
-        service_tier,
-        metadata,
-        /*include_internal*/ false,
-    )?;
-    let mut body = serde_json::to_value(built)?;
-    // The native DTO's tool_choice is a string. Keep caller forced-tool objects,
-    // extensions and additional Responses options without bypassing prompt construction.
+        };
+        Ok(Self {
+            prompt,
+            effort,
+            summary,
+            service_tier,
+            controls,
+        })
+    }
+}
+
+fn object<'a>(
+    request: &'a Map<String, Value>,
+    key: &str,
+) -> anyhow::Result<Option<&'a Map<String, Value>>> {
+    request
+        .get(key)
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_object()
+                .with_context(|| format!("{key} must be an object"))
+        })
+        .transpose()
+}
+
+fn optional<T: DeserializeOwned>(
+    object: Option<&Map<String, Value>>,
+    key: &str,
+) -> anyhow::Result<Option<T>> {
+    object
+        .and_then(|o| o.get(key))
+        .map(|v| serde_json::from_value(v.clone()).with_context(|| format!("invalid {key}")))
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn validate_state(request: &Map<String, Value>) -> anyhow::Result<Map<String, Value>> {
+    if optional::<bool>(Some(request), "background")? == Some(true) {
+        anyhow::bail!(
+            "background=true requires asynchronous response retrieval, which this streaming runtime does not implement"
+        );
+    }
+    for key in ["previous_response_id", "conversation"] {
+        if request
+            .get(key)
+            .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
+        {
+            anyhow::bail!(
+                "{key} requires reconstructed caller history; the IPC v3 HTTP entry does not reconstruct stored conversations"
+            );
+        }
+    }
+    if optional::<bool>(Some(request), "generate")? == Some(false) {
+        anyhow::bail!(
+            "generate=false requires WebSocket prewarming, which the IPC v3 HTTP entry does not implement; no model request was sent"
+        );
+    }
+    let _: Option<bool> = optional(Some(request), "stream")?;
+    let _ = object(request, "client_metadata")?;
+    // Transport/auth/installation and display metadata belong to their own layer.
+    // Unknown business controls cannot be silently discarded as if implemented.
+    let mut extensions = Map::new();
     for (key, value) in request {
-        if !matches!(
+        if matches!(
             key.as_str(),
             "model"
                 | "input"
@@ -149,74 +197,166 @@ pub async fn prepare_inference_request(
                 | "tool_choice"
                 | "reasoning"
                 | "parallel_tool_calls"
-                | "store"
-                | "stream"
+                | "text"
                 | "service_tier"
+                | "stream"
+                | "store"
+                | "background"
+                | "include"
                 | "client_metadata"
+                | "metadata"
+                | "stream_options"
+                | "session_id"
+                | "thread_id"
+                | "turn_id"
+                | "prompt_cache_key"
+                | "parent_thread_id"
+                | "parent_turn_id"
+                | "root_turn_id"
+                | "thread_source"
+                | "subagent_kind"
+                | "agent_name"
+                | "request_kind"
+                | "window_id"
+                | "context_window_id"
                 | "headers"
                 | "authorization"
                 | "Authorization"
                 | "cookies"
                 | "installation_id"
+                | "user_agent"
+                | "originator"
+                | "device_id"
+                | "access_programs"
                 | "account_id"
-                | "x-codex-installation-id"
-                | "x-codex-turn-metadata"
-                | "x-codex-window-id"
-                | "x-codex-parent-thread-id"
-                | "x-codex-routing-hint"
-                | "x-codex-turn-state"
-                | "session_id"
-                | "thread_id"
-                | "turn_id"
-                | "window_id"
-                | "context_window_id"
-                | "parent_thread_id"
-                | "parent_turn_id"
-                | "root_turn_id"
-                | "prompt_cache_key"
+                | "previous_response_id"
+                | "conversation"
+                | "generate"
+                | "max_output_tokens"
+                | "max_completion_tokens"
+                | "max_tokens"
+                | "temperature"
+                | "top_p"
+                | "truncation"
+                | "prompt_cache_retention"
+                | "safety_identifier"
+                | "user"
                 | "timezone"
                 | "current_date"
-        ) {
-            body[key] = value.clone();
-        }
-    }
-    if let Some(choice) = tools.choice {
-        body["tool_choice"] = choice;
-    }
-    merge_caller_client_metadata(&mut body, request);
-    time.metadata(&mut body, request);
-    if let Some(reasoning) = reasoning.and_then(Value::as_object) {
-        for (key, value) in reasoning {
-            if !matches!(key.as_str(), "effort" | "summary") {
-                body["reasoning"][key] = value.clone();
-            }
-        }
-    }
-    let options = session
-        .session
-        .build_responses_options(metadata, Compression::None, model_info.use_responses_lite)
-        .await;
-    Ok((body, options))
-}
-
-fn merge_caller_client_metadata(body: &mut Value, request: &Map<String, Value>) {
-    let Some(caller_metadata) = request.get("client_metadata").and_then(Value::as_object) else {
-        return;
-    };
-    let Some(native_metadata) = body
-        .get_mut("client_metadata")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-
-    for (key, value) in caller_metadata {
-        if key == "prompt_cache_key"
-            || WORKER_OWNED_METADATA_KEYS.contains(&key.as_str())
-            || native_metadata.contains_key(key)
+        ) || key.starts_with("x-")
+            || key.starts_with("ws_request_")
         {
             continue;
         }
-        native_metadata.insert(key.clone(), value.clone());
+        if matches!(key.as_str(), "top_k" | "prompt_cache_options") {
+            anyhow::bail!("business field `{key}` has no native Responses mapping");
+        }
+        // Mainline already supports native HTTP business extensions. Keep them in
+        // the native DTO, without a serialized-body overlay or transport overrides.
+        extensions.insert(key.clone(), value.clone());
     }
+    for (name, allowed) in [
+        ("reasoning", &["effort", "summary", "context"][..]),
+        ("text", &["format", "verbosity"][..]),
+        (
+            "stream_options",
+            &["include_usage", "reasoning_summary_delivery"][..],
+        ),
+    ] {
+        if let Some(object) = object(request, name)? {
+            for key in object.keys() {
+                if !allowed.contains(&key.as_str()) && key != "metadata" && !key.starts_with("x-") {
+                    anyhow::bail!("{name}.{key} has no native business mapping");
+                }
+            }
+        }
+    }
+    Ok(extensions)
+}
+
+/// Builds the native typed request once; the mainline v3 HTTP sender is unchanged.
+pub async fn prepare_inference_request(
+    session: &InferenceSession,
+    config: &crate::config::Config,
+    model_info: &ModelInfo,
+    request: &Map<String, Value>,
+) -> anyhow::Result<(Value, ApiResponsesOptions)> {
+    let parsed = InferenceRequest::parse(config, request)?;
+    let mut client = session.session.client.clone();
+    client.request_controls = Some(Arc::new(parsed.controls));
+    let body = client.build_responses_request(
+        &parsed.prompt,
+        model_info,
+        parsed.effort,
+        parsed.summary,
+        parsed.service_tier,
+        &session.metadata,
+        false,
+    )?;
+    let options = session
+        .session
+        .build_responses_options(
+            &session.metadata,
+            Compression::None,
+            model_info.use_responses_lite,
+        )
+        .await;
+    Ok((serde_json::to_value(body)?, options))
+}
+
+fn caller_metadata(request: &Map<String, Value>) -> anyhow::Result<HashMap<String, String>> {
+    let mut result = HashMap::new();
+    if let Some(metadata) = object(request, "client_metadata")? {
+        for (key, value) in metadata {
+            if key.starts_with("ws_request_")
+                || key.starts_with("x-")
+                || matches!(
+                    key.as_str(),
+                    "authorization"
+                        | "Authorization"
+                        | "headers"
+                        | "cookies"
+                        | "account_id"
+                        | "installation_id"
+                        | "prompt_cache_key"
+                        | "session_id"
+                        | "thread_id"
+                        | "turn_id"
+                        | "window_id"
+                        | "context_window_id"
+                        | "parent_thread_id"
+                        | "parent_turn_id"
+                        | "root_turn_id"
+                        | "agent_name"
+                        | "request_kind"
+                        | "thread_source"
+                        | "subagent_kind"
+                        | "turn_trigger"
+                        | "sandbox"
+                        | "sandbox_mode"
+                        | "auto_review_enabled"
+                        | "node_repl_auto_review_required"
+                        | "node_repl_disabled"
+                        | "workspaces"
+                        | "tool_namespaces_info"
+                        | "turn_started_at_unix_ms"
+                        | "history_ingest_requested"
+                        | "analytics_enabled"
+                        | "mcp_attribution"
+                )
+            {
+                continue;
+            }
+            if let Some(value) = value.as_str() {
+                result.insert(key.clone(), value.into());
+            }
+        }
+        let time = super::inference_context::TimeContext::now();
+        for (key, value) in [("timezone", time.timezone), ("current_date", time.date)] {
+            if metadata.contains_key(key) {
+                result.insert(key.into(), value);
+            }
+        }
+    }
+    Ok(result)
 }

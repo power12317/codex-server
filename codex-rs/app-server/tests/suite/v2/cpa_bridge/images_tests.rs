@@ -113,7 +113,7 @@ async fn cpa_image_responses_uses_native_normalization(lite: bool) -> Result<()>
         json!("call_history")
     );
     assert_eq!(body["stream"], json!(true));
-    assert_eq!(body["store"], json!(false));
+    assert_eq!(body["store"], json!(true));
     assert_eq!(body["parallel_tool_calls"], json!(!lite));
     assert_eq!(body["tool_choice"], json!({"type":"image_generation"}));
     assert_eq!(
@@ -248,7 +248,10 @@ async fn cpa_images_native_http_builds_requests_and_returns_raw_bytes(
         } else {
             assert_eq!(actual["model"], source["model"]);
             assert_eq!(actual["stream"], json!(true));
-            assert_eq!(actual["store"], json!(false));
+            assert_eq!(
+                actual["store"],
+                source.get("store").cloned().unwrap_or(json!(false))
+            );
             assert_eq!(
                 actual["parallel_tool_calls"],
                 source

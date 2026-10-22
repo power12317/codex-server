@@ -6617,7 +6617,6 @@
     },
     "CpaInferenceBodyNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
       "properties": {
         "bodyBase64": {
           "type": "string"
@@ -6635,7 +6634,6 @@
     },
     "CpaInferenceCompletedNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
       "properties": {
         "requestId": {
           "type": "string"
@@ -6649,7 +6647,6 @@
     },
     "CpaInferenceErrorNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
       "properties": {
         "body": {
           "type": [
@@ -6691,7 +6688,6 @@
     },
     "CpaInferenceTicketNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "additionalProperties": false,
       "description": "Private routing material; never include its values in diagnostic formatting.",
       "properties": {
         "credentialId": {
@@ -6852,7 +6848,6 @@
       "title": "CpaInferenceUpstreamNotification"
     },
     "CpaTicketCookie": {
-      "additionalProperties": false,
       "properties": {
         "expires_at": {
           "type": [
@@ -6870,7 +6865,6 @@
       "type": "object"
     },
     "CpaTicketRoute": {
-      "additionalProperties": false,
       "properties": {
         "__cflb": {
           "$ref": "#/definitions/CpaTicketCookie"

@@ -69,18 +69,16 @@ impl UpstreamTransport {
             "cpa.request.upstream"
         };
         record(&self.credential_id, &self.request_id, event, details);
-        if self
+        // Optional diagnostics cannot turn native model execution into a transport
+        // failure. Connection cancellation is owned by the business request itself.
+        let _ = self
             .outgoing
             .send_server_notification_to_connection_and_wait(
                 self.connection_id,
                 ServerNotification::CpaInferenceUpstream(notification),
             )
-            .await
-        {
-            Ok(())
-        } else {
-            Err(TransportError::Network("CPA connection closed".into()))
-        }
+            .await;
+        Ok(())
     }
 }
 

@@ -44,6 +44,8 @@ pub use crate::common::ResponseId;
 pub use crate::common::ResponseStream;
 pub use crate::common::ResponsesApiRequest;
 pub use crate::common::ResponsesApiTools;
+pub use crate::common::ResponsesGenerationOptions;
+pub use crate::common::ResponsesTextFormat;
 pub use crate::common::ResponsesWsRequest;
 pub use crate::common::StreamOptions;
 pub use crate::common::TextControls;

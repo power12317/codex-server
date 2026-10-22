@@ -965,7 +965,7 @@ mod tests {
                 )
                 .into(),
             ),
-            tool_choice: "auto".to_string(),
+            tool_choice: "auto".into(),
             parallel_tool_calls: true,
             reasoning: None,
             store: false,
@@ -978,6 +978,7 @@ mod tests {
             access_programs: Some(
                 codex_protocol::turn_input::CyberAccessProgram::DaybreakBlue.into(),
             ),
+            generation: Default::default(),
             client_metadata: Some(HashMap::from([(
                 "traceparent".to_string(),
                 "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),

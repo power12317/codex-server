@@ -1153,7 +1153,6 @@ class CpaImageApi(Enum):
 
 class CpaInferenceBodyNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     body_base64: Annotated[str, Field(alias="bodyBase64")]
@@ -1162,7 +1161,6 @@ class CpaInferenceBodyNotification(BaseModel):
 
 class CpaInferenceCompletedNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     request_id: Annotated[str, Field(alias="requestId")]
@@ -1170,7 +1168,6 @@ class CpaInferenceCompletedNotification(BaseModel):
 
 class CpaInferenceErrorNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     body: str | None = None
@@ -1238,7 +1235,6 @@ class CpaInferenceUpstreamNotification(
 
 class CpaTicketCookie(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     expires_at: str | None = None
@@ -1247,7 +1243,6 @@ class CpaTicketCookie(BaseModel):
 
 class CpaTicketRoute(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     field__cflb: Annotated[CpaTicketCookie, Field(alias="__cflb")]
@@ -8275,7 +8270,6 @@ class ContentItem(
 
 class CpaInferenceTicketNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     credential_id: Annotated[str, Field(alias="credentialId")]

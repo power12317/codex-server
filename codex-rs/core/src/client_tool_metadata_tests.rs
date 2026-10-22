@@ -46,7 +46,7 @@ fn request_with_metadata_and_source(
         model: "test".to_string(),
         input: vec![output],
         tools: None,
-        tool_choice: "auto".to_string(),
+        tool_choice: "auto".into(),
         parallel_tool_calls: true,
         reasoning: None,
         store: false,
@@ -58,6 +58,7 @@ fn request_with_metadata_and_source(
         text: None,
         client_metadata: Some(HashMap::from([("padding".to_string(), "x".to_string())])),
         access_programs: None,
+        generation: Default::default(),
     }
 }
 

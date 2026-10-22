@@ -37,6 +37,7 @@ pub struct HttpClientBuilder {
     http2_prior_knowledge: bool,
     pub(crate) default_headers: Option<HeaderMap>,
     follow_redirects: bool,
+    automatic_retries: bool,
     pub(crate) redirect_observed: Option<Arc<AtomicBool>>,
     connect_timeout: Option<Duration>,
     chatgpt_cloudflare_cookie_store: bool,
@@ -118,6 +119,12 @@ impl HttpClientBuilder {
 
     pub fn without_redirects(mut self) -> Self {
         self.follow_redirects = false;
+        self
+    }
+
+    /// A caller that owns retries must also disable reqwest's protocol retries.
+    pub fn without_retries(mut self) -> Self {
+        self.automatic_retries = false;
         self
     }
 
@@ -358,6 +365,9 @@ impl HttpClientBuilder {
 
     fn base_reqwest_builder(self) -> reqwest::ClientBuilder {
         let mut builder = reqwest::Client::builder();
+        if !self.automatic_retries {
+            builder = builder.retry(reqwest::retry::never());
+        }
         if self.http2_prior_knowledge {
             builder = builder.http2_prior_knowledge();
         }
@@ -400,6 +410,7 @@ impl Default for HttpClientBuilder {
             http2_prior_knowledge: false,
             default_headers: None,
             follow_redirects: true,
+            automatic_retries: true,
             redirect_observed: None,
             connect_timeout: None,
             chatgpt_cloudflare_cookie_store: false,

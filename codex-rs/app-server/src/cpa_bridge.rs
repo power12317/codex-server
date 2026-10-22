@@ -338,6 +338,7 @@ impl CpaBridge {
         let client = HttpClientBuilder::new()
             .with_chatgpt_cloudflare_cookie_store()
             .without_request_logging()
+            .without_retries()
             .without_redirects()
             .build_respecting_outbound_proxy_policy(
                 &factory,
@@ -371,7 +372,7 @@ impl CpaBridge {
             };
             let request: codex_api::ImageInferenceRequest =
                 serde_json::from_value(Value::Object(params.request.clone())).map_err(|error| {
-                    failure(400, &format!("Invalid native image request: {error}"))
+                    adaptation_failure(&format!("Invalid native image request: {error}"))
                 })?;
             let mapping = session.mapping();
             let mut headers =
@@ -392,7 +393,7 @@ impl CpaBridge {
             .inference(operation, &request, headers)
             .await
             .map_err(|error| match error {
-                ApiError::InvalidRequest { message } => failure(400, &message),
+                ApiError::InvalidRequest { message } => adaptation_failure(&message),
                 error => api_failure(error),
             });
         }
@@ -405,10 +406,14 @@ impl CpaBridge {
             .models
             .get_model_info(model, &self.config.to_models_manager_config())
             .await;
-        let (body, options) =
-            codex_core::prepare_inference_request(session, &model_info, &params.request)
-                .await
-                .map_err(|error| failure(/*status*/ 400, &format!("{error:#}")))?;
+        let (body, options) = codex_core::prepare_inference_request(
+            session,
+            &self.config,
+            &model_info,
+            &params.request,
+        )
+        .await
+        .map_err(|error| adaptation_failure(&format!("{error:#}")))?;
         let source = codex_core::InferenceIdentity::from_request(&params.request);
         upstream::record(
             &params.credential_id,
@@ -442,29 +447,9 @@ impl CpaBridge {
         started: &AtomicBool,
         session: &codex_core::InferenceSession,
     ) -> BridgeResult<()> {
-        let mut recovery = self.auth.unauthorized_recovery();
-        let mut stream = loop {
-            match self.open(id, params, session).await {
-                Ok(stream) => break stream,
-                Err(error)
-                    if error.data.as_ref().is_some_and(|d| d["httpStatus"] == 401)
-                        && recovery.has_next() =>
-                {
-                    tokio::time::timeout(Duration::from_secs(/*secs*/ 30), recovery.next())
-                        .await
-                        .map_err(|_| {
-                            failure(/*status*/ 504, "Managed authentication timed out")
-                        })?
-                        .map_err(|_| {
-                            failure(
-                                /*status*/ 401,
-                                "Managed authentication recovery failed",
-                            )
-                        })?;
-                }
-                Err(error) => return Err(error),
-            }
-        };
+        // A model invocation has one send owner. Authentication recovery and
+        // resubmission after an upstream error belong to CPA/the caller.
+        let mut stream = self.open(id, params, session).await?;
         let identities = identity_response::IdentityResponse::new(
             codex_core::InferenceIdentity::from_request(&params.request),
             session.mapping(),
@@ -561,6 +546,14 @@ fn failure(status: u16, message: &str) -> JSONRPCErrorError {
     }
 }
 
+fn adaptation_failure(message: &str) -> JSONRPCErrorError {
+    let mut error = failure(400, message);
+    error.data = Some(json!({"httpStatus":400,"headers":{},"body":json!({
+        "error":{"message":message,"type":"request_adaptation_error"}
+    }).to_string()}));
+    error
+}
+
 fn api_failure(error: ApiError) -> JSONRPCErrorError {
     if let ApiError::Transport(TransportError::Http {
         status,
@@ -599,11 +592,11 @@ fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
         &params.source_format,
         &params.session_id,
     ] {
-        if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        if value.is_empty() {
             return Err(failure(/*status*/ 400, "Invalid request identity"));
         }
     }
-    if params.credential_id.is_empty() || params.credential_id.len() > 4096 {
+    if params.credential_id.is_empty() {
         return Err(failure(/*status*/ 400, "Invalid credentialId"));
     }
     if matches!(
@@ -623,22 +616,6 @@ fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
     }
     if params.image_api.is_some() {
         return Err(failure(400, "imageApi is only valid for image operations"));
-    }
-    let r = &params.request;
-    if r.contains_key("previous_response_id")
-        || r.contains_key("conversation")
-        || r.contains_key("generate")
-        || r.get("store").is_some_and(|v| v != &Value::Bool(false))
-        || r.get("background")
-            .is_some_and(|v| v != &Value::Bool(false))
-    {
-        return Err(failure(
-            /*status*/ 400,
-            "Persistent sessions, generation control, storage and background responses are unsupported",
-        ));
-    }
-    if r.get("stream") != Some(&Value::Bool(true)) {
-        return Err(failure(/*status*/ 400, "stream=true is required"));
     }
     // Caller transport/auth/device metadata is sanitized during native request preparation.
     // Business Responses fields remain available to the worker-owned request builder.

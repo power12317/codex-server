@@ -13,10 +13,29 @@ pub struct ToolOutputSchema(OutputSchemaStorage);
 #[derive(Debug, Clone)]
 enum OutputSchemaStorage {
     Json(Arc<Value>),
+    CallerJson(Arc<Value>),
     McpCallToolResult(Option<Arc<Map<String, Value>>>),
 }
 
 impl ToolOutputSchema {
+    /// An explicit caller-owned output contract, also serialized by native tools.
+    pub fn from_caller(value: Value) -> Self {
+        Self(OutputSchemaStorage::CallerJson(Arc::new(value)))
+    }
+
+    pub(crate) fn omit_from_request(value: &Option<Self>) -> bool {
+        !value
+            .as_ref()
+            .is_some_and(|v| matches!(v.0, OutputSchemaStorage::CallerJson(_)))
+    }
+
+    pub(crate) fn serialize_request<S: serde::Serializer>(
+        value: &Option<Self>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&value.as_ref().map(Self::to_value), serializer)
+    }
+
     pub(crate) fn from_mcp_output_schema(
         structured_content: Option<Arc<Map<String, Value>>>,
     ) -> Self {
@@ -26,7 +45,9 @@ impl ToolOutputSchema {
     /// Materialize the schema for consumers that traverse JSON values.
     pub fn to_value(&self) -> Value {
         match &self.0 {
-            OutputSchemaStorage::Json(schema) => schema.as_ref().clone(),
+            OutputSchemaStorage::Json(schema) | OutputSchemaStorage::CallerJson(schema) => {
+                schema.as_ref().clone()
+            }
             OutputSchemaStorage::McpCallToolResult(structured_content) => {
                 mcp_call_tool_result_output_schema(Value::Object(
                     structured_content.as_deref().cloned().unwrap_or_default(),
@@ -38,7 +59,9 @@ impl ToolOutputSchema {
     /// Consume the schema, reusing uniquely owned JSON and cloning shared storage.
     pub fn into_value(self) -> Value {
         match self.0 {
-            OutputSchemaStorage::Json(schema) => Arc::unwrap_or_clone(schema),
+            OutputSchemaStorage::Json(schema) | OutputSchemaStorage::CallerJson(schema) => {
+                Arc::unwrap_or_clone(schema)
+            }
             OutputSchemaStorage::McpCallToolResult(structured_content) => {
                 mcp_call_tool_result_output_schema(Value::Object(
                     structured_content
@@ -59,7 +82,10 @@ impl From<Value> for ToolOutputSchema {
 impl PartialEq for ToolOutputSchema {
     fn eq(&self, other: &Self) -> bool {
         match (&self.0, &other.0) {
-            (OutputSchemaStorage::Json(left), OutputSchemaStorage::Json(right)) => left == right,
+            (
+                OutputSchemaStorage::Json(left) | OutputSchemaStorage::CallerJson(left),
+                OutputSchemaStorage::Json(right) | OutputSchemaStorage::CallerJson(right),
+            ) => left == right,
             (
                 OutputSchemaStorage::McpCallToolResult(left),
                 OutputSchemaStorage::McpCallToolResult(right),
@@ -68,12 +94,14 @@ impl PartialEq for ToolOutputSchema {
                 (None, None) => true,
                 (Some(schema), None) | (None, Some(schema)) => schema.is_empty(),
             },
-            (OutputSchemaStorage::Json(left), OutputSchemaStorage::McpCallToolResult(_)) => {
-                left.as_ref() == &other.to_value()
-            }
-            (OutputSchemaStorage::McpCallToolResult(_), OutputSchemaStorage::Json(right)) => {
-                &self.to_value() == right.as_ref()
-            }
+            (
+                OutputSchemaStorage::Json(left) | OutputSchemaStorage::CallerJson(left),
+                OutputSchemaStorage::McpCallToolResult(_),
+            ) => left.as_ref() == &other.to_value(),
+            (
+                OutputSchemaStorage::McpCallToolResult(_),
+                OutputSchemaStorage::Json(right) | OutputSchemaStorage::CallerJson(right),
+            ) => &self.to_value() == right.as_ref(),
         }
     }
 }

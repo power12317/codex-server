@@ -1,8 +1,6 @@
 //! Current runtime time context for CPA requests; history and caller paths stay intact.
 use chrono::Local;
-use serde_json::Map;
 use serde_json::Value;
-use serde_json::json;
 
 pub(super) struct TimeContext {
     pub(super) date: String,
@@ -120,20 +118,6 @@ impl TimeContext {
             &text[..start],
             &text[end..]
         ))
-    }
-
-    pub(super) fn metadata(&self, body: &mut Value, request: &Map<String, Value>) {
-        // Keep the flat fields consistent when a caller supplies them, without adding
-        // non-Responses top-level timezone/date parameters to the upstream API.
-        for (key, value) in [("timezone", &self.timezone), ("current_date", &self.date)] {
-            if request
-                .get("client_metadata")
-                .and_then(|metadata| metadata.get(key))
-                .is_some()
-            {
-                body["client_metadata"][key] = json!(value);
-            }
-        }
     }
 }
 

@@ -114,7 +114,7 @@ fn serializes_text_verbosity_when_set() {
         model: "gpt-5.4".to_string(),
         input,
         tools: Some(empty_tools().into()),
-        tool_choice: "auto".to_string(),
+        tool_choice: "auto".into(),
         parallel_tool_calls: true,
         reasoning: None,
         store: false,
@@ -129,6 +129,7 @@ fn serializes_text_verbosity_when_set() {
         }),
         client_metadata: None,
         access_programs: None,
+        generation: Default::default(),
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -161,7 +162,7 @@ fn serializes_text_schema_with_strict_format() {
         model: "gpt-5.4".to_string(),
         input,
         tools: Some(empty_tools().into()),
-        tool_choice: "auto".to_string(),
+        tool_choice: "auto".into(),
         parallel_tool_calls: true,
         reasoning: None,
         store: false,
@@ -173,6 +174,7 @@ fn serializes_text_schema_with_strict_format() {
         text: Some(text_controls),
         client_metadata: None,
         access_programs: None,
+        generation: Default::default(),
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -210,7 +212,11 @@ fn serializes_text_schema_with_non_strict_format() {
     )
     .expect("text controls");
 
-    let format = text_controls.format.expect("format field");
+    let codex_api::ResponsesTextFormat::Schema(format) =
+        text_controls.format.expect("format field")
+    else {
+        panic!("expected a JSON schema format");
+    };
     assert!(!format.strict);
     assert_eq!(format.schema, schema);
 }
@@ -222,7 +228,7 @@ fn omits_text_when_not_set() {
         model: "gpt-5.4".to_string(),
         input,
         tools: Some(empty_tools().into()),
-        tool_choice: "auto".to_string(),
+        tool_choice: "auto".into(),
         parallel_tool_calls: true,
         reasoning: None,
         store: false,
@@ -234,6 +240,7 @@ fn omits_text_when_not_set() {
         text: None,
         client_metadata: None,
         access_programs: None,
+        generation: Default::default(),
     };
 
     let v = serde_json::to_value(&req).expect("json");
@@ -246,7 +253,7 @@ fn serializes_flex_service_tier_when_set() {
         model: "gpt-5.4".to_string(),
         input: vec![],
         tools: Some(empty_tools().into()),
-        tool_choice: "auto".to_string(),
+        tool_choice: "auto".into(),
         parallel_tool_calls: true,
         reasoning: None,
         store: false,
@@ -258,6 +265,7 @@ fn serializes_flex_service_tier_when_set() {
         text: None,
         client_metadata: None,
         access_programs: None,
+        generation: Default::default(),
     };
 
     let v = serde_json::to_value(&req).expect("json");

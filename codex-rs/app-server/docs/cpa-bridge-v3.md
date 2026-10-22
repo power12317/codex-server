@@ -104,7 +104,8 @@ and `root_turn_id`, plus `parent_thread_id`, `thread_source`, `subagent_kind`,
 top-level request fields, then flat
 `client_metadata`, then its JSON-encoded `x-codex-turn-metadata` (in that order).
 `x-codex-parent-thread-id` and `x-codex-window-id` are accepted aliases. Identity
-values are limited to 4096 bytes each and cannot contain control characters.
+values are logical JSON labels mapped within the credential/client scope; they
+do not have an additional bridge-specific 4096-byte admission limit.
 
 The credential and outer client `sessionId` form an isolation namespace. Within it,
 the source session identifies the root (falling back to the source thread, then
@@ -185,9 +186,48 @@ invalid multipart values. Ordinary Responses construction remains unchanged.
 Both image representations return original JSON/SSE bytes through `bodyBase64`,
 with EOF reported by `completed`. Image events do not need a Responses terminal
 event; the caller applies the parser appropriate to `imageApi`. Cancellation
-and transport errors fail the stream even after partial output. Auth recovery,
+and transport errors fail the stream even after partial output. Managed authentication,
 request IDs, upstream diagnostics and credential-worker routing use the existing
 bridge lifecycle. No local image execution or agent loop is introduced.
+
+## Compatible native request construction
+
+The v3 HTTP entry normalizes CPA's business input before the native builder.
+It accepts string input/content and inferable message/function wrappers, consumes
+response display status/annotations, and preserves text, encrypted reasoning,
+compaction and tool call/result relationships. A missing result `call_id` is
+inferred only from one matching unfinished call in the current input. Ambiguous
+or contradictory associations fail with a specific adaptation error.
+
+Function/custom/namespace declarations retain caller names, full input schemas
+and explicit output schemas, including extensions and large integers. No tool
+name, User-Agent or built-in template grants admission. Client tools are never
+executed locally. Missing descriptions and non-strict function defaults are
+completed without inventing arguments or constraints.
+
+Explicit `tool_choice`, parallel booleans (including Lite), `include: []`,
+`store`, text format/name/schema/strictness, verbosity, reasoning context,
+service tier and generation options enter native DTO fields before serialization.
+Token aliases normalize to `max_output_tokens`, with conflicts rejected.
+Mainline's existing HTTP business extensions use a native DTO extension map;
+no post-serialization request overlay is used. Existing unowned string tracking
+metadata remains available. Native identity, auth/device fields and stale
+transport/Lite/timing mirrors are consumed or rebuilt, not used as equality gates.
+
+The protocol remains v3 with `rawBody: true`. This entry does not provide upstream
+WebSocket continuation or `generate: false` prewarming. Nonempty external
+response/conversation references require caller history reconstruction; null and
+empty references are absence. `generate: true` and `background: false` are normal
+execution. `background: true` requires an unavailable asynchronous retrieval
+lifecycle. `top_k` and `prompt_cache_options` have no native Responses mapping.
+Unsupported business modes fail before a model request is sent.
+
+Optional additive CPA envelope fields are accepted; required field types,
+credential ownership, framing and cancellation remain checked. Local adaptation
+errors use `request_adaptation_error`; upstream HTTP failures preserve their
+original status, headers and body. Optional diagnostics cannot themselves become
+model transport failures. Inference resubmission after 401/429/5xx belongs to CPA,
+with zero worker inference retries. Official 0.162.1 identity is unchanged.
 
 ## Response identity projection
 
@@ -261,7 +301,8 @@ nested function definitions and `input_schema` tool definitions are normalized
 without renaming tools. Function names do not select hosted tools or local
 executors: a function named `WebSearch`, `ToolSearch`, `Bash` or `Agent` remains a
 client function. Invalid tool envelopes still report their array location.
-Function `output_schema` is not a supported wire field and is rejected.
+Explicit caller function `output_schema` is retained in the native declaration.
+Internal/MCP output contracts keep their existing serialization policy.
 
 Both ordinary Responses and Responses Lite serialize native `ToolSpec` values.
 Lite uses the native `additional_tools` prefix and namespace convention; no raw
@@ -289,15 +330,16 @@ Field handling:
 | session/thread/cache/turn identities                                  | Resolve once using the identity and lifecycle rules above.                                                                   |
 | headers/authorization/cookies and reserved device metadata            | Worker-owned; caller values cannot override the transport.                                                                   |
 | tool_choice/text/include and unknown top-level extensions             | Retain as documented request options, subject to tool-choice validation; extensions are not a guarantee of upstream support. |
-| non-reserved flat client_metadata                                     | Retain unless managed above.                                                                                                 |
-| previous_response_id/conversation/generate/store=true/background=true | Reject; stream=true is required.                                                                                             |
+| non-reserved flat client_metadata                                     | Retain string tracking fields; consume display objects and stale transport mirrors. |
+| previous_response_id/conversation                                    | Null/empty is absence; nonempty references require caller-side history reconstruction. |
+| generate/background/store/stream                                     | Consume normal generation and foreground defaults; preserve explicit store; downstream stream preferences do not change native SSE. Unsupported prewarm/background lifecycles fail specifically. |
 | response HTTP body                                                    | Restore matching known envelope identity fields, then forward as ordered base64 chunks; preserve opaque content.             |
 
 The `sourceFormat` label does not convert whole Chat/Claude conversations into
 Responses. Every client supplies the Responses request envelope and history.
 
-HTTP authentication recovery can refresh credentials and retry a rejected 401;
-accepted HTTP streams are never replayed. Body EOF is transport completion, not
+Managed authentication is acquired before dispatch. Upstream 401/429/5xx failures
+are returned without refreshing and resending that inference. Body EOF is transport completion, not
 an interpretation of any SSE event. All account activity ends when the master
 has reaped the disabled child's process. Previously transmitted upstream work
 cannot be recalled. The private state directory persists for reenable.

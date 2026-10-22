@@ -37,6 +37,14 @@ struct ImageInferenceOptions {
     output_compression: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     partial_images: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_fidelity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moderation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
     #[serde(flatten)]
     extensions: Map<String, Value>,
 }
@@ -61,6 +69,18 @@ impl ImageInferenceRequest {
         &self,
         operation: ImageOperation,
     ) -> Result<NativeImageInferenceRequest, ApiError> {
+        if matches!(operation, ImageOperation::Generate) {
+            for (key, present) in [
+                ("images", self.images.is_some()),
+                ("mask", self.options.mask.is_some()),
+            ] {
+                if present {
+                    return Err(ApiError::InvalidRequest {
+                        message: format!("{key} belongs to images/edits, not images/generations"),
+                    });
+                }
+            }
+        }
         let request = match operation {
             ImageOperation::Generate => NativeImageRequest::Generate(ImageGenerationRequest {
                 prompt: self.prompt.clone(),
@@ -88,7 +108,9 @@ impl ImageInferenceRequest {
         let mut options = self.options.clone();
         // Extensions are business parameters, never caller-owned transport or
         // identity. Known image fields were already consumed by native parsing.
-        options.extensions.retain(|key, _| !worker_owned_field(key));
+        options.extensions.retain(|key, _| {
+            !worker_owned_field(key) && !key.starts_with("x-") && !key.starts_with("ws_request_")
+        });
         Ok(NativeImageInferenceRequest { request, options })
     }
 }
@@ -97,6 +119,9 @@ fn worker_owned_field(key: &str) -> bool {
     matches!(
         key,
         "headers"
+            | "metadata"
+            | "timezone"
+            | "current_date"
             | "authorization"
             | "Authorization"
             | "cookies"

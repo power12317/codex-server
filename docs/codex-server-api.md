@@ -112,8 +112,8 @@ or expired combinations are not emitted. See the
 | `cpa/inference/cancel`    | `{requestId}`                             | `{}` acknowledgment.                                          |
 
 `initialized` is a notification. Other methods above expect an RPC ID. Unsupported
-methods receive error code `-32601`. Use documented parameter fields; typed
-parameter objects reject unknown fields.
+methods receive error code `-32601`. Required fields retain their documented
+types; optional additive envelope fields do not invalidate known CPA messages.
 
 ## Credentials and OAuth
 
@@ -191,17 +191,30 @@ name with one available to the account:
 | Field          | Requirements and meaning                                                                                                                                                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | RPC `id`       | Correlates this control reply. It is distinct from the inference `requestId`.                                                                                                              |
-| `requestId`    | Nonempty string, at most 256 bytes, without control characters. Use a fresh UUID for each inference. Active IDs must be unique within the credential worker, including across connections. |
-| `credentialId` | Existing enabled relative credential filename, at most 4096 bytes.                                                                                                                         |
+| `requestId`    | Nonempty JSON string. Use a fresh UUID for each inference. Active IDs must be unique within the credential worker, including across connections. |
+| `credentialId` | Existing enabled relative credential filename. |
 | `operation`    | `responses`, `images/generations` or `images/edits`.                                                                                                                                       |
-| `sourceFormat` | Nonempty label, at most 256 bytes, without control characters; `openai-response` is used here. It does not convert Chat/Claude envelopes.                                                  |
-| `sessionId`    | Nonempty caller isolation scope, at most 256 bytes, without control characters. Keep it stable across requests belonging to the same logical scope.                                        |
-| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string and `stream: true`; image operations use the contract below.                                          |
+| `sourceFormat` | Nonempty source label; `openai-response` is used here. It does not convert Chat/Claude envelopes. |
+| `sessionId`    | Nonempty caller isolation scope. Keep it stable across requests belonging to the same logical scope. |
+| `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; image operations use the contract below. |
 
-For `operation: "responses"`, pass all required history in `request.input`. `previous_response_id`,
-`conversation` and `generate` are rejected even if null. If supplied, `store`
-and `background` must be exactly `false`. Nonstreaming requests are rejected;
-a client needing a final JSON result can collect and parse the SSE stream itself.
+For `operation: "responses"`, pass required history in `request.input`. Nonempty
+`previous_response_id` and `conversation` require caller history reconstruction;
+null or empty references are absence. `generate: true` is normal execution;
+`generate: false` requires WebSocket prewarming, which this v3 HTTP entry does not
+implement. `background: true` requires an asynchronous retrieval lifecycle that
+is also unavailable. These unsupported modes fail before model generation.
+Explicit `store` booleans enter the native DTO without creating local conversations.
+`stream` describes downstream delivery; the worker's Responses transport remains
+SSE, which a caller can aggregate for a nonstreaming public API.
+
+The native builder preserves explicit tool choices, parallel booleans (including
+Lite), `include: []`, structured-output names/schema/strictness, verbosity,
+reasoning controls and service tiers. `max_tokens` and `max_completion_tokens`
+normalize to `max_output_tokens`; conflicting values fail specifically. Token,
+temperature, top-p, truncation and cache-retention controls use native DTO fields.
+`top_k` and `prompt_cache_options` have no native Responses mapping. Existing
+HTTP business extensions use a native extension map before serialization.
 
 Supported tools include native `function`, `custom`, `namespace`, `web_search`,
 `tool_search` and hosted `image_generation`, with the detailed field policy in the
@@ -235,15 +248,18 @@ the final upstream representation. Images represented as Responses use the same
 `prepare_inference_request` pipeline as ordinary Responses, including message
 normalization, native defaults, model-selected Lite layout, time context and
 worker identity. For example, missing message `type` becomes `message`, string
-content becomes `input_text` content, and native `stream: true` / `store: false`
-are not overwritten by the caller's raw fields. Native output is never trimmed
-back to the set of fields supplied by the caller.
+content becomes `input_text` content. Explicit business controls enter the native
+builder; omitted values use native defaults. Display/transport/Lite/auth/device
+metadata is consumed or rebuilt. Native output is never trimmed back to the set
+of fields supplied by the caller, and there is no final serialized-body overlay.
 
 Direct Images requests are rebuilt with `ImageGenerationRequest` or
 `ImageEditRequest`. Model and prompt are required strings; edits also require
 `images`. Native enums validate quality/background, image references are
 serialized through `ImageReference`, and optional nulls are omitted. Standalone
-mask, stream and output options extend these DTOs. Invalid native types produce
+mask, stream, output format/compression, partial-image, response-format,
+input-fidelity, moderation and user options extend these DTOs. `stream: false`
+does not silently remove explicit partial-image options. Invalid native types produce
 HTTP 400. Authentication, transport headers and worker identity remain locally
 managed. No URL, raw HTTP header block or caller credential is accepted as a
 transport override.
@@ -346,8 +362,9 @@ input buffers have no size limit. Heartbeat/comment lines before event data are 
 
 `cpa/inference/completed` means HTTP body EOF, not model-level success. Inspect
 Responses events such as `response.completed` or `response.failed` yourself.
-Accepted inference streams are not automatically replayed. Native authentication
-recovery may refresh a credential and retry a rejected 401 before acceptance.
+Each inference is sent once, including upstream 401/429/5xx failures. Normal
+managed credential acquisition before dispatch remains available; retrying a
+failed inference belongs to the caller.
 
 ## Errors and cancellation
 
@@ -358,8 +375,8 @@ A failure before the start result is returned as the original RPC's error:
   "id": 3,
   "error": {
     "code": -32000,
-    "message": "stream=true is required",
-    "data": { "httpStatus": 400 }
+    "message": "generate=false requires WebSocket prewarming, which the IPC v3 HTTP entry does not implement; no model request was sent",
+    "data": { "httpStatus": 400, "body": "{\"error\":{\"type\":\"request_adaptation_error\",\"message\":\"...\"}}" }
   }
 }
 ```

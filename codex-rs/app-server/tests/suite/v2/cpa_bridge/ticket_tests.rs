@@ -264,14 +264,14 @@ async fn cpa_ticket_concurrent_credentials_and_partial_updates_never_mix() -> Re
 }
 
 #[tokio::test]
-async fn cpa_ticket_auth_recovery_does_not_pair_material_across_attempts() -> Result<()> {
+async fn cpa_ticket_partial_401_material_does_not_trigger_worker_retry() -> Result<()> {
     let upstream = MockServer::start().await;
     app_test_support::mount_workspace_routing(&upstream).await;
     let home = TempDir::new()?;
     prepare_account(&upstream, &home)?;
     let auth: Value = serde_json::from_slice(&std::fs::read(home.path().join("shared.json"))?)?;
     Mock::given(method("POST")).and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"ticket-refreshed", "refresh_token":"refresh-next", "id_token":auth["id_token"]}))).expect(1).mount(&upstream).await;
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"ticket-refreshed", "refresh_token":"refresh-next", "id_token":auth["id_token"]}))).expect(0).mount(&upstream).await;
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .and(wiremock::matchers::header(
@@ -298,7 +298,7 @@ async fn cpa_ticket_auth_recovery_does_not_pair_material_across_attempts() -> Re
                 .insert_header("set-cookie", "__oailb=successful-attempt-oai")
                 .set_body_raw("data: [DONE]\n\n", "text/event-stream"),
         )
-        .expect(1)
+        .expect(0)
         .mount(&upstream)
         .await;
     let _runtime = launch(&upstream, &home).await?;
@@ -307,21 +307,21 @@ async fn cpa_ticket_auth_recovery_does_not_pair_material_across_attempts() -> Re
     request["params"]["captureTicketSnapshot"] = json!(true);
     let messages = exchange(&mut ws, request).await?;
     assert_eq!(
-        messages.last().expect("terminal")["method"],
-        "cpa/inference/completed"
+        messages.last().expect("terminal")["error"]["data"]["httpStatus"],
+        401
     );
     assert!(
         !messages
             .iter()
             .any(|message| message["method"] == "cpa/inference/ticket"),
-        "neither exchange contains a complete pair"
+        "the failed exchange does not contain a complete pair"
     );
     let sent = upstream.received_requests().await.expect("recorded");
     let model_requests: Vec<_> = sent
         .iter()
         .filter(|request| request.url.path() == "/v1/responses")
         .collect();
-    assert!(model_requests.len() >= 2);
+    assert_eq!(model_requests.len(), 1);
     for request in model_requests {
         assert!(request.headers.get("cookie").is_none());
     }

@@ -331,7 +331,7 @@ async fn cpa_validation_failure_has_start_and_error_logs() -> Result<()> {
     let mut ws = connect(&home).await?;
     send(
         &mut ws,
-        start(json!({"model":"mock-model", "stream":false, "input":[]})),
+        start(json!({"model":"mock-model", "stream":false, "input":12})),
     )
     .await?;
     assert_eq!(
@@ -344,9 +344,11 @@ async fn cpa_validation_failure_has_start_and_error_logs() -> Result<()> {
     let error = runtime
         .wait_for_json_log_event("cpa.request.error", Duration::from_secs(/*secs*/ 10))
         .await?;
-    assert_eq!(
-        error["fields"]["details"],
-        json!({"error":"stream=true is required", "httpStatus":400})
+    assert!(
+        error["fields"]["details"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("input must be text or an array")
     );
     assert!(
         upstream

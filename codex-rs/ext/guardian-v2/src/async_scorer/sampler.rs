@@ -227,7 +227,7 @@ impl LunaSampler {
             model: MODEL.to_owned(),
             input,
             tools: None,
-            tool_choice: "none".to_owned(),
+            tool_choice: "none".into(),
             parallel_tool_calls: false,
             reasoning: Some(Reasoning {
                 effort: Some(request.reasoning_effort.clone()),
@@ -243,6 +243,7 @@ impl LunaSampler {
             text: None,
             client_metadata: None,
             access_programs: None,
+            generation: Default::default(),
         };
         execution::SamplingExecution {
             auth_owner_generation,
