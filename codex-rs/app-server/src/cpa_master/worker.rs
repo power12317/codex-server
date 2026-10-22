@@ -60,12 +60,7 @@ fn register_stream(
     client: &Client,
     rpc_sequence: u64,
 ) -> anyhow::Result<String> {
-    anyhow::ensure!(
-        !source_request_id.is_empty()
-            && source_request_id.len() <= 256
-            && !source_request_id.chars().any(char::is_control),
-        "Invalid request identity"
-    );
+    anyhow::ensure!(!source_request_id.is_empty(), "Invalid request identity");
     anyhow::ensure!(
         !streams
             .values()

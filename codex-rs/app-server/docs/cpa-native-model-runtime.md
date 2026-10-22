@@ -45,10 +45,10 @@ a failed call.
 
 The caller supplies complete history. Responses output envelopes are converted
 to typed native history: response-only message/function status and output-text
-annotations/logprobs are validated and omitted where native input has no such
+annotations/logprobs are consumed where native input has no such
 fields. Native custom-call status, namespace, call IDs, tool results, encrypted
 compaction items and `compaction_trigger` controls retain their typed semantics.
-Unknown extensions still fail explicitly. The native client alone selects a
+Unknown business item types still fail explicitly. The native client alone selects a
 full request or `previous_response_id` plus incremental input; changed model,
 tools, rules or history do not force an artificial cache hit.
 
@@ -144,24 +144,30 @@ gate remains. The worker does not execute tools or invent their results.
 | Input                                                                          | Native mapping / constraint                                                                                                                                                                            |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `model`                                                                        | Selects native model information from the worker's model manager.                                                                                                                                      |
-| `input`                                                                        | Text or a native `ResponseItem` array. Message shorthand is normalized once. Unknown or lossy typed input fields are rejected.                                                                         |
+| `input` | Text or native history items. Infer message/text shorthand, consume display metadata, preserve business text, opaque reasoning and call relationships. Unknown business item types and missing call IDs receive specific errors. |
 | `instructions`                                                                 | Native prompt base instructions.                                                                                                                                                                       |
-| Function/custom/namespace tools                                                | Native `ToolSpec` declarations; complete caller-owned parameter schemas are retained without registering executors.                                                                                    |
+| Function/custom/namespace tools | Native declarations with complete input and explicit output schemas. Chat/input_schema wrappers normalize without tool-name templates or local executors; missing description and non-strict function defaults are completed. |
 | `web_search`, `tool_search`                                                    | Native declarations; tool-search parameter schemas retain all caller-supplied keywords and nested values.                                                                                              |
 | Hosted `image_generation` declaration                                          | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry.                                                                                 |
-| `tool_choice`                                                                  | Absent or `auto`; other choices cannot be expressed by this native prompt entry and are rejected.                                                                                                      |
-| `parallel_tool_calls`                                                          | Native prompt preference; native model policy still applies (including Lite).                                                                                                                          |
+| `tool_choice` | Native `auto`, `none`, `required`, and declared function/custom/namespace or hosted choices. Selection must reference a declared tool. |
+| `parallel_tool_calls` | Explicit booleans remain explicit, including Lite; omitted values use native defaults. |
 | `reasoning.effort`, `reasoning.summary`                                        | Native request controls; defaults come from worker configuration/native model policy.                                                                                                                  |
-| `reasoning.context`                                                            | Optional assertion of the context derived by the native builder. It cannot enable Lite or override native configuration.                                                                               |
-| `text.format`                                                                  | `json_schema`, its schema and strictness; native schema name is `codex_output_schema`.                                                                                                                 |
-| `text.verbosity`                                                               | Native client configuration for this invocation, with worker/model defaults when absent. The client view retains shared authentication/session state; the native builder still enforces model support. |
-| `service_tier`                                                                 | Native model tier resolution.                                                                                                                                                                          |
-| `include`                                                                      | If supplied, must match native `reasoning.encrypted_content` inclusion.                                                                                                                                |
-| `store`, `background`                                                          | Only `false` is compatible.                                                                                                                                                                            |
+| `reasoning.context` | Explicit native `auto`, `current_turn` or `all_turns`; absence uses native derivation. Old client Lite mirrors are consumed, not equality gates. |
+| `text.format` | `text`, `json_object` or `json_schema`; complete schema, explicit strictness and caller name are retained. An omitted schema name uses the native name. |
+| `text.verbosity` | Explicit verbosity enters native request controls; absence uses worker/model defaults. |
+| `service_tier` | Explicit tiers are retained; omission uses worker configuration/native defaults. |
+| `include` | Explicit lists, including `[]`, are retained. Omission uses native encrypted-reasoning inclusion. |
+| `store`, `background` | `store` maps to the native bool without creating local conversations. `background=true` requires an asynchronous retrieval lifecycle not implemented by this streaming interface. |
 | `stream`                                                                       | A downstream delivery preference; native model execution still owns its upstream transport.                                                                                                            |
 | Session/thread/turn provenance                                                 | Existing identity mapping and source response projection. Worker-owned authentication/device/routing fields cannot be overridden.                                                                      |
 | Existing environment date/time blocks                                          | Replace recognized current context fields in place using the worker's local time zone. No additional context message is appended.                                                                      |
-| Arbitrary wire extensions, persistent response state, unsupported tool choices | Explicit input error; no final-wire overlay or alternative sender.                                                                                                                                     |
+| Request controls and extensions | Generation/token/temperature/top_p/truncation/cache-retention controls enter native DTOs; `max_tokens` and `max_completion_tokens` normalize to `max_output_tokens` with conflicting values rejected. Transport/display metadata is consumed or rebuilt. Unknown business controls receive field-specific compatibility errors. |
+
+`top_k` and `prompt_cache_options` have no native request mapping in this entry
+and return specific compatibility errors. Missing output `call_id` is inferred
+only from a single matching unfinished call in the current input; ambiguous
+associations are rejected. An explicit native function name/namespace association
+can remain name-based without a fabricated ID.
 
 Native additional-tool and compaction history items can also be supplied directly
 in `input`. A successful controlled mock test proves the mapping and native path;
@@ -183,15 +189,27 @@ use the native tool serializers; there is no final-wire tools-array overlay.
 image extension. No local image tool is installed or executed.
 
 - Generations: `model`, `prompt`, optional `background`, `n`, `quality`, `size`.
-- Edits: the generation fields plus native `images` references.
-- Optional `stream` describes downstream delivery only and is absent from the native Images DTO.
-- Absent `n` stays absent; the adapter does not substitute its own default.
-- `mask`, `partial_images`, `output_format`, `output_compression` and arbitrary extensions are rejected.
+- Edits: generation fields plus native `images` and optional `mask` references.
+- Both accept native `stream`, `output_format`, `output_compression`, `partial_images`,
+  `response_format`, `input_fidelity`, `moderation` and `user` options.
+- Explicit `stream: false` does not remove `partial_images`; incompatible combinations
+  remain visible to the native endpoint instead of silently changing caller intent.
+- Omitted options, including `n`, stay absent. Unknown business options and malformed
+  types receive concrete adaptation errors.
 
-After the native backend validates success, the original JSON response is delivered
-as a JSON business event followed by the payload-free completion, preserving
-response fields outside the typed image DTO. The native Images backend is unary;
-this does not claim incremental upstream image generation.
+The active entry uses typed native image DTOs, `CodexImagesBackend` and `ImagesClient`.
+It does not invoke the old prepared/raw inference sender. JSON responses are validated
+as image envelopes and delivered without stripping response extensions. Native SSE
+parsing immediately forwards accepted partial images and extensions; success requires
+`image_generation.completed` or `image_edit.completed`. A stream ending before that
+terminal event is an error. Business completion does not wait for diagnostic drain or
+HTTP EOF after an accepted native terminal image event.
+
+`generate: false` uses native WebSocket prewarming when available. HTTP-only entries
+report that prewarming is unsupported before sending a model generation. Non-null
+`previous_response_id` and `conversation` require caller-side history reconstruction;
+the runtime retains native continuation caches rather than a stored-conversation API.
+Null references are absence. Native cache reuse still chooses incremental requests.
 
 ## Diagnostics
 
@@ -282,3 +300,13 @@ requests after an IPC failure.
 The existing credential reload and manual OAuth methods retain their v3 field
 shapes; their capability result now advertises version 5. The native error's typed
 classification is additionally exposed as `error.data.nativeError` when available.
+
+## Optional IPC extensions and errors
+
+The v5 required frame identities and execution mode remain unchanged. Additional
+optional envelope fields do not invalidate known messages. Business delivery and
+transport diagnostics remain independent; optional diagnostic extensions cannot
+establish or revoke native model success. Local request adaptation errors use
+`request_adaptation_error`; native/upstream failures retain their native classification
+and original captured response. No new local message capacity, execution switch,
+retry owner or client-tool executor is introduced by compatibility adaptation.

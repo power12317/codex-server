@@ -276,6 +276,7 @@ impl RequestRouteTelemetry {
 pub struct ModelClient {
     state: Arc<ModelClientState>,
     model_verbosity: Option<VerbosityConfig>,
+    request_controls: Option<Arc<inference::NativeRequestControls>>,
     agent_identity_policy: AgentIdentityAuthPolicy,
     prompt_cache_key_override: Option<String>,
     codex_responses_headers: Option<Arc<CodexResponsesHeaders>>,
@@ -368,6 +369,7 @@ fn responses_request_properties_match(
         text: previous_text,
         client_metadata: _,
         access_programs: _,
+        generation: previous_generation,
     } = previous;
     let ResponsesApiRequest {
         model: current_model,
@@ -385,9 +387,11 @@ fn responses_request_properties_match(
         text: current_text,
         client_metadata: _,
         access_programs: _,
+        generation: current_generation,
     } = current;
 
-    previous_model == current_model
+    previous_generation == current_generation
+        && previous_model == current_model
         && previous_tools == current_tools
         && previous_tool_choice == current_tool_choice
         && previous_parallel_tool_calls == current_parallel_tool_calls
@@ -545,6 +549,7 @@ impl ModelClient {
                 last_inference_tools: StdMutex::new(None),
             }),
             model_verbosity,
+            request_controls: None,
             agent_identity_policy,
             prompt_cache_key_override: None,
             codex_responses_headers: None,
@@ -968,14 +973,22 @@ impl ModelClient {
                 }
             }
         }
-        let reasoning = self.build_reasoning(model_info, effort, summary);
-        let stream_options = (self.state.concurrent_reasoning_summaries_enabled
-            && is_openai
-            && reasoning.summary.is_some())
-        .then_some(StreamOptions {
-            reasoning_summary_delivery: codex_api::ReasoningSummaryDelivery::SequentialCutoff,
+        let controls = self.request_controls.as_deref();
+        let mut reasoning = self.build_reasoning(model_info, effort, summary);
+        if let Some(context) = controls.and_then(|c| c.context.clone()) {
+            reasoning.context = Some(context);
+        }
+        let stream_options = controls.and_then(|c| c.stream_options.clone()).or_else(|| {
+            (self.state.concurrent_reasoning_summaries_enabled
+                && is_openai
+                && reasoning.summary.is_some())
+            .then_some(StreamOptions {
+                reasoning_summary_delivery: codex_api::ReasoningSummaryDelivery::SequentialCutoff,
+            })
         });
-        let include = vec!["reasoning.encrypted_content".to_string()];
+        let include = controls
+            .and_then(|c| c.include.clone())
+            .unwrap_or_else(|| vec!["reasoning.encrypted_content".to_string()]);
         let verbosity = if model_info.support_verbosity {
             self.model_verbosity.or(model_info.default_verbosity)
         } else {
@@ -987,23 +1000,38 @@ impl ModelClient {
             }
             None
         };
-        let text = create_text_param_for_request(
+        let mut text = create_text_param_for_request(
             verbosity,
             &prompt.output_schema,
             prompt.output_schema_strict,
         );
+        if let Some(controls) = controls {
+            if controls.format.is_some() || controls.verbosity.is_some() {
+                let text = text.get_or_insert_with(Default::default);
+                if let Some(format) = &controls.format {
+                    text.format = Some(format.clone());
+                }
+                if let Some(verbosity) = controls.verbosity {
+                    text.verbosity = Some(verbosity.into());
+                }
+            }
+        }
         let prompt_cache_key = Some(self.prompt_cache_key(responses_metadata));
-        let service_tier = model_info
-            .service_tier_for_request(service_tier)
-            .filter(|tier| {
-                // Bedrock requires an advertised tier, including for flex, which the
-                // generic OpenAI resolver permits without catalog support.
-                !self.state.provider.info().is_amazon_bedrock()
-                    || model_info
-                        .service_tiers
-                        .iter()
-                        .any(|supported| supported.id == *tier)
-            });
+        let service_tier = if controls.is_some() {
+            service_tier
+        } else {
+            model_info
+                .service_tier_for_request(service_tier)
+                .filter(|tier| {
+                    // Bedrock requires an advertised tier, including for flex, which the
+                    // generic OpenAI resolver permits without catalog support.
+                    !self.state.provider.info().is_amazon_bedrock()
+                        || model_info
+                            .service_tiers
+                            .iter()
+                            .any(|supported| supported.id == *tier)
+                })
+        };
         if !include_internal {
             for item in &mut input {
                 item.clear_tool_result_metadata();
@@ -1014,10 +1042,14 @@ impl ModelClient {
             model: model_info.slug.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
-            parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
+            tool_choice: controls
+                .and_then(|c| c.tool_choice.clone())
+                .unwrap_or_else(|| serde_json::json!("auto")),
+            parallel_tool_calls: controls
+                .and_then(|c| c.parallel_tool_calls)
+                .unwrap_or(prompt.parallel_tool_calls && !model_info.use_responses_lite),
             reasoning: Some(reasoning),
-            store: false,
+            store: controls.and_then(|c| c.store).unwrap_or(false),
             stream: true,
             stream_options,
             include,
@@ -1026,6 +1058,7 @@ impl ModelClient {
             text,
             client_metadata: Some(client_metadata),
             access_programs: None,
+            generation: controls.map(|c| c.generation.clone()).unwrap_or_default(),
         };
         Ok(request)
     }
@@ -2361,7 +2394,11 @@ impl ModelClientSession {
                     summary,
                     service_tier,
                     responses_metadata,
-                    /*warmup*/ false,
+                    /*warmup*/
+                    self.client
+                        .request_controls
+                        .as_ref()
+                        .is_some_and(|c| c.generate == Some(false)),
                     current_span_w3c_trace_context(),
                     inference_trace,
                     /*allow_recovery*/ false,
@@ -2374,6 +2411,14 @@ impl ModelClientSession {
                 }
             }
         } else {
+            if self
+                .client
+                .request_controls
+                .as_ref()
+                .is_some_and(|c| c.generate == Some(false))
+            {
+                return Err(CodexErr::InvalidRequest("generate=false requires native WebSocket prewarming; HTTP model generation was not started".into()));
+            }
             self.stream_responses_api(
                 prompt,
                 model_info,

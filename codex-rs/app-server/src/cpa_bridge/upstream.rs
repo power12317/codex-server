@@ -41,7 +41,6 @@ struct Observed {
     closed: bool,
     // Nonterminal events, including tool-ready events, are never held here.
     terminal_events: Vec<Vec<u8>>,
-    image_body: Vec<u8>,
     error: Option<NativeErrorResponse>,
 }
 
@@ -104,12 +103,6 @@ impl NativeObservation {
                 }
             }
         } else {
-            if self.images {
-                self.ready(&mut state);
-                let _ = self
-                    .business
-                    .send(Business::Event(std::mem::take(&mut state.image_body)));
-            }
             for bytes in std::mem::take(&mut state.terminal_events) {
                 let _ = self.business.send(Business::Event(bytes));
             }
@@ -241,13 +234,6 @@ impl TransportObserver for NativeObservation {
         });
     }
     fn body(&self, transport: &str, bytes: &[u8]) {
-        if self.images {
-            self.state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .image_body
-                .extend_from_slice(bytes);
-        }
         self.notify(CpaInferenceUpstreamNotification::Body {
             request_id: self.request_id.clone(),
             transport: transport.into(),
@@ -274,6 +260,18 @@ impl TransportObserver for NativeObservation {
 }
 
 impl ResponsesObserver for NativeObservation {
+    fn accepted_image(&self, bytes: &[u8]) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+        self.ready(&mut state);
+        let _ = self.business.send(Business::Event(bytes.to_vec()));
+    }
+
     fn accepted_event(&self, payload: &str) {
         if let Some(analytics) = self.analytics.get() {
             analytics.event(payload);

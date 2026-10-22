@@ -275,7 +275,10 @@ impl CpaBridge {
         if image_endpoint {
             codex_http_client::observation::observe_transport(
                 observation.clone(),
-                images::execute(provider.clone(), &self.config, params, session),
+                codex_api::observation::observe_responses(
+                    observation.clone(),
+                    images::execute(provider.clone(), &self.config, params, session),
+                ),
             )
             .await
         } else {
@@ -333,7 +336,7 @@ fn failure(status: u16, message: &str) -> JSONRPCErrorError {
         code: -32000,
         message: message.into(),
         data: Some(
-            json!({"httpStatus": status, "body": json!({"error":{"message":message,"type":"native_model_error"}}).to_string(), "headers": {}}),
+            json!({"httpStatus": status, "body": json!({"error":{"message":message,"type":"request_adaptation_error"}}).to_string(), "headers": {}}),
         ),
     }
 }
@@ -358,6 +361,12 @@ fn native_failure(error: &codex_protocol::error::CodexErr) -> JSONRPCErrorError 
         });
     let mut result = failure(status, &error.to_string());
     if let Some(data) = result.data.as_mut() {
+        if !matches!(error.details(), CodexErrorDetails::InvalidRequest(_)) {
+            data["body"] = json!(
+                json!({"error":{"message":error.to_string(),"type":"native_model_error"}})
+                    .to_string()
+            );
+        }
         data["nativeError"] = json!(error.to_codex_protocol_error());
         if let CodexErrorDetails::UnexpectedStatus(details) = error.details() {
             data["body"] = json!(details.body);
@@ -375,11 +384,11 @@ fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
         &params.source_format,
         &params.session_id,
     ] {
-        if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        if value.is_empty() {
             return Err(failure(/*status*/ 400, "Invalid request identity"));
         }
     }
-    if params.credential_id.is_empty() || params.credential_id.len() > 4096 {
+    if params.credential_id.is_empty() {
         return Err(failure(/*status*/ 400, "Invalid credentialId"));
     }
     if matches!(
@@ -399,19 +408,6 @@ fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
     }
     if params.image_api.is_some() {
         return Err(failure(400, "imageApi is only valid for image operations"));
-    }
-    let r = &params.request;
-    if r.contains_key("previous_response_id")
-        || r.contains_key("conversation")
-        || r.contains_key("generate")
-        || r.get("store").is_some_and(|v| v != &Value::Bool(false))
-        || r.get("background")
-            .is_some_and(|v| v != &Value::Bool(false))
-    {
-        return Err(failure(
-            /*status*/ 400,
-            "Persistent sessions, generation control, storage and background responses are unsupported",
-        ));
     }
     // Caller transport/auth/device metadata is sanitized during native request preparation.
     // Business Responses fields remain available to the worker-owned request builder.

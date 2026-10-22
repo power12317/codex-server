@@ -127,7 +127,7 @@ pub(super) async fn business(
     cancellation: &CancellationToken,
     mut receiver: UnboundedReceiver<Business>,
 ) {
-    let content_type = if params.image_api == Some(CpaImageApi::Images) {
+    let mut content_type = if params.image_api == Some(CpaImageApi::Images) {
         "application/json"
     } else {
         "text/event-stream"
@@ -148,6 +148,22 @@ pub(super) async fn business(
         match message {
             Some(Business::Ready(headers)) => {
                 if !started {
+                    if params.image_api == Some(CpaImageApi::Images) {
+                        content_type = if headers
+                            .get(axum::http::header::CONTENT_TYPE)
+                            .and_then(|value| value.to_str().ok())
+                            .is_some_and(|value| {
+                                value.to_ascii_lowercase().contains("text/event-stream")
+                            }) {
+                            "text/event-stream"
+                        } else {
+                            "application/json"
+                        };
+                        stream = response_stream::ResponseStream::new(
+                            identities(params, session),
+                            content_type,
+                        );
+                    }
                     outgoing
                         .send_response(
                             id.clone(),

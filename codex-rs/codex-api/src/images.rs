@@ -14,6 +14,8 @@ pub struct ImageGenerationRequest {
     pub quality: Option<ImageQuality>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    #[serde(flatten)]
+    pub options: ImageRequestOptions,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -29,6 +31,31 @@ pub struct ImageEditRequest {
     pub quality: Option<ImageQuality>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    #[serde(flatten)]
+    pub options: ImageRequestOptions,
+}
+
+/// Standalone image controls shared by the native unary and streaming backends.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ImageRequestOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<ImageReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_compression: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_images: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_fidelity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moderation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

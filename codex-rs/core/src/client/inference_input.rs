@@ -1,83 +1,164 @@
 //! Convert Responses output envelopes to the same typed history used by the native client.
-//! Only response-only fields understood here may be omitted; arbitrary extensions still fail.
+//! Display metadata is consumed; business items and tool associations remain native inputs.
+use anyhow::Context;
+use codex_protocol::ResponseItemId;
 use codex_protocol::models::ResponseItem;
-use serde::Deserialize;
 use serde_json::Value;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OutputStatus {
-    InProgress,
-    Completed,
-    Incomplete,
-}
-
-#[derive(Deserialize)]
-struct OutputTextMetadata {
-    #[serde(default)]
-    annotations: Option<Vec<Value>>,
-    #[serde(default)]
-    logprobs: Option<Vec<Value>>,
-}
+use serde_json::json;
 
 pub(super) fn parse(items: &[Value]) -> anyhow::Result<Vec<ResponseItem>> {
-    items
-        .iter()
-        .enumerate()
-        .map(|(index, original)| {
-            let item: ResponseItem = serde_json::from_value(original.clone())?;
-            let native = serde_json::to_value(&item)?;
-            let mut history = original.clone();
-            let path = format!("input[{index}]");
-            if matches!(
-                item,
-                ResponseItem::Message { .. }
-                    | ResponseItem::FunctionCall { .. }
-                    | ResponseItem::FunctionCallOutput { .. }
-                    | ResponseItem::CustomToolCallOutput { .. }
-                    | ResponseItem::Reasoning { .. }
-                    | ResponseItem::Compaction { .. }
-                    | ResponseItem::ContextCompaction { .. }
-            ) && let Some(status) = history.get("status")
-            {
-                let _: Option<OutputStatus> =
-                    serde_json::from_value(status.clone()).map_err(|error| {
-                        anyhow::anyhow!("invalid response output status at {path}: {error}")
-                    })?;
-                if let Some(fields) = history.as_object_mut() {
-                    fields.remove("status");
+    let mut normalized = items.to_vec();
+    // Only input-local, still-unanswered calls can supply an omitted association.
+    // Never invent a call ID from a display item ID or from another thread.
+    let mut pending: Vec<(String, String, Option<String>, bool)> = Vec::new();
+    for (index, history) in normalized.iter_mut().enumerate() {
+        let path = format!("input[{index}]");
+        let fields = history
+            .as_object_mut()
+            .with_context(|| format!("{path} must be an object"))?;
+        if !fields.contains_key("type") && fields.contains_key("role") {
+            fields.insert("type".into(), json!("message"));
+        }
+        if fields.get("type").and_then(Value::as_str) == Some("message") {
+            if let Some(content) = fields.get_mut("content") {
+                if content.is_string() {
+                    *content = json!([{"type":"input_text","text":content}]);
                 }
-            }
-            if matches!(item, ResponseItem::Compaction { .. })
-                && history["type"] == "compaction_summary"
-            {
-                history["type"] = Value::String("compaction".into());
-            }
-            if matches!(item, ResponseItem::Message { .. })
-                && let Some(content) = history.get_mut("content").and_then(Value::as_array_mut)
-            {
-                for part in content {
-                    if part["type"] == "output_text" {
-                        let metadata: OutputTextMetadata = serde_json::from_value(part.clone())?;
-                        // Native output_text history retains its text, while annotations/logprobs
-                        // describe the emitted response rather than input instructions.
-                        let _ = (metadata.annotations, metadata.logprobs);
-                        if let Some(fields) = part.as_object_mut() {
-                            fields.remove("annotations");
-                            fields.remove("logprobs");
+                if let Some(parts) = content.as_array_mut() {
+                    for part in parts {
+                        if let Some(part) = part.as_object_mut() {
+                            if !part.contains_key("type") && part.contains_key("text") {
+                                part.insert("type".into(), json!("input_text"));
+                            }
+                            part.remove("annotations");
+                            part.remove("logprobs");
                         }
                     }
                 }
             }
-            // Native reasoning serialization intentionally omits non-text content. Deserialization
-            // above still validates that field against ReasoningItemContent.
-            if matches!(item, ResponseItem::Reasoning { .. })
-                && native.get("content").is_none()
-                && let Some(fields) = history.as_object_mut()
-            {
-                fields.remove("content");
+        }
+        if fields.get("type").and_then(Value::as_str) == Some("compaction_summary") {
+            fields.insert("type".into(), json!("compaction"));
+        }
+        // Status on response envelopes describes display/lifecycle, not historical
+        // function output. Native custom-call status has input semantics of its own.
+        if !matches!(
+            fields.get("type").and_then(Value::as_str),
+            Some("custom_tool_call" | "local_shell_call" | "tool_search_call")
+        ) {
+            fields.remove("status");
+        }
+        let kind = fields
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if matches!(kind.as_str(), "function_call" | "custom_tool_call") {
+            if let (Some(id), Some(name)) = (
+                fields.get("call_id").and_then(Value::as_str),
+                fields.get("name").and_then(Value::as_str),
+            ) {
+                pending.push((
+                    id.into(),
+                    name.into(),
+                    fields
+                        .get("namespace")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    kind == "custom_tool_call",
+                ));
             }
-            super::preserve_input_fields(&history, &native, &path)?;
+        } else if matches!(
+            kind.as_str(),
+            "function_call_output" | "custom_tool_call_output"
+        ) {
+            let custom = kind == "custom_tool_call_output";
+            if fields
+                .get("call_id")
+                .is_none_or(|v| v.is_null() || v.as_str() == Some(""))
+            {
+                let name = fields.get("name").and_then(Value::as_str);
+                let namespace = fields.get("namespace").and_then(Value::as_str);
+                let candidates: Vec<_> = pending
+                    .iter()
+                    .filter(|(_, n, ns, c)| {
+                        *c == custom
+                            && name.is_none_or(|name| name == n)
+                            && namespace.is_none_or(|namespace| Some(namespace) == ns.as_deref())
+                    })
+                    .collect();
+                if candidates.len() == 1 {
+                    fields.insert("call_id".into(), json!(candidates[0].0));
+                } else if candidates.len() > 1 {
+                    anyhow::bail!(
+                        "{path} has ambiguous tool output: more than one unfinished call matches"
+                    );
+                }
+            }
+            if let Some(id) = fields.get("call_id").and_then(Value::as_str) {
+                if let Some(index) = pending
+                    .iter()
+                    .position(|(candidate, _, _, _)| candidate == id)
+                {
+                    let (_, name, namespace, call_custom) = &pending[index];
+                    anyhow::ensure!(
+                        *call_custom == custom
+                            && fields
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .is_none_or(|n| n == name)
+                            && fields
+                                .get("namespace")
+                                .and_then(Value::as_str)
+                                .is_none_or(|ns| Some(ns) == namespace.as_deref()),
+                        "{path} contradicts the identified tool call"
+                    );
+                    pending.remove(index);
+                }
+            }
+        } else if matches!(kind.as_str(), "compaction" | "context_compaction") {
+            pending.clear();
+        }
+        if fields.get("type").and_then(Value::as_str) == Some("reasoning") {
+            fields.entry("summary").or_insert_with(|| json!([]));
+        }
+    }
+    super::super::inference_context::TimeContext::now().apply(&mut normalized);
+    normalized
+        .into_iter()
+        .enumerate()
+        .map(|(index, history)| {
+            let path = format!("input[{index}]");
+            let mut item: ResponseItem =
+                serde_json::from_value(history).with_context(|| format!("invalid {path}"))?;
+            anyhow::ensure!(
+                !matches!(item, ResponseItem::Other),
+                "{path} contains an unknown business item type; its contents were not discarded"
+            );
+            match &item {
+                ResponseItem::FunctionCall { call_id, name, .. } => anyhow::ensure!(
+                    !call_id.is_empty() && !name.is_empty(),
+                    "{path} requires a tool name and call_id"
+                ),
+                ResponseItem::FunctionCallOutput { call_id, name, .. } => anyhow::ensure!(
+                    call_id.as_deref().is_some_and(|id| !id.is_empty()) || name.as_deref().is_some_and(|name| !name.is_empty()),
+                    "{path} requires call_id or an explicit native tool name; no association can be inferred"
+                ),
+                ResponseItem::CustomToolCall { call_id, .. }
+                | ResponseItem::CustomToolCallOutput { call_id, .. } => anyhow::ensure!(
+                    !call_id.is_empty(),
+                    "{path} requires call_id; no tool association can be inferred"
+                ),
+                _ => {}
+            }
+            if let Some(prefix) = item.id_prefix()
+                && let Some(id) = item.id()
+                && let Some((actual, suffix)) = id.split_once('_')
+                && !suffix.is_empty()
+                && actual != prefix
+            {
+                item.set_id(Some(ResponseItemId::with_suffix(prefix, suffix)));
+            }
             Ok(item)
         })
         .collect()
@@ -115,13 +196,35 @@ mod tests {
     }
 
     #[test]
-    fn response_adapter_rejects_unknown_or_invalid_fields() {
+    fn tool_outputs_infer_only_an_unambiguous_unfinished_call() {
+        let call =
+            json!({"type":"function_call","name":"Read","call_id":"call-1","arguments":"{}"});
+        let result = json!({"type":"function_call_output","output":"file contents"});
+        let parsed = parse(&[call.clone(), result.clone()]).unwrap();
+        assert_eq!(
+            serde_json::to_value(&parsed[1]).unwrap()["call_id"],
+            "call-1"
+        );
+        let mut second = call.clone();
+        second["call_id"] = json!("call-2");
+        assert!(
+            parse(&[call.clone(), second, result.clone()])
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert!(parse(&[result]).is_err());
+    }
+
+    #[test]
+    fn display_metadata_is_consumed_but_business_items_and_call_ids_are_required() {
+        let displayed = json!({"role":"assistant","status":"displayed","metadata":{"ui":true},"content":[{"type":"output_text","text":"a","annotations":"display extension","logprobs":{}}]});
+        let parsed = parse(&[displayed]).unwrap();
+        assert!(matches!(parsed[0], ResponseItem::Message { .. }));
         for item in [
-            json!({"type":"message","role":"assistant","status":"invented","content":[]}),
-            json!({"type":"message","role":"assistant","future":1,"content":[]}),
-            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"a","annotations":"invalid"}]}),
-            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"a","future":1}]}),
-            json!({"type":"compaction_trigger","status":"completed"}),
+            json!({"type":"unknown_business","content":"must not disappear"}),
+            json!({"type":"function_call_output","output":"missing association"}),
+            json!({"type":"message","role":"user","content":12}),
         ] {
             assert!(parse(&[item]).is_err());
         }

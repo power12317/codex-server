@@ -146,7 +146,7 @@ pub(crate) struct SafetyBufferingTreatment {
     pub faster_model: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningContext {
     Auto,
@@ -182,34 +182,74 @@ where
     effort.serialize(serializer)
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningSummaryDelivery {
     SequentialCutoff,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StreamOptions {
     pub reasoning_summary_delivery: ReasoningSummaryDelivery,
 }
 
-#[derive(Debug, Serialize, Default, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TextFormatType {
     #[default]
     JsonSchema,
 }
 
-#[derive(Debug, Serialize, Default, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct TextFormat {
     /// Format type used by the OpenAI text controls.
     pub r#type: TextFormatType,
     /// When true, the server is expected to strictly validate responses.
+    #[serde(default)]
     pub strict: bool,
     /// JSON schema for the desired output.
     pub schema: Value,
     /// Friendly name for the format, used in telemetry/debugging.
+    #[serde(default = "default_output_schema_name")]
     pub name: String,
+}
+
+fn default_output_schema_name() -> String {
+    "codex_output_schema".into()
+}
+
+/// Native text formats shared by model-only callers and the ordinary Agent builder.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ResponsesTextFormat {
+    Schema(TextFormat),
+    Plain { r#type: PlainTextFormat },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlainTextFormat {
+    Text,
+    JsonObject,
+}
+
+/// Optional business controls. These are native DTO fields, not a serialized-body overlay.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ResponsesGenerationOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_retention: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safety_identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 /// Controls the `text` field for the Responses API, combining verbosity and
@@ -219,7 +259,7 @@ pub struct TextControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verbosity: Option<OpenAiVerbosity>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub format: Option<TextFormat>,
+    pub format: Option<ResponsesTextFormat>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, PartialEq)]
@@ -286,7 +326,7 @@ pub struct ResponsesApiRequest {
     pub input: Vec<ResponseItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ResponsesApiTools>,
-    pub tool_choice: String,
+    pub tool_choice: Value,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
     pub store: bool,
@@ -301,6 +341,8 @@ pub struct ResponsesApiRequest {
     pub client_metadata: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_programs: Option<AccessPrograms>,
+    #[serde(flatten)]
+    pub generation: ResponsesGenerationOptions,
 }
 
 impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
@@ -323,6 +365,7 @@ impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
             generate: None,
             client_metadata: request.client_metadata.clone(),
             access_programs: request.access_programs,
+            generation: &request.generation,
         }
     }
 }
@@ -340,7 +383,7 @@ pub struct ResponseCreateWsRequest<'a> {
     pub input: &'a [ResponseItem],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<&'a RawValue>,
-    pub tool_choice: &'a str,
+    pub tool_choice: &'a Value,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<&'a Reasoning>,
     pub store: bool,
@@ -357,6 +400,8 @@ pub struct ResponseCreateWsRequest<'a> {
     pub client_metadata: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_programs: Option<AccessPrograms>,
+    #[serde(flatten)]
+    pub generation: &'a ResponsesGenerationOptions,
 }
 
 pub fn response_create_client_metadata(
@@ -400,11 +445,13 @@ pub fn create_text_param_for_request(
 
     Some(TextControls {
         verbosity: verbosity.map(std::convert::Into::into),
-        format: output_schema.as_ref().map(|schema| TextFormat {
-            r#type: TextFormatType::JsonSchema,
-            strict: output_schema_strict,
-            schema: schema.clone(),
-            name: "codex_output_schema".to_string(),
+        format: output_schema.as_ref().map(|schema| {
+            ResponsesTextFormat::Schema(TextFormat {
+                r#type: TextFormatType::JsonSchema,
+                strict: output_schema_strict,
+                schema: schema.clone(),
+                name: "codex_output_schema".to_string(),
+            })
         }),
     })
 }

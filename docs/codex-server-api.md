@@ -179,17 +179,24 @@ name with one available to the account:
 | Field          | Requirements and meaning                                                                                                                                                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | RPC `id`       | Correlates this control reply. It is distinct from the inference `requestId`.                                                                                                                                                             |
-| `requestId`    | Nonempty string, at most 256 bytes, without control characters. Active IDs must be unique on one connection until both business and diagnostics end. A new connection may reuse an ID while an older connection still drains diagnostics. |
-| `credentialId` | Existing enabled relative credential filename, at most 4096 bytes.                                                                                                                                                                        |
+| `requestId`    | Nonempty JSON string. Active IDs must be unique on one connection until both business and diagnostics end. A new connection may reuse an ID while an older connection still drains diagnostics. |
+| `credentialId` | Existing enabled relative credential filename.                                                                                                                                                                        |
 | `operation`    | `responses`, `images/generations` or `images/edits`.                                                                                                                                                                                      |
-| `sourceFormat` | Nonempty label, at most 256 bytes, without control characters; `openai-response` is used here. It does not convert Chat/Claude envelopes.                                                                                                 |
-| `sessionId`    | Nonempty caller isolation scope, at most 256 bytes, without control characters. Keep it stable across requests belonging to the same logical scope.                                                                                       |
+| `sourceFormat` | Nonempty source label; `openai-response` is used here. It does not convert Chat/Claude envelopes.                                                                                                 |
+| `sessionId`    | Nonempty caller isolation scope. Keep it stable across requests belonging to the same logical scope.                                                                                       |
 | `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; `stream` is a downstream delivery preference. Image operations use the contract below.                                                              |
 
-For `operation: "responses"`, pass all required history in `request.input`. `previous_response_id`,
-`conversation` and `generate` are rejected even if null. If supplied, `store`
-and `background` must be exactly `false`. A client needing a final JSON result
-can parse the complete SSE payload delivered after native success.
+For `operation: "responses"`, pass required history in `request.input`. Non-null
+`previous_response_id` and `conversation` require history reconstruction by the
+caller; null references are treated as absent. `generate: false` uses native WS
+prewarming and fails specifically on an HTTP-only worker without generating.
+`store` enters the native request without creating a local conversation;
+`background: true` needs an asynchronous retrieval lifecycle not provided here.
+Explicit `tool_choice`, `parallel_tool_calls`, `include` (including `[]`) and
+text/structured-output controls are preserved by the native builder. Client
+transport/timing mirrors and display metadata are consumed or regenerated.
+Unknown business controls, including `top_k` and `prompt_cache_options`, are
+reported as specific compatibility gaps.
 
 Supported tools include native `function`, `custom`, `namespace`, `web_search`,
 `tool_search` and hosted `image_generation`, with the detailed field policy in the
@@ -225,9 +232,11 @@ or alternate sender.
 
 Standalone Images uses the existing native `CodexImagesBackend`. Generation
 accepts `model`, `prompt`, `background`, `n`, `quality` and `size`; edits also
-require `images`. A supplied `stream` is only a downstream preference and is not
-sent in the native Images DTO. Mask, partial-image and output-format/compression
-extensions are unsupported. Absent `n` stays absent.
+require `images` and accept `mask` references. Supplied `stream`, `partial_images`,
+`output_format` and `output_compression` enter the native DTO without being erased.
+Other native options include `response_format`, `input_fidelity`, `moderation` and
+`user`. Omitted options, including `n`, stay absent. Unknown business options and
+malformed types receive specific compatibility errors.
 
 Multipart editing is converted by the caller into native image references,
 for example `images: [{"image_url":"data:image/png;base64,..."}]`. The worker
@@ -235,7 +244,8 @@ preserves the supplied image order, duplicate entries and base64 content.
 
 Responses delivers accepted SSE events incrementally through
 `cpa/inference/event`, including supported hosted image events. Standalone Images
-uses the native unary backend and emits its validated JSON as one business event.
+uses the native Images backend: validated JSON is one business event; native image
+SSE partials stream immediately and require an image completed event for success.
 Both end with payload-free `cpa/inference/completed` after native success.
 Failures before start use the RPC error; later native failure/cancellation uses
 `cpa/inference/error`. Attempts and client-tool handoff follow the rules below.
@@ -285,8 +295,8 @@ because its image was rebuilt.
 
 ## Completion delivery
 
-The start reply is sent after native model execution succeeds. It contains the
-response status and public headers:
+The start reply is sent when accepted native business output is ready. It does not wait for completion
+or diagnostic drain. It contains the response status and public headers:
 
 ```json
 {
@@ -320,7 +330,8 @@ traceable from a CPA request without adding a public protocol field.
 Register handlers before sending the request. Different requests can interleave.
 Header values are arrays of strings. Start replies as soon as the first accepted
 business event is available, before native completion. Responses bytes are SSE;
-standalone Images bytes are native unary JSON. Decode every business frame once.
+standalone Images bytes use the actual native JSON or image SSE representation.
+Decode every business frame once.
 The completion notification never contains `bodyBase64`.
 
 Accepted text, tool-argument deltas, argument `.done` and client-tool

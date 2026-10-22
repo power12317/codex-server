@@ -14,6 +14,8 @@ pub trait ResponsesObserver: Send + Sync {
     /// The parser has accepted this event. Completion remains a native typed event;
     /// observing bytes alone never authorizes a caller to report model success.
     fn accepted_event(&self, payload: &str);
+    /// Image bytes accepted by the native Images parser, independent of diagnostics.
+    fn accepted_image(&self, _bytes: &[u8]) {}
 }
 
 tokio::task_local! {
@@ -76,4 +78,8 @@ pub(crate) fn observe_processed_event(
 
 pub(crate) fn observe_failed_event(payload: &str, error: &crate::ApiError) {
     let _ = OBSERVER.try_with(|observer| observer.failed_event(payload, error));
+}
+
+pub(crate) fn observe_image(bytes: &[u8]) {
+    let _ = OBSERVER.try_with(|observer| observer.accepted_image(bytes));
 }

@@ -125,6 +125,37 @@ impl CodexImagesBackend {
         ))
     }
 
+    /// One native Images invocation with parser-owned JSON/SSE completion.
+    pub async fn generate_live_once(
+        &self,
+        request: ImageGenerationRequest,
+        turn_id: &str,
+    ) -> Result<(), ImageBackendError> {
+        self.client_once("/images/generations")
+            .await?
+            .generate_live(
+                &request,
+                image_request_headers(self.originator.as_deref(), turn_id),
+            )
+            .await
+            .map_err(ImageBackendError::from_image_request)
+    }
+
+    pub async fn edit_live_once(
+        &self,
+        request: ImageEditRequest,
+        turn_id: &str,
+    ) -> Result<(), ImageBackendError> {
+        self.client_once("/images/edits")
+            .await?
+            .edit_live(
+                &request,
+                image_request_headers(self.originator.as_deref(), turn_id),
+            )
+            .await
+            .map_err(ImageBackendError::from_image_request)
+    }
+
     /// Native unary generation with an external retry owner.
     pub async fn generate_once(
         &self,

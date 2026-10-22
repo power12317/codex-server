@@ -44,30 +44,6 @@ impl InferenceIdentity {
     }
 
     pub fn map(&self, scope: &str) -> anyhow::Result<InferenceMapping> {
-        for value in [
-            &self.session_id,
-            &self.thread_id,
-            &self.parent_thread_id,
-            &self.turn_id,
-            &self.parent_turn_id,
-            &self.root_turn_id,
-            &self.prompt_cache_key,
-            &self.window_id,
-            &self.context_window_id,
-            &self.thread_source,
-            &self.subagent_kind,
-            &self.subagent_header,
-            &self.agent_name,
-            &self.request_kind,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            anyhow::ensure!(
-                value.len() <= 4096 && !value.chars().any(char::is_control),
-                "Invalid inference identity: maximum 4096 bytes, no control characters"
-            );
-        }
         let namespace = Uuid::new_v5(&Uuid::NAMESPACE_OID, scope.as_bytes());
         let session = Uuid::new_v5(&namespace, &serde_json::to_vec(&self.session_key())?);
         let map_thread = |thread: Option<&str>| -> anyhow::Result<String> {
@@ -252,12 +228,11 @@ impl InferenceSession {
                 "thread_title".into(),
             ))
         } else {
-            source
-                .thread_source
-                .as_deref()
-                .map(str::parse)
-                .transpose()
-                .map_err(anyhow::Error::msg)?
+            source.thread_source.as_deref().map(|value| {
+                value.parse().unwrap_or_else(|_| {
+                    codex_protocol::protocol::ThreadSource::Feature(value.into())
+                })
+            })
         };
         metadata.subagent_kind.clone_from(&source.subagent_kind);
         metadata.subagent_header = subagent;

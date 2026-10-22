@@ -17,6 +17,28 @@ fn normalizes_function_envelopes_without_losing_schema_or_choice() {
 }
 
 #[test]
+fn infers_function_wrappers_and_consumes_null_optional_controls() {
+    let parameters =
+        json!({"type":"object","properties":{"query":{"type":"string","pattern":"[a-z]+"}}});
+    for tool in [
+        json!({"name":"lookup","parameters":parameters,"strict":null,"defer_loading":null}),
+        json!({"function":{"type":"function","name":"lookup","input_schema":parameters,"strict":null,"defer_loading":null}}),
+    ] {
+        let request =
+            json!({"tools":[tool],"tool_choice":{"function":{"name":"lookup"},"namespace":null}});
+        let parsed = InferenceTools::parse(request.as_object().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(parsed.native).unwrap(),
+            json!([{"type":"function","name":"lookup","description":"","parameters":parameters,"strict":false}])
+        );
+        assert_eq!(
+            parsed.choice,
+            Some(json!({"type":"function","name":"lookup"}))
+        );
+    }
+}
+
+#[test]
 fn caller_schemas_are_preserved_in_all_function_envelopes_and_native_serializers() {
     let parameters = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",

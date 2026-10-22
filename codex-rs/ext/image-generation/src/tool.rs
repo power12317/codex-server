@@ -436,6 +436,7 @@ async fn request_for_call_args(
                 n: None,
                 quality: Some(ImageQuality::Auto),
                 size: Some("auto".to_string()),
+                options: Default::default(),
             }));
         }
         (false, None) => {
@@ -480,6 +481,7 @@ async fn request_for_call_args(
         n: None,
         quality: Some(ImageQuality::Auto),
         size: Some("auto".to_string()),
+        options: Default::default(),
     }))
 }
 

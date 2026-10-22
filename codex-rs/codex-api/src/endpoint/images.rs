@@ -1,3 +1,5 @@
+mod live;
+
 use crate::auth::SharedAuthProvider;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
@@ -293,6 +295,7 @@ mod tests {
                     n: None,
                     quality: Some(ImageQuality::Medium),
                     size: Some("1024x1536".to_string()),
+                    options: Default::default(),
                 },
                 HeaderMap::new(),
             )
@@ -342,6 +345,7 @@ mod tests {
                     n: None,
                     quality: None,
                     size: None,
+                    options: Default::default(),
                 },
                 HeaderMap::new(),
             )
@@ -380,6 +384,7 @@ mod tests {
                     n: None,
                     quality: None,
                     size: None,
+                    options: Default::default(),
                 },
                 HeaderMap::new(),
             )
@@ -420,6 +425,7 @@ mod tests {
                     n: None,
                     quality: None,
                     size: None,
+                    options: Default::default(),
                 },
                 HeaderMap::new(),
             )

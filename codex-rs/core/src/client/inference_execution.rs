@@ -35,45 +35,10 @@ impl InferenceSession {
         request: &Map<String, Value>,
         observer: Arc<dyn InferenceObserver>,
     ) -> Result<()> {
-        let caller = request;
         let request = InferenceRequest::parse(config, request)
             .map_err(|error| CodexErr::InvalidRequest(format!("{error:#}")))?;
-        // Select supported native client configuration, then validate derived controls
-        // with the same builder read-only. Never modify the serialized native DTO.
-        let configured_client = self.client.clone().with_model_verbosity(request.verbosity);
-        let native = configured_client.build_responses_request(
-            &request.prompt,
-            model,
-            request.effort.clone(),
-            request.summary,
-            request.service_tier.clone(),
-            &self.metadata,
-            false,
-        )?;
-        let native = serde_json::to_value(native)?;
-        for (object, key) in [("reasoning", "context"), ("text", "verbosity")] {
-            if let Some(value) = caller.get(object).and_then(|object| object.get(key))
-                && native[object][key] != *value
-            {
-                return Err(CodexErr::InvalidRequest(format!(
-                    "{object}.{key} does not match native model configuration"
-                )));
-            }
-        }
-        if let Some(value) = caller.get("client_metadata").and_then(|metadata| {
-            metadata.get("ws_request_header_x_openai_internal_codex_responses_lite")
-        }) {
-            let expected = if model.use_responses_lite {
-                "true"
-            } else {
-                "false"
-            };
-            if value.as_str() != Some(expected) {
-                return Err(CodexErr::InvalidRequest(
-                    "caller Lite metadata does not match native model configuration".into(),
-                ));
-            }
-        }
+        let mut configured_client = self.client.clone();
+        configured_client.request_controls = Some(Arc::new(request.controls));
         let telemetry = SessionTelemetry::new(
             ThreadId::from_string(&self.metadata.thread_id)
                 .map_err(|error| CodexErr::InvalidRequest(error.to_string()))?,

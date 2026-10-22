@@ -419,3 +419,165 @@ async fn cpa_native_failed_event_returns_before_upstream_eof(
     source.await??;
     Ok(())
 }
+
+#[tokio::test]
+async fn cpa_native_image_partial_precedes_completion_without_waiting_for_eof() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["base_url"] =
+        toml::Value::String(format!("http://{address}/v1"));
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let (release, wait) = oneshot::channel();
+    let (allow_eof, eof_gate) = oneshot::channel();
+    let source = tokio::spawn(async move {
+        let mut image_socket = loop {
+            let (mut socket, _) = listener.accept().await?;
+            let bytes = http_request(&mut socket).await?;
+            if bytes.starts_with(b"POST /v1/images/generations ") {
+                let start = bytes.windows(4).position(|v| v == b"\r\n\r\n").unwrap() + 4;
+                let request: Value = serde_json::from_slice(&bytes[start..])?;
+                anyhow::ensure!(request["stream"] == true && request["partial_images"] == 2);
+                break socket;
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await?;
+        };
+        image_socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await?;
+        let partial = "data: {\"type\":\"image_generation.partial_image\",\"partial_image_index\":0,\"b64_json\":\"partial\"}\n\n";
+        image_socket
+            .write_all(format!("{:x}\r\n{partial}\r\n", partial.len()).as_bytes())
+            .await?;
+        wait.await?;
+        let completed =
+            "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"complete\"}\n\n";
+        image_socket
+            .write_all(format!("{:x}\r\n{completed}\r\n", completed.len()).as_bytes())
+            .await?;
+        // Deliberately leave the HTTP body open. The native terminal image event
+        // establishes success; a diagnostic tail or EOF is not a business gate.
+        eof_gate.await?;
+        Ok::<_, anyhow::Error>(())
+    });
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut request = rpc(
+        json!({"model":"gpt-image-2","prompt":"fixture","stream":true,"partial_images":2}),
+        8300,
+    );
+    request["params"]["operation"] = json!("images/generations");
+    request["params"]["imageApi"] = json!("images");
+    send(&mut ws, request).await?;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = read_message(&mut ws).await?;
+            if message["method"] == "cpa/inference/event" {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(message["params"]["bodyBase64"].as_str().unwrap())?;
+                anyhow::ensure!(
+                    std::str::from_utf8(&bytes)?.contains("image_generation.partial_image")
+                );
+                break;
+            }
+            anyhow::ensure!(
+                message["method"] != "cpa/inference/error" && message.get("error").is_none(),
+                "{message}"
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+    release.send(()).unwrap();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let message = read_message(&mut ws).await?;
+            if message["method"] == "cpa/inference/completed" {
+                break;
+            }
+            anyhow::ensure!(message["method"] != "cpa/inference/error", "{message}");
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+    allow_eof.send(()).unwrap();
+    source.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_native_generate_false_uses_native_websocket_warmup() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let config_path = home.path().join("state/shared.json/config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    config["model_providers"]["mock_provider"]["base_url"] =
+        toml::Value::String(format!("http://{address}/v1"));
+    config["model_providers"]["mock_provider"]["supports_websockets"] = toml::Value::Boolean(true);
+    std::fs::write(config_path, toml::to_string(&config)?)?;
+    let source = tokio::spawn(async move {
+        let (mut socket, headers) = accept_responses(&listener).await?;
+        let headers = std::str::from_utf8(&headers)?;
+        let key = headers
+            .lines()
+            .filter_map(|l| l.split_once(':'))
+            .find(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-key"))
+            .context("websocket key")?
+            .1
+            .trim();
+        let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+        socket.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await?;
+        let mut ws = WebSocketStream::from_raw_socket(
+            socket,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        let create = ws.next().await.context("warmup request")??;
+        let create: Value = serde_json::from_str(create.to_text()?)?;
+        anyhow::ensure!(
+            create["generate"] == false,
+            "warmup must not generate: {create}"
+        );
+        ws.send(Message::Text(
+            json!({"type":"response.created","response":{"id":"warmup"}})
+                .to_string()
+                .into(),
+        ))
+        .await?;
+        ws.send(Message::Text(
+            json!({"type":"response.completed","response":{"id":"warmup","output":[]}})
+                .to_string()
+                .into(),
+        ))
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    });
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let result = exchange(
+        &mut ws,
+        rpc(
+            json!({"model":"gpt-5.2","input":"warmup only","generate":false}),
+            8500,
+        ),
+    )
+    .await?;
+    assert_eq!(
+        result.reply["result"]["statusCode"], 200,
+        "{}",
+        result.reply
+    );
+    assert!(result.error.is_none(), "{:?}", result.error);
+    source.await??;
+    Ok(())
+}

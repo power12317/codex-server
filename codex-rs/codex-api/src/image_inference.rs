@@ -69,6 +69,7 @@ impl ImageInferenceRequest {
                 n: self.n,
                 quality: self.quality,
                 size: self.size.clone(),
+                options: Default::default(),
             }),
             ImageOperation::Edit => NativeImageRequest::Edit(ImageEditRequest {
                 images: self
@@ -83,6 +84,7 @@ impl ImageInferenceRequest {
                 n: self.n,
                 quality: self.quality,
                 size: self.size.clone(),
+                options: Default::default(),
             }),
         };
         let mut options = self.options.clone();

@@ -1153,7 +1153,6 @@ class CpaImageApi(Enum):
 
 class CpaInferenceCompletedNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     request_id: Annotated[str, Field(alias="requestId")]
@@ -1161,7 +1160,6 @@ class CpaInferenceCompletedNotification(BaseModel):
 
 class CpaInferenceDiagnosticsCompletedNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     request_id: Annotated[str, Field(alias="requestId")]
@@ -1169,7 +1167,6 @@ class CpaInferenceDiagnosticsCompletedNotification(BaseModel):
 
 class CpaInferenceErrorNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     body: str | None = None
@@ -1182,7 +1179,6 @@ class CpaInferenceErrorNotification(BaseModel):
 
 class CpaInferenceEventNotification(BaseModel):
     model_config = ConfigDict(
-        extra="forbid",
         populate_by_name=True,
     )
     body_base64: Annotated[str, Field(alias="bodyBase64")]

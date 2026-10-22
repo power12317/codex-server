@@ -1125,7 +1125,6 @@
       "type": "object"
     },
     "CpaInferenceCompletedNotification": {
-      "additionalProperties": false,
       "properties": {
         "requestId": {
           "type": "string"
@@ -1137,7 +1136,6 @@
       "type": "object"
     },
     "CpaInferenceDiagnosticsCompletedNotification": {
-      "additionalProperties": false,
       "properties": {
         "requestId": {
           "type": "string"
@@ -1149,7 +1147,6 @@
       "type": "object"
     },
     "CpaInferenceErrorNotification": {
-      "additionalProperties": false,
       "description": "Native failure, cancellation or worker loss after the start reply.",
       "properties": {
         "body": {
@@ -1191,7 +1188,6 @@
       "type": "object"
     },
     "CpaInferenceEventNotification": {
-      "additionalProperties": false,
       "properties": {
         "bodyBase64": {
           "type": "string"

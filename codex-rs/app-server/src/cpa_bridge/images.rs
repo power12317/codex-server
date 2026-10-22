@@ -4,6 +4,7 @@ use super::failure;
 use super::native_failure;
 use codex_api::ImageEditRequest;
 use codex_api::ImageGenerationRequest;
+use codex_api::ImageRequestOptions;
 use codex_app_server_protocol::CpaInferenceStartParams;
 use codex_core::InferenceSession;
 use codex_core::config::Config;
@@ -21,23 +22,66 @@ pub(super) async fn execute(
 ) -> BridgeResult<()> {
     let fields = &params.request;
     for key in fields.keys() {
-        if !(matches!(
+        if matches!(
             key.as_str(),
-            "model" | "prompt" | "background" | "n" | "quality" | "size" | "stream"
-        ) || key == "images" && params.operation == "images/edits")
+            "model"
+                | "prompt"
+                | "images"
+                | "mask"
+                | "background"
+                | "n"
+                | "quality"
+                | "size"
+                | "stream"
+                | "output_format"
+                | "output_compression"
+                | "partial_images"
+                | "response_format"
+                | "input_fidelity"
+                | "moderation"
+                | "user"
+                | "metadata"
+                | "client_metadata"
+                | "session_id"
+                | "thread_id"
+                | "turn_id"
+                | "prompt_cache_key"
+                | "headers"
+                | "authorization"
+                | "cookies"
+                | "installation_id"
+                | "account_id"
+        ) || key.starts_with("x-")
         {
-            return Err(failure(
-                400,
-                &format!("field `{key}` is not supported by the native Images API"),
-            ));
+            continue;
+        }
+        return Err(failure(
+            400,
+            &format!("image business option `{key}` has no native mapping"),
+        ));
+    }
+    if params.operation == "images/generations" {
+        for key in ["mask", "images"] {
+            if fields.get(key).is_some_and(|v| !v.is_null()) {
+                return Err(failure(
+                    400,
+                    &format!("{key} belongs to images/edits, not images/generations"),
+                ));
+            }
         }
     }
-    if fields
-        .get("stream")
-        .is_some_and(|value| !value.is_boolean())
-    {
-        return Err(failure(400, "stream must be boolean"));
-    }
+
+    let options = ImageRequestOptions {
+        mask: optional(fields, "mask")?,
+        stream: optional(fields, "stream")?,
+        output_format: optional(fields, "output_format")?,
+        output_compression: optional(fields, "output_compression")?,
+        partial_images: optional(fields, "partial_images")?,
+        response_format: optional(fields, "response_format")?,
+        input_fidelity: optional(fields, "input_fidelity")?,
+        moderation: optional(fields, "moderation")?,
+        user: optional(fields, "user")?,
+    };
     let request = ImageGenerationRequest {
         prompt: required(fields, "prompt")?,
         model: required(fields, "model")?,
@@ -45,6 +89,7 @@ pub(super) async fn execute(
         n: optional(fields, "n")?,
         quality: optional(fields, "quality")?,
         size: optional(fields, "size")?,
+        options,
     };
     let backend = CodexImagesBackend::new(
         provider,
@@ -58,7 +103,7 @@ pub(super) async fn execute(
         .ok_or_else(|| failure(400, "image turn id is required"))?;
     if params.operation == "images/edits" {
         backend
-            .edit_once(
+            .edit_live_once(
                 ImageEditRequest {
                     images: required(fields, "images")?,
                     prompt: request.prompt,
@@ -67,12 +112,13 @@ pub(super) async fn execute(
                     n: request.n,
                     quality: request.quality,
                     size: request.size,
+                    options: request.options,
                 },
                 turn_id,
             )
             .await
     } else {
-        backend.generate_once(request, turn_id).await
+        backend.generate_live_once(request, turn_id).await
     }
     .map(|_| ())
     .map_err(|error| native_failure(error.codex_error()))
@@ -93,8 +139,9 @@ fn optional<T: DeserializeOwned>(
     fields
         .get(key)
         .map(|value| {
-            serde_json::from_value(value.clone())
+            serde_json::from_value::<Option<T>>(value.clone())
                 .map_err(|error| failure(400, &format!("Invalid {key}: {error}")))
         })
         .transpose()
+        .map(Option::flatten)
 }

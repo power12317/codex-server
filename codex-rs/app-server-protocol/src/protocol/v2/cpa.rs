@@ -6,11 +6,11 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaCapabilitiesReadParams {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaCapabilitiesReadResponse {
     pub protocol_version: u32,
@@ -30,7 +30,7 @@ pub struct CpaCapabilitiesReadResponse {
     pub operations: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceStartParams {
     pub request_id: String,
@@ -52,7 +52,7 @@ pub enum CpaImageApi {
     Responses,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceStartResponse {
     pub request_id: String,
@@ -60,36 +60,36 @@ pub struct CpaInferenceStartResponse {
     pub headers: BTreeMap<String, Vec<String>>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceCancelParams {
     pub request_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceCancelResponse {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceCompletedNotification {
     pub request_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceEventNotification {
     pub request_id: String,
     pub body_base64: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceDiagnosticsCompletedNotification {
     pub request_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 /// Native failure, cancellation or worker loss after the start reply.
 pub struct CpaInferenceErrorNotification {
@@ -104,7 +104,7 @@ pub struct CpaInferenceErrorNotification {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaCredentialReloadParams {
     #[ts(optional = nullable)]
@@ -112,14 +112,14 @@ pub struct CpaCredentialReloadParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaAuthLoginStartParams {
     pub credential_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaAuthLoginStartResponse {
     pub login_id: String,
@@ -128,7 +128,7 @@ pub struct CpaAuthLoginStartResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaAuthLoginCallbackParams {
     pub login_id: String,
@@ -136,14 +136,14 @@ pub struct CpaAuthLoginCallbackParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaAuthLoginStatusParams {
     pub login_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaAuthLoginStatusResponse {
     pub status: String,

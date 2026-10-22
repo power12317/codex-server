@@ -77,6 +77,7 @@ async fn omitted_references_generate_with_fixed_defaults() {
             n: None,
             quality: Some(ImageQuality::Auto),
             size: Some("auto".to_string()),
+            options: Default::default(),
         })
     );
 }
@@ -208,6 +209,7 @@ async fn recent_image_fallback_passes_file_backed_image_to_edit_request() {
             n: None,
             quality: Some(ImageQuality::Auto),
             size: Some("auto".to_string()),
+            options: Default::default(),
         })
     );
 }
@@ -263,6 +265,7 @@ async fn recent_image_fallback_passes_file_backed_tool_output_to_edit_request() 
             n: None,
             quality: Some(ImageQuality::Auto),
             size: Some("auto".to_string()),
+            options: Default::default(),
         })
     );
 }
@@ -458,6 +461,7 @@ fn expected_edit_request(prompt: &str, images: &[&str]) -> ImageEditRequest {
         n: None,
         quality: Some(ImageQuality::Auto),
         size: Some("auto".to_string()),
+        options: Default::default(),
     }
 }
 

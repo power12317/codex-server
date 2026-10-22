@@ -10881,7 +10881,6 @@
       },
       "CpaInferenceCompletedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "additionalProperties": false,
         "properties": {
           "requestId": {
             "type": "string"
@@ -10895,7 +10894,6 @@
       },
       "CpaInferenceDiagnosticsCompletedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "additionalProperties": false,
         "properties": {
           "requestId": {
             "type": "string"
@@ -10909,7 +10907,6 @@
       },
       "CpaInferenceErrorNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "additionalProperties": false,
         "description": "Native failure, cancellation or worker loss after the start reply.",
         "properties": {
           "body": {
@@ -10953,7 +10950,6 @@
       },
       "CpaInferenceEventNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "additionalProperties": false,
         "properties": {
           "bodyBase64": {
             "type": "string"

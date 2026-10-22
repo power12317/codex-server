@@ -376,13 +376,17 @@ async fn cpa_native_rejects_unexpressible_fields_without_model_requests() -> Res
     let mut ws = connect(&home).await?;
     for (index, (key, value)) in [
         ("extension", json!(true)),
-        ("tool_choice", json!("required")),
+        (
+            "tool_choice",
+            json!({"type":"function","name":"undeclared"}),
+        ),
         ("previous_response_id", json!("old")),
         ("background", json!(true)),
+        ("generate", json!(false)),
         ("reasoning", json!({"future":1})),
         (
             "input",
-            json!([{"type":"message","role":"user","content":[],"future":1}]),
+            json!([{"type":"unknown_business","content":"must not be lost"}]),
         ),
     ]
     .into_iter()
@@ -486,21 +490,20 @@ async fn cpa_native_images_dto_and_atomic_json_delivery() -> Result<()> {
         );
         assert_eq!(serde_json::from_slice::<Value>(&result.body)?, output);
         let body = wire(&result);
-        assert!(body.get("stream").is_none());
+        assert_eq!(body["stream"], stream);
         assert!(body.get("n").is_none());
     }
-    for key in [
-        "mask",
-        "partial_images",
-        "output_format",
-        "output_compression",
-        "extension",
+    for (key, value) in [
+        ("mask", json!(true)),
+        ("partial_images", json!("invalid")),
+        ("output_compression", json!(false)),
+        ("extension", json!("unsupported business")),
     ] {
         let mut request = rpc(
-            json!({"model":"gpt-image-2","prompt":"fixture",key:"unsupported"}),
+            json!({"model":"gpt-image-2","prompt":"fixture", key:value}),
             159,
         );
-        request["params"]["operation"] = json!("images/generations");
+        request["params"]["operation"] = json!("images/edits");
         request["params"]["imageApi"] = json!("images");
         let result = exchange(&mut ws, request).await?;
         assert_eq!(result.reply["error"]["data"]["httpStatus"], 400);
@@ -943,3 +946,6 @@ async fn cpa_same_request_id_on_new_connection_has_independent_worker_routes() -
     assert_eq!(first_error["error"]["data"]["httpStatus"], 499);
     Ok(())
 }
+
+#[path = "compatibility_tests.rs"]
+mod compatibility_tests;
