@@ -1,6 +1,6 @@
-# Experimental native model execution (IPC v5)
+# Experimental native model execution
 
-This document describes the sole model execution path and IPC v5 contract on
+This document describes the sole model execution path and model-only extensions on
 `codex/native-model-runtime`.
 
 The fixed native reference is Codex `0.162.1`, commit
@@ -87,9 +87,21 @@ unchanged.
 
 ## IPC contract and delivery
 
-The IPC contract is `protocolVersion: 5`. Native model execution is the only
-implementation; there is no execution capability switch, legacy sender or CPA
+The `cpa/*` methods extend the official app-server envelope. Native model execution
+is the only implementation; there is no execution capability switch, legacy sender or CPA
 direct model fallback. The official runtime version remains `0.162.1`.
+
+The root WebSocket path is `/`; the retired versioned bridge route is not an
+alias. Official initialization, health endpoints and authentication behavior are
+retained. Read `cpa/capabilities/read` for actual behavior: `businessNotification`
+is `cpa/inference/event`, `completionSemantics` is `native-terminal`,
+`diagnosticsCompleted` and `responsesWebsocket` are true, and `ticketSnapshots`
+is false. Native WebSocket support still depends on the selected provider/model
+and configuration. A required `captureTicketSnapshot: true` is rejected before
+model execution; absent or false is harmless. Runtime/source metadata never act
+as a private compatibility gate. See the
+[capability comparison](../../../docs/codex-server-api.md#connection-lifecycle)
+for the stable HTTP implementation's different lifecycle and ticket support.
 
 The delivery sequence is:
 
@@ -141,27 +153,27 @@ gate remains. The worker does not execute tools or invent their results.
 
 ## Supported input
 
-| Input                                                                          | Native mapping / constraint                                                                                                                                                                            |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `model`                                                                        | Selects native model information from the worker's model manager.                                                                                                                                      |
-| `input` | Text or native history items. Infer message/text shorthand, consume display metadata, preserve business text, opaque reasoning and call relationships. Unknown business item types and missing call IDs receive specific errors. |
-| `instructions`                                                                 | Native prompt base instructions.                                                                                                                                                                       |
-| Function/custom/namespace tools | Native declarations with complete input and explicit output schemas. Chat/input_schema wrappers normalize without tool-name templates or local executors; missing description and non-strict function defaults are completed. |
-| `web_search`, `tool_search`                                                    | Native declarations; tool-search parameter schemas retain all caller-supplied keywords and nested values.                                                                                              |
-| Hosted `image_generation` declaration                                          | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry.                                                                                 |
-| `tool_choice` | Native `auto`, `none`, `required`, and declared function/custom/namespace or hosted choices. Selection must reference a declared tool. |
-| `parallel_tool_calls` | Explicit booleans remain explicit, including Lite; omitted values use native defaults. |
-| `reasoning.effort`, `reasoning.summary`                                        | Native request controls; defaults come from worker configuration/native model policy.                                                                                                                  |
-| `reasoning.context` | Explicit native `auto`, `current_turn` or `all_turns`; absence uses native derivation. Old client Lite mirrors are consumed, not equality gates. |
-| `text.format` | `text`, `json_object` or `json_schema`; complete schema, explicit strictness and caller name are retained. An omitted schema name uses the native name. |
-| `text.verbosity` | Explicit verbosity enters native request controls; absence uses worker/model defaults. |
-| `service_tier` | Explicit tiers are retained; omission uses worker configuration/native defaults. |
-| `include` | Explicit lists, including `[]`, are retained. Omission uses native encrypted-reasoning inclusion. |
-| `store`, `background` | `store` maps to the native bool without creating local conversations. `background=true` requires an asynchronous retrieval lifecycle not implemented by this streaming interface. |
-| `stream`                                                                       | A downstream delivery preference; native model execution still owns its upstream transport.                                                                                                            |
-| Session/thread/turn provenance                                                 | Existing identity mapping and source response projection. Worker-owned authentication/device/routing fields cannot be overridden.                                                                      |
-| Existing environment date/time blocks                                          | Replace recognized current context fields in place using the worker's local time zone. No additional context message is appended.                                                                      |
-| Request controls and extensions | Generation/token/temperature/top_p/truncation/cache-retention controls enter native DTOs; `max_tokens` and `max_completion_tokens` normalize to `max_output_tokens` with conflicting values rejected. Transport/display metadata is consumed or rebuilt. Unknown business controls receive field-specific compatibility errors. |
+| Input                                   | Native mapping / constraint                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`                                 | Selects native model information from the worker's model manager.                                                                                                                                                                                                                                                               |
+| `input`                                 | Text or native history items. Infer message/text shorthand, consume display metadata, preserve business text, opaque reasoning and call relationships. Unknown business item types and missing call IDs receive specific errors.                                                                                                |
+| `instructions`                          | Native prompt base instructions.                                                                                                                                                                                                                                                                                                |
+| Function/custom/namespace tools         | Native declarations with complete input and explicit output schemas. Chat/input_schema wrappers normalize without tool-name templates or local executors; missing description and non-strict function defaults are completed.                                                                                                   |
+| `web_search`, `tool_search`             | Native declarations; tool-search parameter schemas retain all caller-supplied keywords and nested values.                                                                                                                                                                                                                       |
+| Hosted `image_generation` declaration   | Native `AdditionalTools` developer input. The fork-only `ToolSpec::ImageGeneration` variant is not used by this entry.                                                                                                                                                                                                          |
+| `tool_choice`                           | Native `auto`, `none`, `required`, and declared function/custom/namespace or hosted choices. Selection must reference a declared tool.                                                                                                                                                                                          |
+| `parallel_tool_calls`                   | Explicit booleans remain explicit, including Lite; omitted values use native defaults.                                                                                                                                                                                                                                          |
+| `reasoning.effort`, `reasoning.summary` | Native request controls; defaults come from worker configuration/native model policy.                                                                                                                                                                                                                                           |
+| `reasoning.context`                     | Explicit native `auto`, `current_turn` or `all_turns`; absence uses native derivation. Old client Lite mirrors are consumed, not equality gates.                                                                                                                                                                                |
+| `text.format`                           | `text`, `json_object` or `json_schema`; complete schema, explicit strictness and caller name are retained. An omitted schema name uses the native name.                                                                                                                                                                         |
+| `text.verbosity`                        | Explicit verbosity enters native request controls; absence uses worker/model defaults.                                                                                                                                                                                                                                          |
+| `service_tier`                          | Explicit tiers are retained; omission uses worker configuration/native defaults.                                                                                                                                                                                                                                                |
+| `include`                               | Explicit lists, including `[]`, are retained. Omission uses native encrypted-reasoning inclusion.                                                                                                                                                                                                                               |
+| `store`, `background`                   | `store` maps to the native bool without creating local conversations. `background=true` requires an asynchronous retrieval lifecycle not implemented by this streaming interface.                                                                                                                                               |
+| `stream`                                | A downstream delivery preference; native model execution still owns its upstream transport.                                                                                                                                                                                                                                     |
+| Session/thread/turn provenance          | Existing identity mapping and source response projection. Worker-owned authentication/device/routing fields cannot be overridden.                                                                                                                                                                                               |
+| Existing environment date/time blocks   | Replace recognized current context fields in place using the worker's local time zone. No additional context message is appended.                                                                                                                                                                                               |
+| Request controls and extensions         | Generation/token/temperature/top_p/truncation/cache-retention controls enter native DTOs; `max_tokens` and `max_completion_tokens` normalize to `max_output_tokens` with conflicting values rejected. Transport/display metadata is consumed or rebuilt. Unknown business controls receive field-specific compatibility errors. |
 
 `top_k` and `prompt_cache_options` have no native request mapping in this entry
 and return specific compatibility errors. Missing output `call_id` is inferred
@@ -249,7 +261,7 @@ The deployment time-zone mounts and minimal runtime image layout remain the same
 
 ## Minimal third-party client exchange
 
-Connect to `ws://127.0.0.1:38317/cpa/v1/ws`, send `initialize`, then the
+Connect to `ws://127.0.0.1:38317/`, send `initialize`, then the
 `initialized` notification and a capabilities request. For example:
 
 ```json
@@ -258,7 +270,7 @@ Connect to `ws://127.0.0.1:38317/cpa/v1/ws`, send `initialize`, then the
 {"id":2,"method":"cpa/capabilities/read","params":{}}
 ```
 
-After checking the v5 message contract, submit a request for an enabled credential
+After checking the required capabilities, submit a request for an enabled credential
 file already managed by the service:
 
 ```json
@@ -297,13 +309,14 @@ ID. Use `cpa/inference/cancel` with `{"requestId":"request-1"}` to cancel it;
 closing the connection cancels active work. Never silently replay uncertain
 requests after an IPC failure.
 
-The existing credential reload and manual OAuth methods retain their v3 field
-shapes; their capability result now advertises version 5. The native error's typed
-classification is additionally exposed as `error.data.nativeError` when available.
+The existing credential reload and manual OAuth methods retain their field
+shapes. Capabilities describe actual business, diagnostics and transport support.
+The native error's typed classification is additionally exposed as
+`error.data.nativeError` when available.
 
 ## Optional IPC extensions and errors
 
-The v5 required frame identities and execution mode remain unchanged. Additional
+The required frame identities and execution mode remain unchanged. Additional
 optional envelope fields do not invalidate known messages. Business delivery and
 transport diagnostics remain independent; optional diagnostic extensions cannot
 establish or revoke native model success. Local request adaptation errors use

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Codex Server IPC v5: one request per connection, with no external dependencies.
+// Codex Server model-only extensions: one request per connection, no dependencies.
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 
@@ -14,7 +14,7 @@ if (!capabilitiesOnly && (!credential || !model)) {
 }
 
 const socket = new WebSocket(
-  process.env.CODEX_SERVER_URL ?? "ws://127.0.0.1:38317/cpa/v1/ws",
+  process.env.CODEX_SERVER_URL ?? "ws://127.0.0.1:38317/",
 );
 const queue = [];
 let waiter;
@@ -87,12 +87,21 @@ try {
   send({ method: "initialized" });
   const capabilities = await rpc(2, "cpa/capabilities/read", {});
   if (
-    capabilities.protocolVersion !== 5 ||
+    !["cpa/inference/body", "cpa/inference/event"].includes(
+      capabilities.businessNotification,
+    ) ||
+    !["http-body-eof", "native-terminal"].includes(
+      capabilities.completionSemantics,
+    ) ||
+    typeof capabilities.diagnosticsCompleted !== "boolean" ||
     capabilities.executionMode !== "inference-only" ||
-    !capabilities.rawBody ||
-    !capabilities.operations?.includes("responses")
+    capabilities.rawBody !== true ||
+    !Array.isArray(capabilities.operations) ||
+    !capabilities.operations.includes("responses")
   ) {
-    throw new Error("Server does not support the required v5 message contract");
+    throw new Error(
+      "Server lacks the required inference byte stream, completion lifecycle or Responses operation",
+    );
   }
   if (capabilitiesOnly) {
     console.log(JSON.stringify(capabilities, null, 2));
@@ -132,7 +141,7 @@ try {
       },
     });
     let businessDone = false;
-    let diagnosticsDone = false;
+    let diagnosticsDone = !capabilities.diagnosticsCompleted;
     let failure;
     while (!businessDone || !diagnosticsDone) {
       const message = await nextMessage();
@@ -150,7 +159,7 @@ try {
       }
       if (message.method === "cpa/inference/upstream") continue;
       let output = message;
-      if (message.method === "cpa/inference/event") {
+      if (message.method === capabilities.businessNotification) {
         const { bodyBase64, ...params } = message.params;
         output = {
           method: message.method,
@@ -167,7 +176,7 @@ try {
       } else {
         continue;
       }
-      // Each request streams one native attempt. Errors end that request; this
+      // Each request streams one model attempt. Errors end that request; this
       // example never silently resends or joins another response to its output.
       if (!process.stdout.write(JSON.stringify(output) + "\n")) {
         await once(process.stdout, "drain");

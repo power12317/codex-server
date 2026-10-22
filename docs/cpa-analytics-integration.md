@@ -46,8 +46,9 @@ generated schema changes are required.
 | Inference completed | After the delay, record configuration, token usage, profile and existing `TurnCompleted` notification |
 | Inference error/cancel | Preserve native error classification or cancellation; emit a failed/interrupted completion after the delay |
 
-The v5 business notification is `CpaInferenceEvent` rather than the older
-`CpaInferenceBody`. Neither version's raw notification is an analytics payload.
+The native business notification is `CpaInferenceEvent`; the stable HTTP bridge
+uses `CpaInferenceBody`. Capabilities identify the active channel. Neither raw
+notification is an analytics payload.
 Validation failures before any upstream request have no final upstream identity;
 the adapter does not manufacture one from the original CPA request.
 
@@ -75,7 +76,8 @@ use zero; measured time between model sends is assigned to between-sampling
 overhead. These are explicitly chosen completion estimates, not measurements of
 execution on the CPA client.
 
-There is no caller-side end-of-turn signal in v5. A completed turn ID is retained
+There is no caller-side end-of-turn signal in this extension. A completed turn ID
+is retained
 as a tombstone to prevent duplicate reporting; a continuation arriving **after**
 the delayed turn has already been emitted is not retroactively appended. This is
 the boundary of the inactivity-based aggregation algorithm.

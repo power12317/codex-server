@@ -1,6 +1,6 @@
 # Codex Server inference validation record
 
-> The validation below records the stable v3 implementation. Experimental native execution has a separate [v5 contract and validation boundary](cpa-native-model-runtime.md).
+> The validation below records historical stable HTTP checkpoints. Experimental native execution has a separate [extension contract and validation boundary](cpa-native-model-runtime.md). These older results do not certify the current capability or root-path migration.
 
 ## 2026-10-13 upstream stable 0.162.1 merge
 
@@ -21,7 +21,7 @@ Release preparation now accepts official stable manifests with development
 lockfile versions and normalizes implicit workspace members and qualified local
 dependency references. It still rejects unexpected versions before writing.
 The capability revision now identifies the actual stable merge target rather
-than the obsolete initial fork base. Protocol v3 and client identity names remain
+than the obsolete initial fork base. Model-only extension methods and client identity names remain
 unchanged; the compiled version drives version headers and User-Agent.
 
 Validation of this merged stable source:
@@ -70,7 +70,7 @@ of this Codex merge. No remote push, tag or image publication is performed.
 ## 2026-10-09 standalone image operations and native normalization correction
 
 Audit and fetched main baseline: `1ddf40146790e805a9b3a488ffde36364b17b29c`.
-Image operations and the optional `imageApi` enum remain on the v3 bridge.
+Image operations and the optional `imageApi` enum remain on the model-only bridge.
 Worker-owned authentication, provider/network selection, mask/multiple images,
 raw JSON/SSE output, cancellation and transport EOF semantics are retained.
 
@@ -140,7 +140,7 @@ worker remains unsupported and must not trigger direct upstream fallback.
 Baseline: `3628694b0`. The inference tool parser now accepts hosted
 `image_generation` and native `tool_search` declarations, including forced tool
 selection. Hosted image options are serialized by `ToolSpec`; they do not
-register local tool execution. The v3 request envelope, native inference builder,
+register local tool execution. The model-only request envelope, native inference builder,
 identity handling and replace-only time processing are unchanged.
 
 - CPA unit and real-process integration suite: **52/52 passed** with
@@ -291,10 +291,10 @@ of production CPA traffic.
   exact bytes for unchanged events, EOF fragments, immediate heartbeat forwarding,
   JSON bodies and the framing buffer limit.
 
-The capability extension keeps protocol v3, `rawBody: true` and the existing
+The capability extension keeps `rawBody: true` and the existing
 base64 body channel, and advertises `responseIdentityMapping: true`. Read-only
 inspection of CPA's current Go adapter confirmed ordinary additive JSON decoding
-and its existing v3/inference-only/rawBody checks; no CPA or CPAMP files changed.
+and its then-current inference-only/rawBody checks; no CPA or CPAMP files changed.
 The outer CPA session scope remains an isolation boundary. Only source values
 actually received by Codex can be restored. Context state is worker-local and is
 not restored after restart; requests still carry their own conversation history.
@@ -340,11 +340,11 @@ all tool combinations by the real upstream service has not been exercised.
 Synthetic turn continuity is worker-local and resets on restart; identity mapping
 changes mean an upgrade uses different upstream conversation/cache IDs.
 
-## v3 validation
+## Historical model-only validation
 
-Contract: V3-SEP-20260927. The current tests start a real directory master and
-per-account app-server children against mock HTTP services. v2 results below are
-historical and do not establish v3 correctness.
+The tests at this checkpoint started a real directory master and per-account
+app-server children against mock HTTP services. Earlier results below are
+historical and do not certify the current capabilities or root-path migration.
 
 - All 11 CPA/master tests pass, including a truly tokenless placeholder followed
   by OAuth and immediate inference, 401 refresh into the original file, concurrent
@@ -357,10 +357,10 @@ historical and do not establish v3 correctness.
   `codex-api::files::tests::upload_openai_file_reports_blob_transport_diagnostics_without_sas`
   remains failing locally at its existing `message.contains("failed after")`
   assertion. This file-upload implementation and test were not modified.
-- CPA's real-process `TestCodexRuntimeForkV3OAuthAndModeSwitch` passed against
+- CPA's real-process `the then-current OAuth/mode-switch matrix` passed against
   the new binary: tokenless OAuth, immediate inference, 401 refresh, original-file
   persistence, actual logs, native routing after disable, and streaming after
-  reenable. Coordinator log: `/tmp/cpa-master-v3-fork.log`.
+  reenable. The coordinator retained the corresponding historical run log.
 - An additional 239 native client, login and TUI notification-routing tests passed.
 - Final focused rerun: 12/12 master/bridge and raw-byte transport tests passed.
   Scoped `just fix` completed without warnings across the seven changed crates.
@@ -377,7 +377,6 @@ agent-turn analytics/cost observations are therefore not synthesized. Enabled
 runtime components retain their actual configured behavior, not an invented
 account heartbeat. A disabled child is killed and reaped rather than gracefully
 flushing account exporters. Already transmitted upstream work cannot be recalled.
-
 
 Validated locally on macOS arm64, 2026-09-27, with Rust 1.95.0. Upstream baseline
 `985cf47a4eb6084b2ff6b30ebdb1216acda85bb4`, branch `codex/cpa-managed-auth`.
@@ -443,13 +442,13 @@ The v2 change starts from `8ee538eb3`. Tests use fake credentials, a real local 
 WebSocket, and Wiremock; no live-account authorization or model billing was used.
 
 - **714/714 passed** with `just test -p codex-login -p codex-app-server-transport
-  -p codex-app-server-protocol -p codex-app-server -E 'package(codex-login) |
-  package(codex-app-server-transport) | package(codex-app-server-protocol) |
-  test(cpa_bridge)'`: 239 login tests, 154 transport tests, 313 protocol tests and
+-p codex-app-server-protocol -p codex-app-server -E 'package(codex-login) |
+package(codex-app-server-transport) | package(codex-app-server-protocol) |
+test(cpa_bridge)'`: 239 login tests, 154 transport tests, 313 protocol tests and
   8 CPA bridge tests. 1,820 nonselected/ignored tests were skipped. Log:
   `/tmp/cpa-v2-tests.log`.
 - **4/4 raw event tests passed** with `just test -p codex-api -E
-  'test(raw_responses)'`. These cover unknown/tool events, terminal fields,
+'test(raw_responses)'`. These cover unknown/tool events, terminal fields,
   missing-terminal errors, long idle reads, cancellation and backpressure. Log:
   `/tmp/cpa-v2-raw-tests.log`.
 - CPA tests cover exact request/event preservation, single-response inference,
@@ -593,7 +592,7 @@ Validation on the macOS arm64 development host with Rust 1.95.0:
   tests (110), login tests (243), and native client, tool-plan, MCP, SSE and
   prepared-request byte tests. This is not a full workspace test run.
 - `cargo build --locked -p codex-rmcp-client --bin test_stdio_server -p codex-cli
-  --bin codex` passed. The nextest build also compiled the app-server executable
+--bin codex` passed. The nextest build also compiled the app-server executable
   and all selected test targets.
 - Stable and experimental protocol generation passed; stable generation also
   refreshed the Python SDK artifacts. Protocol export consistency tests pass.
@@ -635,7 +634,7 @@ succeeded and left the merged upstream lock unchanged; Bazel reported advisory
 dependency-version/annotation warnings.
 
 All 41 fork-added files survived. Aside from this validation record, the only
-changed fork-added files are the current upstream provenance in the v3 document,
+changed fork-added files are the current upstream provenance in the extension document,
 bridge capability constant, and Docker label. No compatibility source rewrite
 was required for the upstream model catalog/provider changes, Responses Lite
 tool-catalog construction, auth-storage telemetry, or Responses error handling.
@@ -672,7 +671,7 @@ Validation on the macOS arm64 development host:
   cause remains unresolved; no assertion was removed or relaxed. This is not a
   claim that the complete API suite passed.
 
-The protocol remains v3, with the existing TCP/WebSocket methods and port 38317.
+The model-only boundary retains the existing TCP/WebSocket methods and port 38317.
 Worker home names, legacy migration, source identity/turn state, no-turn-ID
 fallback, inference-only behavior and CPA log correlation remain unchanged.
 The dedicated `cpa-managed-auth`/immutable-SHA dual-architecture image workflow
@@ -688,33 +687,33 @@ observations, not a claim that the baseline necessarily has the same failures.
 No product changes were made to suppress them. Raw local logs are in
 `/tmp/cpa-regression-retry.log` for this development session.
 
-| Test | Observed failure / diagnostic |
-| --- | --- |
-| `suite::v2::code_mode_host::app_server_shares_flag_selected_grpc_code_mode_host_across_threads` | Equality assertion at `code_mode_host.rs:333` failed; root cause not established. |
-| `suite::v2::account_system_proxy::browser_login_bootstraps_through_system_proxy` | Mock browser-login bootstrap received HTTP 502 from the token endpoint; root cause not established. |
-| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::exec_grpc_host_only` | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
-| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::exec_grpc_with_overhead` | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
-| `suite::v2::executor_mcp::cached_executor_mcp_cannot_read_host_token_after_capability_downgrade` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::executor_mcp::guardian_review_does_not_discover_executor_mcp` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::executor_mcp::legacy_executor_blocks_plugin_host_credentials_and_keeps_host_owned_mcp` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::executor_mcp::selected_executor_discovers_browser_mcp_with_executor_only_bearer_token` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::executor_mcp::selected_executor_plugin_exposes_its_mcps_only_to_that_thread` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::wait_grpc_host_only` | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
-| `files::tests::upload_openai_file_reports_blob_transport_diagnostics_without_sas` | Transport diagnostic did not contain the expected `failed after` text; root cause not established. |
-| `suite::v2::selected_capability_stack::managed_plugins_requirement_disables_selected_executor_plugin_capabilities::batched_executor_capability_discovery` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::managed_plugins_requirement_disables_selected_executor_plugin_capabilities::direct_selected_root_discovery` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_a_steered_plugin_mention` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_a_steered_server_mention` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_plugin_mention` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_plugin_mention_across_a_restart` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_server_mention` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::without_a_mention` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::optional_batched` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_capability_stack_tracks_environment_availability_and_resume` | Wiremock expected-request verification failed; root cause not established. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::optional_direct` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::plugin_link_batched` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::structured_mention_batched` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::plugin_link_direct` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::structured_mention_direct` | Missing local `target/debug/codex` test executable; the standalone CLI was not built. |
-| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::wait_grpc_with_overhead` | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
-| `suite::v2::code_mode_host::app_server_prewarms_flag_selected_grpc_code_mode_host_before_first_turn` | Test exceeded the 60-second nextest limit; root cause not established. |
+| Test                                                                                                                                                        | Observed failure / diagnostic                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `suite::v2::code_mode_host::app_server_shares_flag_selected_grpc_code_mode_host_across_threads`                                                             | Equality assertion at `code_mode_host.rs:333` failed; root cause not established.                   |
+| `suite::v2::account_system_proxy::browser_login_bootstraps_through_system_proxy`                                                                            | Mock browser-login bootstrap received HTTP 502 from the token endpoint; root cause not established. |
+| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::exec_grpc_host_only`                                                        | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
+| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::exec_grpc_with_overhead`                                                    | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
+| `suite::v2::executor_mcp::cached_executor_mcp_cannot_read_host_token_after_capability_downgrade`                                                            | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::executor_mcp::guardian_review_does_not_discover_executor_mcp`                                                                                   | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::executor_mcp::legacy_executor_blocks_plugin_host_credentials_and_keeps_host_owned_mcp`                                                          | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::executor_mcp::selected_executor_discovers_browser_mcp_with_executor_only_bearer_token`                                                          | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::executor_mcp::selected_executor_plugin_exposes_its_mcps_only_to_that_thread`                                                                    | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::wait_grpc_host_only`                                                        | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
+| `files::tests::upload_openai_file_reports_blob_transport_diagnostics_without_sas`                                                                           | Transport diagnostic did not contain the expected `failed after` text; root cause not established.  |
+| `suite::v2::selected_capability_stack::managed_plugins_requirement_disables_selected_executor_plugin_capabilities::batched_executor_capability_discovery`   | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::managed_plugins_requirement_disables_selected_executor_plugin_capabilities::direct_selected_root_discovery`          | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_a_steered_plugin_mention`                   | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_a_steered_server_mention`                   | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_plugin_mention`                  | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_plugin_mention_across_a_restart` | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::with_an_initial_server_mention`                  | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_capabilities_become_available_between_samples_in_one_turn::without_a_mention`                               | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::optional_batched`                                            | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_capability_stack_tracks_environment_availability_and_resume`                                                | Wiremock expected-request verification failed; root cause not established.                          |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::optional_direct`                                             | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::plugin_link_batched`                                         | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::structured_mention_batched`                                  | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::plugin_link_direct`                                          | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::structured_mention_direct`                                   | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
+| `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::wait_grpc_with_overhead`                                                    | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
+| `suite::v2::code_mode_host::app_server_prewarms_flag_selected_grpc_code_mode_host_before_first_turn`                                                        | Test exceeded the 60-second nextest limit; root cause not established.                              |

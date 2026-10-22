@@ -142,7 +142,7 @@ pub async fn start_websocket_acceptor(
     .await
 }
 
-/// Starts the dedicated CPA endpoint on the worker listener.
+/// Starts the model-only CPA extension listener at the root WebSocket path.
 pub async fn start_cpa_websocket_acceptor(
     bind_address: SocketAddr,
     transport_event_tx: mpsc::Sender<TransportEvent>,
@@ -153,7 +153,7 @@ pub async fn start_cpa_websocket_acceptor(
         transport_event_tx,
         shutdown_token,
         WebsocketAuthPolicy::default(),
-        Some("/cpa/v1/ws"),
+        Some("/"),
     )
     .await
 }
@@ -422,5 +422,38 @@ async fn run_websocket_inbound_loop<M, StreamError>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cpa_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cpa_root_upgrades_and_removed_versioned_path_rejects()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reserved = TcpListener::bind("127.0.0.1:0").await?;
+        let address = reserved.local_addr()?;
+        drop(reserved);
+        let (events, _receiver) = mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let server = start_cpa_websocket_acceptor(address, events, shutdown.clone()).await?;
+        let result: Result<(), Box<dyn std::error::Error>> = async {
+            let (mut socket, _) =
+                tokio_tungstenite::connect_async(format!("ws://{address}/")).await?;
+            socket.close(None).await?;
+            let rejected = tokio_tungstenite::connect_async(format!("ws://{address}/cpa/v1/ws"))
+                .await
+                .expect_err("removed versioned path must reject upgrades");
+            assert!(
+                matches!(rejected, tokio_tungstenite::tungstenite::Error::Http(response)
+                if response.status().as_u16() == 404)
+            );
+            Ok(())
+        }
+        .await;
+        shutdown.cancel();
+        server.await?;
+        result
     }
 }

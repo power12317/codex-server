@@ -85,6 +85,34 @@ fn model_input() -> Value {
 }
 
 #[tokio::test]
+async fn cpa_native_required_source_ticket_fails_without_model_send() -> Result<()> {
+    let upstream = MockServer::start().await;
+    let home = TempDir::new()?;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&upstream)
+        .await;
+    let _runtime = server(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let mut request = rpc(model_input(), 201);
+    request["params"]["captureTicketSnapshot"] = json!(true);
+    let result = exchange(&mut ws, request).await?;
+    assert_eq!(result.reply["error"]["data"]["httpStatus"], json!(400));
+    assert!(
+        result.reply["error"]["message"]
+            .as_str()
+            .expect("error message")
+            .contains("source ticket snapshots")
+    );
+    assert!(result.body.is_empty());
+    assert!(result.error.is_none());
+    assert!(result.logs.iter().all(|log| log["kind"] != "request"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn cpa_native_analytics_reuses_sender_without_extra_model_request() -> Result<()> {
     let upstream = MockServer::start().await;
     let home = TempDir::new()?;

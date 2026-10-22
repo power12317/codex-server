@@ -1,9 +1,48 @@
 # Native model execution validation
 
 This report covers the experimental `codex/native-model-runtime` branch. It does
-not certify the stable v3 bridge or a published Linux image. The fixed reference
+not certify the stable HTTP bridge or a published Linux image. The fixed reference
 is official Codex `0.162.1`, commit
 `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
+
+## 2026-10-23 capability discovery and root WebSocket
+
+The public master and dedicated worker use the root WebSocket path; the retired
+versioned bridge route has no compatibility alias. Official initialization,
+health routes, authentication and `0.162.1` identity remain unchanged.
+The model-only `cpa/*` methods remain fork extensions carried by the app-server
+envelope. Private protocol numbers and opaque replacement gates are absent.
+
+Capabilities now describe the existing native behavior:
+`businessNotification: "cpa/inference/event"`,
+`completionSemantics: "native-terminal"`, `diagnosticsCompleted: true`,
+`responsesWebsocket: true` and `ticketSnapshots: false`. Business events still
+stream immediately, completion remains payload-free native success, and the
+independent diagnostic tail ends with `cpa/inference/diagnostics/completed` in
+either order with the business terminal. WebSocket support is conditional on the
+provider/model/configuration for each request.
+
+Required source-ticket capture is rejected before a model send. Omitted or false
+`captureTicketSnapshot` is harmless; a successful model invocation does not
+pretend to produce an unsupported ticket. Normal schemas, client tool handling,
+identity mapping, Images paths, cancellation, original diagnostics and zero model
+retries retain their existing execution paths. Runtime/source metadata are
+informational and do not select an implementation.
+
+Stable and experimental protocol exports were regenerated through the repository
+script, including its Python SDK step; **320** protocol tests passed. The manual
+fixture writer was run separately for both export modes.
+
+The focused run passed **36** app-server library checks, **64** real master/worker
+integration cases and the dedicated worker root/retired-path transport check.
+Coverage includes incremental HTTP/WS and Images output, native completion,
+diagnostic tails, cancellation, complete schemas, continuation and zero retries.
+Required ticket capture failed with no model request as declared. Both branch
+examples accepted the live capability response. The actual identity probe,
+shared nested credential metadata probe, **5** release checks, formatting and
+whitespace checks also passed. The immutable interface checkpoint worker has
+SHA256 `c436cba305ff8c0101fc5022be1a3b5a0a98f1a8607b4bd42e5e43d4033073af`;
+this checksum is reproduction metadata and never a compatibility gate.
 
 ## Client tool schema fidelity (2026-10-21)
 
@@ -26,7 +65,7 @@ constraints, definitions, boolean subschemas, tuple items and future keywords.
 Function/custom/namespace tools and the internal schema policy also pass.
 
 A separate controlled HTTP replay used the complete original Chat request
-through the paired CPA v5 checkout at
+through the paired CPA checkout at
 `65f134152ad9696b1568b0372f57af02fad4eaa3`. The built Rust master/worker used
 temporary fake credentials and a local model mock. Both Chat turns passed:
 22 exact tool schemas, reasoning effort `high`, live tool chunks before upstream
@@ -50,7 +89,7 @@ Window metadata now uses the mapped thread and compaction window number, with a
 separate context-window UUID. Caller window changes or newly replayed compaction
 items advance it once; ordinary turn changes and compaction triggers alone do
 not. The same turn keeps its first ticket through a window change. Client tools
-remain caller-executed, worker retries remain zero, and IPC stays at v5.
+remain caller-executed, worker retries remain zero, and incremental native business delivery is retained.
 
 Three real master/worker tests verify four same/cross-turn requests over one
 socket, concurrent turn serialization without ticket mixing, and an eight-request
@@ -104,7 +143,7 @@ Previously, even the first `response.create` notification lost a node reported
 by the handshake, and reused requests had no connection-level snapshot. Handshake
 request observation now runs after native cookie-store insertion, so fallback
 reflects the cookie actually sent. Native cookie policy, business bytes, client
-identity, worker retry policy and IPC v5 are unchanged.
+identity, worker retry policy and native business delivery are unchanged.
 
 Four real master/worker WebSocket cases pass. Each opens three connections under
 the same source session/turn and sends two successful requests on each. The first
@@ -137,7 +176,7 @@ tests, Rust formatting, documentation formatting and diff whitespace checks pass
 
 The zero-retry rollout results below are retained as the preceding baseline.
 
-## Current IPC v5 zero-retry candidate
+## Native zero-retry checkpoint
 
 The user selected immediate native event delivery with worker retries set to
 zero. This supersedes the earlier candidate's native recovery and attempt-boundary
@@ -173,7 +212,7 @@ verification on macOS arm64 with Rust 1.95.0 passed:
 | Paired CPA real HTTP/WS matrix                                           | 92 leaf cases passed with Go `-race`                                                   |
 
 The paired matrix used
-`/private/tmp/codex-zero-retry-v5-20261013/codex-app-server-correlated`, SHA256
+The retained correlated worker snapshot had SHA256
 `5c30250a6bfb252cacfba04507a5dcdb7496ee98d811341831777a4dfaa8566d`.
 It verifies delivery of tool deltas and ready events before upstream completion,
 immediate native errors while upstream connections remain open, zero worker
@@ -181,10 +220,10 @@ retries or error-driven HTTP fallback, and CPA-owned retries without CPA model
 egress. With two configured CPA retries, the fixture observes three worker sends
 and zero direct CPA sends. The first 780-byte turn-state ticket is replayed
 exactly, including prefixed metadata compatibility. Results are recorded in
-`/private/tmp/cpa-zero-retry-v5-final-matrix.log`.
+the coordinator's retained final matrix log.
 
 The final rebuilt binary is
-`/private/tmp/codex-zero-retry-v5-20261013/codex-app-server-final`, SHA256
+The retained final worker snapshot had SHA256
 `61911ad31c11ea928e84a3603f822b62621c1ec234aa0503acd9e2118f6b0e8e`.
 Only lint-equivalent production edits and test/documentation corrections followed
 the paired candidate. The full paired matrix was not repeated for those edits;
@@ -326,7 +365,7 @@ CPA model egress and zero server-side client-tool execution.
 The single-implementation cleanup worker was `codex-app-server 0.162.1`, SHA256
 `902df54637d8820621d78cb782b6d7bdc0ad9e08c6b9fe03c9e8eec292e9287c`.
 All three CPA matrices passed against this exact binary after the final worker
-changes. These tests use the matching experimental CPA IPC v4 implementation.
+changes. These tests use the then-current experimental CPA implementation.
 
 ## Single implementation cleanup
 
@@ -336,13 +375,13 @@ were removed with their registrations, generated exports and obsolete tests.
 The Responses endpoint source now matches the fixed official commit byte-for-byte.
 The remaining native model/observer tests cover the actual execution path.
 
-IPC v4 describes the atomic completion and actual-transport diagnostic message
-structure. Completion requires `bodyBase64`, including an empty byte sequence;
-there is no legacy empty-completion form. Native failures and cancellation use
-the start RPC error. The supervisor retains only the necessary asynchronous
-failure notification for worker loss after a successful start reply and before
-the completion frame. Neither that notification nor protocol versioning selects
-an alternate model implementation.
+At that historical checkpoint, the retired atomic-completion contract carried
+actual-transport diagnostic messages. Completion then required `bodyBase64`,
+including an empty byte sequence, and native failures/cancellation used the start
+RPC error. The supervisor retained an asynchronous failure notification for worker
+loss after the start reply and before completion. These historical completion
+shapes have since been replaced by incremental native events and payload-free
+completion; the current capability result and contract above define the lifecycle.
 
 The authorized main identity correction from `c56e646d` is included separately,
 without merging other main changes. The master uses native initialize identity
@@ -409,7 +448,7 @@ starts with empty routing state. Logs and JSON traces for these probes are under
 
 ## Compatibility and delivery limits
 
-- IPC v5 carries incremental business bytes without attempt fields. Native success
+- The native extension carries incremental business bytes without attempt fields. Native success
   is a separate payload-free completion, and errors before/after start use the
   RPC error/error notification respectively.
 - Every accepted nonterminal event, including tool-ready events, streams without

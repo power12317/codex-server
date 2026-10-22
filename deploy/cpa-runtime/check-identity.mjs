@@ -143,7 +143,7 @@ chatgpt_base_url = "${url}"
     await delay(250);
   }
   assert(ready, 'Runtime did not become ready');
-  socket = new WebSocket(`ws://127.0.0.1:${port}/cpa/v1/ws`);
+  socket = new WebSocket(`ws://127.0.0.1:${port}/`);
   const replies = new Map();
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);

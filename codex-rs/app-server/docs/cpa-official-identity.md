@@ -27,8 +27,9 @@ binary unchanged. Its entrypoint executes `/usr/local/bin/codex-app-server`.
 There is no binary rename, CLI impersonation or custom version suffix to remove.
 The workspace and deployment stamp both select `0.162.1`. Release preparation
 normalizes only local workspace package versions and does not rename packages or
-alter third-party dependency versions. Bridge protocol version `3` is a separate
-IPC contract, not a product version.
+alter third-party dependency versions. Model-only `cpa/*` extensions advertise
+actual behavior through capabilities; their metadata does not replace or gate
+the official product identity.
 
 One actual mismatch existed in the supervisor: its `initialize` response used
 the hand-written `codex-cpa-master/0.162.1`. It now parses the official initialize

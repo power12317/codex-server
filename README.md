@@ -1,6 +1,6 @@
 # Codex Server
 
-> The `codex/native-model-runtime` experimental branch exposes [native model execution through IPC v5](codex-rs/app-server/docs/cpa-native-model-runtime.md) and publishes to an isolated image package. It requires a matching v5 client.
+> The `codex/native-model-runtime` experimental branch exposes [native model execution through model-only extensions](codex-rs/app-server/docs/cpa-native-model-runtime.md) and publishes to an isolated image package. Clients select the business channel and completion lifecycle from capabilities.
 
 Codex Server exposes native Codex inference through a long-running service for
 third-party applications. A master process accepts requests and supervises one
@@ -39,11 +39,12 @@ The default endpoints are:
 | Endpoint                            | Purpose                                          |
 | ----------------------------------- | ------------------------------------------------ |
 | `GET http://127.0.0.1:38317/readyz` | Listener readiness; not an account-health check. |
-| `ws://127.0.0.1:38317/cpa/v1/ws`    | JSON-RPC-style control and inference stream.     |
+| `ws://127.0.0.1:38317/`             | JSON-RPC-style control and inference stream.     |
 
-Protocol version **4** retains the `cpa/*` method names, `/cpa/v1/ws` path,
-`CODEX_CPA_*` settings and credential-file format for compatibility. These names
-do not require the CPA application. The executable remains `codex-app-server`.
+The `cpa/*` methods are model-only extensions carried by the official app-server
+envelope. Clients select supported behaviors from capabilities. Existing
+`CODEX_CPA_*` settings and credential-file formats are retained; these names do
+not require the CPA application. The executable remains `codex-app-server`.
 This listener does not expose an HTTP `POST /v1/responses` endpoint or native
 `thread/start` / `turn/start` methods; callers use `cpa/inference/start`.
 

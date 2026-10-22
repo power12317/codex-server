@@ -1,4 +1,4 @@
-//! CPA IPC v5 boundary. This module deliberately has no ThreadManager or tool runtime.
+//! Model-only CPA extension boundary, without a ThreadManager or tool runtime.
 mod analytics;
 mod contexts;
 mod delivery;
@@ -314,14 +314,18 @@ impl CpaBridge {
 
 pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
     CpaCapabilitiesReadResponse {
-        protocol_version: 5,
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         upstream_revision: UPSTREAM.into(),
         manual_oauth: true,
         upstream_logs: true,
         upstream_body_logs: true,
         raw_body: true,
+        business_notification: "cpa/inference/event".into(),
+        completion_semantics: "native-terminal".into(),
+        diagnostics_completed: true,
+        responses_websocket: true,
         response_identity_mapping: true,
+        ticket_snapshots: Some(false),
         execution_mode: "inference-only".into(),
         operations: vec![
             "responses".into(),
@@ -379,6 +383,12 @@ fn native_failure(error: &codex_protocol::error::CodexErr) -> JSONRPCErrorError 
 }
 
 fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
+    if params.capture_ticket_snapshot == Some(true) {
+        return Err(failure(
+            400,
+            "captureTicketSnapshot requires source ticket snapshots, which this runtime does not support; no model request was sent",
+        ));
+    }
     for value in [
         &params.request_id,
         &params.source_format,

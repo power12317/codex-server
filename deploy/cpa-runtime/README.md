@@ -1,6 +1,6 @@
 # Codex Server deployment
 
-> On `codex/native-model-runtime`, use the isolated `ghcr.io/power12317/codex-server-native-runtime` image and a v5-capable client. See the [experimental native model contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md); the stable package described below remains separate.
+> On `codex/native-model-runtime`, use the isolated `ghcr.io/power12317/codex-server-native-runtime` image and select the business and diagnostics lifecycle from capabilities. See the [experimental native model contract](../../codex-rs/app-server/docs/cpa-native-model-runtime.md); the stable package described below remains separate.
 
 Pushes to main publish `ghcr.io/power12317/codex-server:latest`.
 Use the service standalone or alongside CPA; a source checkout is not required
@@ -88,7 +88,7 @@ services:
 Use the same runtime UID as CPA (the example matches a root CPA container).
 The shared auth directory is `/cpa-auth`; private state is stored in the CPA
 directory's `./codex-data`, mounted at `/var/lib/codex`.
-The loopback endpoint is `ws://127.0.0.1:38317/cpa/v1/ws`, with `/readyz` on that
+The loopback endpoint is `ws://127.0.0.1:38317/`, with `/readyz` on that
 same internal port. The existing CPA and gost services need no port changes.
 
 `credentialId` is CPA's original path relative to the shared auth directory,
@@ -159,10 +159,10 @@ transport. For example, when the service uses host networking on a Linux server:
 ssh -N -L 38317:127.0.0.1:38317 user@server
 ```
 
-The remote client then connects to `ws://127.0.0.1:38317/cpa/v1/ws` on its own
+The remote client then connects to `ws://127.0.0.1:38317/` on its own
 machine. An authenticated reverse proxy is another option: run it in a network
 namespace that can reach the listener, enable WebSocket upgrades, preserve the
-`/cpa/v1/ws` path, and set timeouts appropriate to inference streams. TLS and client
+`/` path, and set timeouts appropriate to inference streams. TLS and client
 access control belong at that boundary. Possession of a `credentialId` is not a
 client-authorization check; exposed clients can invoke the service's control API.
 
@@ -189,7 +189,7 @@ Use `codex-server:local` in Compose for that build. The existing
 `.github/workflows/cpa-runtime-image.yml` filename is retained; its repository
 guard and image labels point to `power12317/codex-server`. Runtime executable,
 credential filenames and state locations are unchanged. This experimental branch
-uses IPC v5 for incremental business delivery.
+uses native incremental business delivery with explicit capability metadata.
 
 ## Runtime release identity
 
@@ -205,8 +205,8 @@ accepts official stable manifests whose local lockfile packages still use
 `0.0.0`, including implicit workspace members; it does not resolve or upgrade
 third-party dependencies. Docker runs this synchronization again in its build
 copy. `cpa/capabilities/read` reports the compiled runtime version and selected
-upstream release commit. IPC v5 is an internal message contract; the client
-identity names and official runtime version are unchanged.
+upstream release commit as informational metadata. Capabilities describe actual
+extension behavior; client identity names and official runtime version are unchanged.
 
 The official release contains two distinct targets: the `codex-cli` package
 builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds

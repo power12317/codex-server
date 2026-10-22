@@ -180,7 +180,7 @@ fn router(master: Arc<Master>) -> Router {
     Router::new()
         .route("/readyz", get(|| async { "ok" }))
         .route(
-            "/cpa/v1/ws",
+            "/",
             get(
                 |State(master): State<Arc<Master>>, upgrade: WebSocketUpgrade| async move {
                     // Axum requires concrete sizes; use the addressable maximum for this local bridge.

@@ -19,11 +19,10 @@ fn completion_is_a_native_outcome_without_a_replayed_body() {
 }
 
 #[test]
-fn capabilities_describe_the_single_runtime_contract() {
+fn capabilities_describe_actual_delivery_and_ticket_support() {
     assert_eq!(
         serde_json::to_value(capabilities()).expect("capabilities"),
         json!({
-            "protocolVersion": 5,
             "runtimeVersion": env!("CARGO_PKG_VERSION"),
             "upstreamRevision": UPSTREAM,
             "manualOAuth": true,
@@ -31,10 +30,35 @@ fn capabilities_describe_the_single_runtime_contract() {
             "upstreamBodyLogs": true,
             "executionMode": "inference-only",
             "rawBody": true,
+            "businessNotification": "cpa/inference/event",
+            "completionSemantics": "native-terminal",
+            "diagnosticsCompleted": true,
+            "responsesWebsocket": true,
             "responseIdentityMapping": true,
+            "ticketSnapshots": false,
             "operations": ["responses", "images/generations", "images/edits"]
         })
     );
+}
+
+#[test]
+fn required_ticket_capture_is_rejected_before_model_execution() {
+    for capture in [None, Some(false), Some(true)] {
+        let mut value = json!({"requestId":"r", "credentialId":"worker",
+            "operation":"responses", "sourceFormat":"openai-response",
+            "sessionId":"scope", "request":{"model":"fixture","input":"hello"}});
+        if let Some(capture) = capture {
+            value["captureTicketSnapshot"] = json!(capture);
+        }
+        let params = serde_json::from_value(value).expect("params");
+        if capture == Some(true) {
+            let error = validate(&params).expect_err("source tickets unsupported");
+            assert!(error.message.contains("source ticket snapshots"));
+            assert_eq!(error.data.expect("data")["httpStatus"], json!(400));
+        } else {
+            validate(&params).expect("ticket capture not requested");
+        }
+    }
 }
 
 #[test]

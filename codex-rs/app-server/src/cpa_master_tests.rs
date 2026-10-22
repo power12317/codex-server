@@ -110,8 +110,12 @@ async fn local_bridge_accepts_messages_larger_than_default_limits() -> anyhow::R
             .await
     });
     let result: anyhow::Result<()> = async {
+        let rejected = tokio_tungstenite::connect_async(format!("ws://{address}/cpa/v1/ws"))
+            .await.expect_err("removed versioned path must reject upgrades");
+        assert!(matches!(rejected, tokio_tungstenite::tungstenite::Error::Http(response)
+            if response.status().as_u16() == 404));
         let (mut socket, _) =
-            tokio_tungstenite::connect_async(format!("ws://{address}/cpa/v1/ws")).await?;
+            tokio_tungstenite::connect_async(format!("ws://{address}/")).await?;
         let padding = "x".repeat((64 << 20) + 1);
         socket
             .send(ClientMessage::Text(
@@ -148,7 +152,8 @@ async fn local_bridge_accepts_messages_larger_than_default_limits() -> anyhow::R
             .context("follow-up RPC response missing")??;
         let response: Value = serde_json::from_str(response.to_text()?)?;
         assert_eq!(response["id"], json!(2));
-        assert_eq!(response["result"]["protocolVersion"], json!(5));
+        assert_eq!(response["result"]["businessNotification"],
+        json!("cpa/inference/event"));
         socket.close(None).await?;
         Ok(())
     }
