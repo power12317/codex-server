@@ -314,7 +314,10 @@ async fn cpa_native_completion_preserves_tools_extensions_and_identity() -> Resu
     for log in &result.logs {
         assert_eq!(log["transport"], "http");
         if log["kind"] == "request" {
-            assert_eq!(log["headers"]["authorization"], json!(["[REDACTED]"]));
+            assert_eq!(
+                log["headers"]["authorization"],
+                json!(["Bearer fake-cpa-access"])
+            );
         }
     }
     assert!(result.logs.iter().any(|log| log["kind"] == "body"));

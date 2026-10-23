@@ -65,7 +65,7 @@ fn cpa_error_preserves_native_status_headers_body_and_classification() {
 }
 
 #[test]
-fn native_observation_preserves_node_and_redacts_credentials() {
+fn native_observation_preserves_raw_ipc_and_redacts_only_the_log_copy() {
     let (diagnostics, mut notifications) = tokio::sync::mpsc::unbounded_channel();
     let (business, _events) = tokio::sync::mpsc::unbounded_channel();
     let observer = NativeObservation::new("r".into(), diagnostics, business, false);
@@ -92,7 +92,18 @@ fn native_observation_preserves_node_and_redacts_credentials() {
         let value = serde_json::to_value(notification).unwrap();
         assert_eq!(value["oaiLbNode"], "fixture");
         if value["kind"] == "request" {
-            assert_eq!(value["headers"]["authorization"], json!(["[REDACTED]"]));
+            assert_eq!(
+                value["headers"]["authorization"],
+                json!(["Bearer fixture-secret"])
+            );
+            assert_eq!(
+                value["headers"]["cookie"],
+                json!([format!("__oailb=e30.{payload}.sig")])
+            );
+            let mut log = value.clone();
+            redact_log_headers(&mut log);
+            assert_eq!(log["headers"]["authorization"], json!(["[REDACTED]"]));
+            assert_eq!(log["headers"]["cookie"], json!(["[REDACTED]"]));
         }
     }
     assert!(!observer.observes_request("POST", "https://auth.example/oauth/token"));

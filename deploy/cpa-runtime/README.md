@@ -193,24 +193,23 @@ uses native incremental business delivery with explicit capability metadata.
 
 ## Runtime release identity
 
-The current upstream release base is `rust-v0.162.1` at
-`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. Existing fork changes and previously
+The current upstream release base is `rust-v0.163.0` at
+`83086188ae0614bd882818ff1aa23f3194962012`. Existing fork changes and previously
 integrated upstream commits remain in the merge history. This is a fork build,
 not an unmodified official release archive.
 
 `release-version` selects the official client version used for the executable,
-version header and User-Agent. The current stable-source workspace and local
-Cargo.lock packages are synchronized to `0.162.1`. `prepare-release.py` also
-accepts official stable manifests whose local lockfile packages still use
-`0.0.0`, including implicit workspace members; it does not resolve or upgrade
-third-party dependencies. Docker runs this synchronization again in its build
-copy. `cpa/capabilities/read` reports the compiled runtime version and selected
+version header and User-Agent. Committed workspace and local Cargo.lock package
+versions remain the source placeholder `0.0.0`. Docker runs `prepare-release.py`
+in its build copy to stamp the exact official release `0.163.0`, including implicit
+workspace members, before compilation. The script also accepts already prepared
+stable manifests; it does not resolve or upgrade third-party dependencies. `cpa/capabilities/read` reports the compiled runtime version and selected
 upstream release commit as informational metadata. Capabilities describe actual
 extension behavior; client identity names and official runtime version are unchanged.
 
 The official release contains two distinct targets: the `codex-cli` package
-builds `codex` (`codex-cli 0.162.1`), while the `codex-app-server` package builds
-`codex-app-server` (`codex-app-server 0.162.1`). The image uses the latter official
+builds `codex` (`codex-cli 0.163.0`), while the `codex-app-server` package builds
+`codex-app-server` (`codex-app-server 0.163.0`). The image uses the latter official
 target; it is not a renamed CLI. The supervisor's `initialize` response uses
 native client identity generation rather than a fork-specific User-Agent name.
 See [the official identity audit](../../codex-rs/app-server/docs/cpa-official-identity.md)

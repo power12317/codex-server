@@ -2,8 +2,51 @@
 
 This report covers the experimental `codex/native-model-runtime` branch. It does
 not certify the stable HTTP bridge or a published Linux image. The fixed reference
-is official Codex `0.162.1`, commit
-`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`.
+is official Codex `0.163.0`, commit
+`83086188ae0614bd882818ff1aa23f3194962012`.
+
+## 2026-10-23 official release and shared credential locking
+
+The current source incorporates official `rust-v0.163.0`, commit
+`83086188ae0614bd882818ff1aa23f3194962012`. The dated sections below describe
+earlier checkpoints. Committed Cargo workspace and local lockfile versions remain
+`0.0.0`; release preparation reproduces the tested `0.163.0` build metadata
+byte-for-byte. The native request identity is checked against the same-platform
+official release artifact, not inferred from source strings.
+
+Normal token saves hold CPA's canonical credential-path `.lock` across reading
+the latest JSON, enabled-state validation and atomic replacement. The deterministic
+subprocess test observes actual lock contention before the parent changes nested
+metadata, disables the credential or renames it. Symlink aliases use the same lock;
+disabled/removed credentials are not overwritten or recreated.
+
+Official output replay now represents message/function status and output-text
+annotations/logprobs in native history. The compatibility parser retains these
+fields, including empty arrays, so native incremental request comparisons remain
+valid. The original continuation assertions passed without weakening cache
+comparison or forcing a previous response ID. IPC diagnostics preserve original
+header values; ordinary stderr receives a separately redacted copy.
+
+Validation used synthetic credentials and local upstreams:
+
+- **36** service library checks, **64** real master/worker integration cases,
+  the dedicated root-path check and all **3** shared-lock subprocess scenarios passed.
+- **316** protocol checks passed; stable/experimental exports and the Python SDK
+  were generated with the repository writer.
+- **57** core client, **15** login client, **196** API, **108** tools,
+  **10** request-builder and **2** retry-policy checks passed.
+- Exact executable version output and **4** complete initialize sequences matched
+  the official macOS arm64 app-server. Actual worker headers and both example
+  clients passed; the full worker User-Agent equals the official binary's result.
+- The unchanged CPA native `d3df0a428a14add4b5280d45fb61599f5043658c`
+  passed **199** real-worker leaf checks with the Go race detector against this
+  candidate, including the previously failing continuation combinations.
+- Release stamping, formatting, whitespace and source-placeholder round-trip checks passed.
+
+The immutable local worker SHA256 is
+`451a3ee01b7724d330c0167a3bb71436372b4f9a77912788fdafd48dba6bf78b`.
+Artifact hashes are reproduction evidence, not compatibility gates. These local
+results do not claim completion of the Linux image workflow.
 
 ## 2026-10-23 capability discovery and root WebSocket
 

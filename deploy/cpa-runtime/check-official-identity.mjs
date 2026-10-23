@@ -10,8 +10,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
-const [officialCli, officialServer, candidateCli, candidateServer] = process.argv.slice(2);
-assert(candidateServer, 'usage: node check-official-identity.mjs OFFICIAL_CODEX OFFICIAL_APP_SERVER CODEX APP_SERVER');
+const args = process.argv.slice(2);
+assert(args.length === 2 || args.length === 4,
+  'usage: node check-official-identity.mjs OFFICIAL_APP_SERVER APP_SERVER, or OFFICIAL_CODEX OFFICIAL_APP_SERVER CODEX APP_SERVER');
+const serviceOnly = args.length === 2;
+const [officialCli, officialServer, candidateCli, candidateServer] = serviceOnly
+  ? [undefined, args[0], undefined, args[1]] : args;
 const version = (await readFile(new URL('./release-version', import.meta.url), 'utf8')).trim();
 const root = await mkdtemp(join(tmpdir(), 'codex-official-identity-'));
 const home = join(root, 'state');
@@ -101,10 +105,9 @@ async function handshakeSequence(binary, entry, originator) {
 
 try {
   const versions = {};
-  for (const [name, official, candidate] of [
-    ['codex-cli', officialCli, candidateCli],
-    ['codex-app-server', officialServer, candidateServer],
-  ]) {
+  const targets = [['codex-app-server', officialServer, candidateServer]];
+  if (!serviceOnly) targets.unshift(['codex-cli', officialCli, candidateCli]);
+  for (const [name, official, candidate] of targets) {
     const reference = await execute(official, ['--version'], { env: baseEnv });
     const actual = await execute(candidate, ['--version'], { env: baseEnv });
     assert.equal(reference.stdout, `${name} ${version}\n`);
@@ -114,18 +117,19 @@ try {
   const handshakes = [];
   for (const originator of [undefined, 'codex-tui']) {
     const official = await handshakeSequence(officialServer, 'server', originator);
-    for (const [name, binary, entry] of [
-      ['official-cli', officialCli, 'cli'],
-      ['candidate-cli', candidateCli, 'cli'],
+    const entries = [
       ['candidate-server', candidateServer, 'server'],
       ['candidate-master', candidateServer, 'master'],
-    ]) {
+    ];
+    if (!serviceOnly) entries.unshift(
+      ['official-cli', officialCli, 'cli'], ['candidate-cli', candidateCli, 'cli']);
+    for (const [name, binary, entry] of entries) {
       const actual = await handshakeSequence(binary, entry, originator);
       assert.deepEqual(actual, official, `${name}, originator override=${originator}`);
     }
     handshakes.push({ originatorOverride: originator ?? null, responses: official });
   }
-  console.log(JSON.stringify({ versions, matchingHandshakeSequences: 8, handshakes }, null, 2));
+  console.log(JSON.stringify({ versions, matchingHandshakeSequences: serviceOnly ? 4 : 8, handshakes }, null, 2));
 } finally {
   await rm(root, { recursive: true, force: true });
 }

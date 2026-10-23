@@ -1,5 +1,5 @@
 //! Convert Responses output envelopes to the same typed history used by the native client.
-//! Display metadata is consumed; business items and tool associations remain native inputs.
+//! Native replay metadata, business items and tool associations remain native inputs.
 use anyhow::Context;
 use codex_protocol::ResponseItemId;
 use codex_protocol::models::ResponseItem;
@@ -30,8 +30,16 @@ pub(super) fn parse(items: &[Value]) -> anyhow::Result<Vec<ResponseItem>> {
                             if !part.contains_key("type") && part.contains_key("text") {
                                 part.insert("type".into(), json!("input_text"));
                             }
-                            part.remove("annotations");
-                            part.remove("logprobs");
+                            // Native output replay retains arrays, including empty ones.
+                            // Older callers also use these keys for non-native UI metadata.
+                            for key in ["annotations", "logprobs"] {
+                                if part
+                                    .get(key)
+                                    .is_some_and(|value| !value.is_array() && !value.is_null())
+                                {
+                                    part.remove(key);
+                                }
+                            }
                         }
                     }
                 }
@@ -40,11 +48,18 @@ pub(super) fn parse(items: &[Value]) -> anyhow::Result<Vec<ResponseItem>> {
         if fields.get("type").and_then(Value::as_str) == Some("compaction_summary") {
             fields.insert("type".into(), json!("compaction"));
         }
-        // Status on response envelopes describes display/lifecycle, not historical
-        // function output. Native custom-call status has input semantics of its own.
+        // Message/function status is part of native sampled-output replay in 0.163.
+        // Preserve it alongside existing call statuses; unsupported item metadata
+        // is still consumed by the typed native representation.
         if !matches!(
             fields.get("type").and_then(Value::as_str),
-            Some("custom_tool_call" | "local_shell_call" | "tool_search_call")
+            Some(
+                "message"
+                    | "function_call"
+                    | "custom_tool_call"
+                    | "local_shell_call"
+                    | "tool_search_call"
+            )
         ) {
             fields.remove("status");
         }
@@ -183,8 +198,10 @@ mod tests {
         ];
         let parsed = parse(&items).unwrap();
         let native = serde_json::to_value(parsed).unwrap();
-        assert!(native[0].get("status").is_none());
-        assert!(native[0]["content"][0].get("annotations").is_none());
+        assert_eq!(native[0]["status"], "completed");
+        assert_eq!(native[0]["content"][0]["annotations"], json!([]));
+        assert_eq!(native[0]["content"][0]["logprobs"], json!([]));
+        assert_eq!(native[1]["status"], "completed");
         assert_eq!(native[0]["phase"], "final_answer");
         assert_eq!(native[1]["namespace"], "functions");
         assert_eq!(native[2]["output"], "read result");

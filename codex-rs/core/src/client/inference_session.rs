@@ -204,6 +204,9 @@ impl InferenceSession {
             config
                 .features
                 .enabled(codex_features::Feature::ConcurrentReasoningSummaries),
+            config
+                .features
+                .enabled(codex_features::Feature::OutputTokenReplay),
             /*attestation_provider*/ None,
             config.http_client_factory(),
             config.workspace_routing_context(),

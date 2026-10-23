@@ -202,7 +202,7 @@ impl TransportObserver for NativeObservation {
             transport: transport.into(),
             url: url.into(),
             method: method.into(),
-            headers: log_headers(headers),
+            headers: wire_headers(headers),
             body: std::str::from_utf8(body)
                 .unwrap_or("[encoded native request body]")
                 .into(),
@@ -228,7 +228,7 @@ impl TransportObserver for NativeObservation {
             request_id: self.request_id.clone(),
             transport: transport.into(),
             status_code: status,
-            headers: log_headers(headers),
+            headers: wire_headers(headers),
             body: None,
             oai_lb_node: node,
         });
@@ -342,30 +342,39 @@ impl ResponsesObserver for NativeObservation {
 }
 impl InferenceObserver for NativeObservation {}
 
-pub(super) fn log_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
+/// Preserve original IPC diagnostics; ordinary stderr receives a separate copy.
+pub(super) fn wire_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
     headers
         .keys()
         .map(|name| {
-            let sensitive = matches!(
-                name.as_str(),
-                "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
-            ) || ["authorization", "api-key", "apikey", "token", "secret"]
-                .iter()
-                .any(|part| name.as_str().contains(part));
             let values = headers
                 .get_all(name)
                 .iter()
-                .map(|value| {
-                    if sensitive {
-                        "[REDACTED]".into()
-                    } else {
-                        String::from_utf8_lossy(value.as_bytes()).into_owned()
-                    }
-                })
+                .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
                 .collect();
             (name.to_string(), values)
         })
         .collect()
+}
+
+pub(super) fn redact_log_headers(details: &mut Value) {
+    if let Some(headers) = details.get_mut("headers").and_then(Value::as_object_mut) {
+        for (name, values) in headers {
+            if matches!(
+                name.as_str(),
+                "authorization"
+                    | "proxy-authorization"
+                    | "cookie"
+                    | "set-cookie"
+                    | "x-codex-turn-state"
+            ) || ["authorization", "api-key", "apikey", "token", "secret"]
+                .iter()
+                .any(|part| name.contains(part))
+            {
+                *values = serde_json::json!(["[REDACTED]"]);
+            }
+        }
+    }
 }
 
 fn response_oai_lb_node(headers: Option<&HeaderMap>, request_node: Option<&str>) -> Option<String> {

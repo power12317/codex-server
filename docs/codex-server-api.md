@@ -484,8 +484,9 @@ business-event delivery, and uses the existing model-only extension fields.
 
 These describe native upstream exchanges, including rejected authentication
 attempts. Diagnostic identities remain native; source identity restoration
-applies to the business response. Authorization/cookie headers are redacted, but
-request bodies can contain full prompts and history. Per-attempt body bytes are
+applies to the business response. Original IPC header values, including Authorization and Cookie/Set-Cookie, are
+preserved, and request bodies can contain full prompts and history. Ordinary
+stderr records redact a separate header copy and omit full payload bodies. Per-attempt body bytes are
 diagnostic data and do not replace the final completion/error result. Do not log
 the final business body again when upstream body logging is enabled.
 

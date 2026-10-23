@@ -206,6 +206,7 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::CpaInferenceBody(_)
         | ServerNotification::CpaInferenceCompleted(_)
         | ServerNotification::CpaInferenceError(_)
+        | ServerNotification::ThreadReadStateChanged(_)
         | ServerNotification::GatewayOAuthChanged(_)
         | ServerNotification::AccountRateLimitsUpdated(_)
         | ServerNotification::AppListUpdated(_)

@@ -22,6 +22,7 @@ pub(super) fn diagnostics(
                         fields.remove("body");
                         fields.remove("bodyBase64");
                     }
+                    upstream::redact_log_headers(&mut details);
                     outgoing.queue_cpa_diagnostic(
                         connection_id,
                         ServerNotification::CpaInferenceUpstream(notification),
