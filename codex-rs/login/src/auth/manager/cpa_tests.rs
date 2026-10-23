@@ -116,6 +116,7 @@ async fn cpa_shared_save_waits_for_latest_metadata() -> anyhow::Result<()> {
         latest["siwc"] =
             json!({"access_token":"new-siwc","nested":{"future":[true,{"keep":"exact"}]}});
         latest["use_siwc"] = json!(true);
+        latest["allow_codex_client_siwc"] = json!(false);
         latest["codex_cli"]["future"] = json!({"keep":true});
         latest["disabled"] = json!(case == "disabled");
         let replacement = directory.join("replacement.tmp");
@@ -140,7 +141,13 @@ async fn cpa_shared_save_waits_for_latest_metadata() -> anyhow::Result<()> {
             if case == "disabled" {
                 assert_eq!(saved, latest);
             } else {
-                for key in ["siwc", "use_siwc", "codex_cli", "disabled"] {
+                for key in [
+                    "siwc",
+                    "use_siwc",
+                    "allow_codex_client_siwc",
+                    "codex_cli",
+                    "disabled",
+                ] {
                     assert_eq!(&saved[key], &latest[key]);
                 }
                 assert_eq!(saved["access_token"], "rotated-normal-token");

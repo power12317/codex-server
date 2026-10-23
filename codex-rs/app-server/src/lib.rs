@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -52,6 +53,7 @@ use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TextPosition as AppTextPosition;
 use codex_app_server_protocol::TextRange as AppTextRange;
+use codex_app_server_transport::WebSocketCompression;
 use codex_app_server_transport::daemon_recovery_file_path;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLoadError;
@@ -102,6 +104,10 @@ mod code_mode_host;
 mod codex_home_metrics;
 mod command_exec;
 mod config_layer;
+mod startup_config;
+pub use startup_config::StartupConfigArgs;
+pub use startup_config::print_startup_config;
+
 mod config_manager;
 mod config_manager_service;
 mod connection_cleanup;
@@ -140,6 +146,7 @@ mod request_processors;
 mod request_serialization;
 mod server_request_error;
 mod skills_watcher;
+mod thread_sample;
 mod thread_state;
 mod thread_status;
 mod transport;
@@ -156,6 +163,7 @@ pub use crate::transport::AppServerTransport;
 pub use crate::transport::RemoteControlStartupMode;
 pub use crate::transport::app_server_control_socket_path;
 pub use crate::transport::take_remote_control_disabled_env;
+pub use crate::transport::verified_local_daemon_socket;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
 const OTEL_SERVICE_NAME: &str = "codex-app-server";
@@ -476,6 +484,8 @@ pub enum PluginStartupTasks {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppServerRuntimeOptions {
+    /// Optional host-owned frozen cloud skill catalog and resources, loaded once at startup.
+    pub cloud_skills_snapshot: Option<std::path::PathBuf>,
     pub code_mode_host_transport: CodeModeHostTransport,
     pub plugin_startup_tasks: PluginStartupTasks,
     pub remote_control_startup_mode: RemoteControlStartupMode,
@@ -486,6 +496,7 @@ pub struct AppServerRuntimeOptions {
 impl Default for AppServerRuntimeOptions {
     fn default() -> Self {
         Self {
+            cloud_skills_snapshot: None,
             code_mode_host_transport: CodeModeHostTransport::Local,
             plugin_startup_tasks: PluginStartupTasks::Start,
             remote_control_startup_mode: RemoteControlStartupMode::ResolvePersisted,
@@ -508,6 +519,18 @@ pub async fn run_main_with_transport_options(
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<AppServerExit> {
     let cpa = cpa_config::CpaConfig::from_env()?;
+    let cloud_skill_provider = match runtime_options.cloud_skills_snapshot {
+        Some(path) => {
+            let provider = tokio::task::spawn_blocking(move || {
+                codex_skills_extension::FrozenCloudSkillProvider::from_file(&path)
+            })
+            .await
+            .map_err(std::io::Error::other)?
+            .map_err(|err| std::io::Error::new(ErrorKind::InvalidInput, err))?;
+            Some(Arc::new(provider) as Arc<dyn codex_skills_extension::SkillProvider>)
+        }
+        None => None,
+    };
     #[cfg(target_os = "windows")]
     let _registered_core = codex_windows_sandbox::registered_core_requested();
     let managed_daemon = matches!(&transport, AppServerTransport::UnixSocket { .. })
@@ -548,18 +571,12 @@ pub async fn run_main_with_transport_options(
         arg0_paths.clone(),
         Arc::new(NoopThreadConfigLoader),
     );
-    let bootstrap_config = config_manager
-        .load_startup_config(startup_cwd.clone())
+    let startup = config_manager
+        .load_cloud_startup_config_with_cpa(startup_cwd.clone(), cpa.as_ref())
         .await?;
-    let bootstrap_auth = cpa_config::auth_manager(&bootstrap_config, cpa.as_ref()).await?;
-    config_manager.replace_cloud_config_bundle_loader(
-        bootstrap_auth,
-        bootstrap_config.chatgpt_base_url.clone(),
-        bootstrap_config.http_client_factory(),
-    );
     let mut config_warnings = Vec::new();
     let mut plugin_startup_config = PluginStartupConfig::Current;
-    let config = match config_manager.load_latest_config(startup_cwd).await {
+    let config = match startup.config {
         Ok(config) => config,
         Err(err) if is_unsupported_untrusted_approval_policy_error(&err) => {
             return Err(err);
@@ -718,12 +735,12 @@ pub async fn run_main_with_transport_options(
     let stderr_fmt: StderrLogLayer = match log_format_from_env() {
         LogFormat::Json => tracing_subscriber::fmt::layer()
             .json()
-            .with_writer(std::io::stderr)
+            .with_writer(codex_app_server_daemon::stderr_writer)
             .with_span_events(stderr_span_events())
             .with_filter(EnvFilter::from_default_env())
             .boxed(),
         LogFormat::Default => tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stderr)
+            .with_writer(codex_app_server_daemon::stderr_writer)
             .with_span_events(stderr_span_events())
             .with_filter(EnvFilter::from_default_env())
             .boxed(),
@@ -788,6 +805,14 @@ pub async fn run_main_with_transport_options(
     let remote_control_shutdown_token = transport_shutdown_token.child_token();
     let mut transport_accept_handles = Vec::<JoinHandle<()>>::new();
 
+    let websocket_compression = if config
+        .features
+        .enabled(Feature::AppServerWebSocketCompression)
+    {
+        WebSocketCompression::Zstd
+    } else {
+        WebSocketCompression::Plain
+    };
     let single_client_mode = matches!(&transport, AppServerTransport::Stdio);
     let graceful_signal_restart_enabled =
         runtime_options.install_shutdown_signal_handler && !single_client_mode;
@@ -818,6 +843,7 @@ pub async fn run_main_with_transport_options(
                 } else {
                     DaemonShutdownAccess::Disabled
                 },
+                websocket_compression,
             )
             .await?;
             transport_accept_handles.push(accept_handle);
@@ -836,6 +862,7 @@ pub async fn run_main_with_transport_options(
                     transport_event_tx.clone(),
                     transport_shutdown_token.clone(),
                     policy_from_settings(&auth)?,
+                    websocket_compression,
                 )
                 .await?
             };
@@ -991,10 +1018,12 @@ pub async fn run_main_with_transport_options(
         let initialize_notification_sender = outgoing_message_sender.clone();
         let outbound_control_tx = outbound_control_tx;
         let mut processor = MessageProcessor::new(MessageProcessorArgs {
+            cloud_skill_provider,
             outgoing: outgoing_message_sender,
             analytics_events_client,
             arg0_paths,
             config: Arc::new(config),
+            startup_cwd,
             config_manager,
             environment_manager,
             feedback: feedback.clone(),
@@ -1503,10 +1532,8 @@ fn sqlite_recovery_notice(
 fn emit_state_db_backup_warning(message: &str) {
     warn!("{message}");
     if !tracing::dispatcher::has_been_set() {
-        #[allow(clippy::print_stderr)]
-        {
-            eprintln!("{message}");
-        }
+        let _ =
+            codex_app_server_daemon::stderr_writer().write_all(format!("{message}\n").as_bytes());
     }
 }
 

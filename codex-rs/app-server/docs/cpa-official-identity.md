@@ -1,15 +1,15 @@
 # Official release identity
 
 The fixed official release is
-[`rust-v0.163.0`](https://github.com/openai/codex/releases/tag/rust-v0.163.0),
-commit `83086188ae0614bd882818ff1aa23f3194962012`. Both service branches incorporate
+[`rust-v0.164.0`](https://github.com/openai/codex/releases/tag/rust-v0.164.0),
+commit `6aaac694803004a63c6f393d153c96d22521a6b9`. Both service branches incorporate
 that release's source, including its native client and transport API changes.
 This is a fork build with model-only extensions, not an unmodified official binary.
 
 ## Source placeholders and published identity
 
 Committed Cargo workspace and local package versions remain `0.0.0`.
-`deploy/cpa-runtime/release-version` selects `0.163.0`; `prepare-release.py` stamps
+`deploy/cpa-runtime/release-version` selects `0.164.0`; `prepare-release.py` stamps
 only the build copy before compilation, including implicit workspace packages.
 It preserves binary/package names and third-party dependency versions. The image
 build performs the same preparation. Protocol capabilities never gate on this
@@ -17,8 +17,8 @@ product version or on the source revision.
 
 | Entry point                  | Official output for this release | Service packaging                                                |
 | ---------------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `codex --version`            | `codex-cli 0.163.0`              | Retained upstream CLI target; not packaged in the service image. |
-| `codex-app-server --version` | `codex-app-server 0.163.0`       | This exact target is built and copied into the service image.    |
+| `codex --version`            | `codex-cli 0.164.0`              | Retained upstream CLI target; not packaged in the service image. |
+| `codex-app-server --version` | `codex-app-server 0.164.0`       | This exact target is built and copied into the service image.    |
 
 The version output includes the original trailing newline. The executable remains
 `/usr/local/bin/codex-app-server`, without a fork suffix. The native telemetry
@@ -28,10 +28,10 @@ invent a supervisor product identity.
 
 A managed worker initializes as the retained `codex-tui` client with the compiled
 official version. The actual HTTP identity check on the same macOS arm64 host
-observes `originator: codex-tui`, `version: 0.163.0` and:
+observes `originator: codex-tui`, `version: 0.164.0` and:
 
 ```text
-codex-tui/0.163.0 (Mac OS 15.3.1; arm64) dumb (codex-tui; 0.163.0)
+codex-tui/0.164.0 (Mac OS 15.3.1; arm64) dumb (codex-tui; 0.164.0)
 ```
 
 Platform and terminal components vary normally with the host. Comparisons must use
@@ -46,8 +46,8 @@ before execution:
 
 | Official asset                              | SHA256                                                             |
 | ------------------------------------------- | ------------------------------------------------------------------ |
-| `codex-aarch64-apple-darwin.zst`            | `40474da2ee71172d214b04fa05de2e4ee2534c6d4df3c1d8fa61d4f2099ad6ce` |
-| `codex-app-server-aarch64-apple-darwin.zst` | `90c6b4e8e7abcbfe1858b811cf662e0448514a1286d1acaa7a15198d3023c038` |
+| `codex-aarch64-apple-darwin.tar.gz`            | `aa8299c169d80111aac05543ad2621c9bdbedb9bc252c905fe3f5a5baf9a4142` |
+| `codex-app-server-aarch64-apple-darwin.tar.gz` | `2eb75238651acb7d5c7cbb088b56433c71bbb680189c3bbd50318589858d57b1` |
 
 The artifact hashes are reproduction evidence, never capability or runtime gates.
 Both reference executables' actual version outputs were inspected. The service

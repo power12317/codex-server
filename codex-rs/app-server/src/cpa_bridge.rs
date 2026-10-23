@@ -35,7 +35,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 pub(crate) use upstream::record as record_request;
 
-const UPSTREAM: &str = "83086188ae0614bd882818ff1aa23f3194962012";
+const UPSTREAM: &str = "6aaac694803004a63c6f393d153c96d22521a6b9";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
 

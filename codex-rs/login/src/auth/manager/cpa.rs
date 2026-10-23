@@ -75,7 +75,7 @@ impl CpaCredentialFile {
         let Some(auth_dot_json) = self.load()? else {
             return Ok(None);
         };
-        let client = create_default_auth_client(&refresh_token_endpoint(), route)?;
+        let client = create_default_auth_client(&refresh_token_endpoint(None), route)?;
         Ok(Some(CodexAuth::Chatgpt(ChatgptAuth {
             state: ChatgptAuthState {
                 auth_dot_json: Arc::new(Mutex::new(Some(auth_dot_json))),

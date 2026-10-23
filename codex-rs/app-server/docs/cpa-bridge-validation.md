@@ -1,8 +1,48 @@
 # Codex Server inference validation record
 
-## 2026-10-23 official release and shared credential locking
+## 2026-10-23 official 0.164.0 source alignment
 
-The current source incorporates official `rust-v0.163.0`, commit
+The source incorporates official `rust-v0.164.0`, commit
+`6aaac694803004a63c6f393d153c96d22521a6b9`, retaining the main model-only HTTP
+path, source tickets, canonical shared credential lock and zero model retries.
+The official cloud-startup refactor uses the assigned CPA credential when running
+as a managed worker. Caller-owned tool schemas and native replay metadata remain
+intact. Unknown shared-file fields, including `allow_codex_client_siwc`, are
+preserved without selecting any SIWC behavior in Server.
+
+Rust 1.99.1 builds the service. Committed Cargo workspace and local lockfile
+versions remain `0.0.0`; release preparation reproduces the tested `0.164.0`
+build metadata byte-for-byte. Runtime/package names and originator are retained.
+Existing image destinations and workflow trigger conditions are unchanged.
+
+Server verification used synthetic credentials and local upstreams:
+
+- **22** service library tests, **76** real master/worker integration cases,
+  the dedicated root/retired-path test and all **3** shared-lock subprocess scenarios passed.
+- **317** protocol tests passed. The manual writer was explicitly run for stable
+  and experimental exports, including regeneration of Python SDK types.
+- **57** core client, **10** request-builder, **15** login-client, **83** auth-manager,
+  **200** API, **108** tool, **168** transport and **14** image-extension tests passed.
+  The ignored shared-lock child helper was executed through its parent test.
+- Exact executable version and **4** full initialize sequences matched the real
+  official macOS arm64 app-server. Actual outgoing identity, both capability
+  examples and real OAuth/shared-metadata preservation probes passed.
+- Source-ticket verification covered **5** requests and **3** snapshots,
+  preserving original IPC headers and separately redacting ordinary logs.
+- All **5** release-preparation tests passed.
+
+Immutable worker SHA256:
+`7286961f5d5452ba7bfccab9202a18cef36c7ce8279310e122c390a1856feb10`.
+The CPA coordinator paired this worker with CPA main
+`f3f27aae28f86b1c12e2d9e92c9665ed39974c21`; all **44** real-worker leaf checks
+and the Go race detector passed. This Server task did not execute CPA tests or
+modify CPA source.
+These checks do not claim cloud image publication or Windows runtime validation.
+Earlier sections below describe their own release checkpoints.
+
+## 2026-10-23 0.163.0 checkpoint and shared credential locking
+
+That checkpoint incorporated official `rust-v0.163.0`, commit
 `83086188ae0614bd882818ff1aa23f3194962012`, while retaining the main HTTP inference
 path and source-ticket behavior. Committed Cargo workspace/local lockfile versions
 remain `0.0.0`; release preparation stamps the tested official `0.163.0` identity.
