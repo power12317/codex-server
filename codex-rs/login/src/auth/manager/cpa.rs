@@ -2,9 +2,55 @@
 use super::*;
 use serde_json::Value;
 use serde_json::json;
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::Write;
+
+/// Keep the same stable sidecar as CPA locked through the final credential rename.
+struct CredentialLock(File);
+
+impl CredentialLock {
+    fn acquire(path: &std::path::Path) -> io::Result<Self> {
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(lock_path)?;
+        #[cfg(test)]
+        tests::before_lock(&file);
+        // std uses flock(LOCK_EX) on Unix and LockFileEx on Windows. The Windows
+        // range includes byte zero, overlapping CPA's one-byte exclusive lock.
+        file.lock()?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for CredentialLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+        // Never unlink the sidecar: another process may already be waiting on it.
+    }
+}
+
+fn canonical_credential_path(path: &std::path::Path) -> io::Result<PathBuf> {
+    let absolute = std::path::absolute(path)?;
+    if let Ok(resolved) = std::fs::canonicalize(&absolute) {
+        return Ok(resolved);
+    }
+    if let Some(parent) = absolute.parent()
+        && let Some(name) = absolute.file_name()
+        && let Ok(parent) = std::fs::canonicalize(parent)
+    {
+        return Ok(parent.join(name));
+    }
+    Ok(absolute)
+}
 
 #[derive(Clone, Debug)]
 pub struct CpaCredentialFile {
@@ -63,7 +109,10 @@ impl AuthStorageBackend for CpaCredentialFile {
     }
 
     fn save(&self, auth: &AuthDotJson) -> io::Result<()> {
-        let mut value = self.read()?;
+        let path = canonical_credential_path(&self.path)?;
+        let _lock = CredentialLock::acquire(&path)?;
+        let mut value: Value =
+            serde_json::from_slice(&std::fs::read(&path)?).map_err(io::Error::other)?;
         if !enabled(&value) {
             return Err(io::Error::other("CPA credential is disabled"));
         }
@@ -81,9 +130,7 @@ impl AuthStorageBackend for CpaCredentialFile {
         if let Ok(Some(expired)) = parse_jwt_expiration(&tokens.access_token) {
             value["expired"] = json!(expired);
         }
-        let temporary = self
-            .path
-            .with_file_name(format!(".cpa-{}.tmp", crate::oauth::generate_state()));
+        let temporary = path.with_file_name(format!(".cpa-{}.tmp", crate::oauth::generate_state()));
         let result = (|| {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
@@ -95,7 +142,7 @@ impl AuthStorageBackend for CpaCredentialFile {
             let mut file = options.open(&temporary)?;
             file.write_all(&serde_json::to_vec(&value)?)?;
             file.sync_all()?;
-            std::fs::rename(&temporary, &self.path)
+            std::fs::rename(&temporary, &path)
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
@@ -107,6 +154,10 @@ impl AuthStorageBackend for CpaCredentialFile {
         Err(io::Error::other("CPA manages credential removal"))
     }
 }
+
+#[cfg(test)]
+#[path = "cpa_tests.rs"]
+mod tests;
 
 fn enabled(value: &Value) -> bool {
     value["type"]

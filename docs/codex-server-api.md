@@ -153,6 +153,13 @@ recursively scans `.json` files every 500 ms. A credential is enabled when its
 Its `credentialId` is the relative filename, such as `team/account.json`;
 case, extensions and nested directories are significant on Linux.
 
+Token saves participate in CPA's cross-process credential lock: the canonical
+credential path plus `.lock`, retained as a stable sidecar. The worker holds an
+exclusive OS file lock while reading the latest JSON, checking enabled state and
+atomically replacing normal token fields. Nested `siwc`, `use_siwc`, control flags
+and unknown metadata are preserved. Other writers must use the same lock; a
+disabled or removed credential is not silently recreated by a pending token save.
+
 1. Create the enabled placeholder on the server.
 2. Call `cpa/credential/reload` with that credential ID to reconcile immediately.
 3. Call `cpa/auth/login/start` with the same ID.
