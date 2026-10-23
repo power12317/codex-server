@@ -18,8 +18,13 @@ Clone this fork, not the upstream CLI distribution:
 git clone https://github.com/power12317/codex-server.git
 cd codex-server/codex-rs
 rustup show
+python3 ../deploy/cpa-runtime/prepare-release.py
 cargo build --locked --release -p codex-app-server --bin codex-app-server
 ```
+
+Run release preparation in a build checkout. It stamps the official release
+version into the build metadata; committed Cargo source placeholders remain
+`0.0.0`. Docker performs the same preparation automatically.
 
 Install Rust through [rustup](https://rustup.rs/) if needed. The workspace's
 `rust-toolchain.toml` selects the supported toolchain. Native build dependencies

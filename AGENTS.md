@@ -2,6 +2,7 @@
 
 ## Official identity
 
+- Keep committed Cargo workspace and local lockfile package versions at `0.0.0`. Use `deploy/cpa-runtime/prepare-release.py` to stamp the official release into a build copy; do not commit transient build-version changes.
 - For the same official release, entry point and target platform, preserve upstream names and version information byte-for-byte: Cargo packages/binaries, version output, initialize metadata, User-Agent, originator and telemetry identity.
 - Never invent product/client names, version numbers or suffixes. Compare with the matching official source and release artifact before changing identity-related code.
 - Preserve official target distinctions: `codex-cli` builds `codex`; `codex-app-server` builds `codex-app-server`. Do not rename a target or fake another entry point's version output.

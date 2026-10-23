@@ -293,9 +293,9 @@ pub async fn prepare_inference_request(
         &session.metadata,
         false,
     )?;
-    let options = session
-        .session
+    let options = ResponsesHttpExecutor::new(&client)
         .build_responses_options(
+            &session.session.turn_state,
             &session.metadata,
             Compression::None,
             model_info.use_responses_lite,

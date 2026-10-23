@@ -31,6 +31,55 @@ These errors are not evidence that history is exhausted; callers can retry.
 A successful response with `nextCursor: null` still indicates exhaustion.
 Default scan-and-repair requests retain their filesystem fallback.
 
+# Shutdown admission errors
+
+When graceful shutdown rejects new work, app-server returns JSON-RPC error
+`-32600` with `data: {"reason":"serverShuttingDown"}`. Clients can use the
+reason to distinguish shutdown from other invalid requests.
+
+# Thread read state (experimental)
+
+Local durable ordinary user threads expose a `readState` on the
+`thread/read` response. `thread/list` returns `readStates`, a map from eligible
+thread IDs on the returned page to their receipts. Null (or absent on older servers)
+means durable read state is unavailable; a missing map entry means that row is
+ineligible. Ephemeral, not-yet-persisted, service and product-owned threads are
+ineligible. Shared `Thread` objects, including search and lifecycle responses,
+carry no receipts. After start, resume or fork, use `thread/read` to obtain the
+current receipt.
+Each local thread has one receipt, with the same storage ownership as the thread.
+
+A read state is `{firstUnread, revision}`. `firstUnread` is null when read,
+`{type:"threadStart"}` for an explicit unread mark (even for an empty thread),
+or `{type:"turn", turnId}` for the earliest eligible completed result.
+`revision` is an opaque string, scoped to this thread.
+
+Only newly delivered, durable, visible terminal results advance read state,
+before `turn/completed`. Every new result changes the revision, even when an
+older turn remains the first unread position. Reverting a paginated thread
+clears a removed position; explicit thread-start marks survive. Loading snapshots
+never acknowledges activity; empty threads start read and forked history does
+not publish inherited turns as new results.
+
+Enabling `initialize.capabilities.experimentalApi` permits updating read state and
+receiving its notifications.
+
+`thread/readState/update` takes `{threadId, expectedRevision, operation}`,
+where operation is `{type:"read"}` or `{type:"unread"}`.
+Use the revision of the row or transcript actually seen. An unread edit
+starts at `threadStart`; a read edit clears the position. Both require an
+exact revision match, and both conflicts return `-32600` with
+`{reason:"readStateConflict", readState:<current>}` as error data.
+Do not blindly retry: the original action may precede an unseen result or
+another window's mark. Unavailable threads fail; writes never change recency.
+
+Started, resumed or forked threads send `thread/readState/changed` alongside
+ordinary thread events; thread/unsubscribe or disconnect stops delivery.
+Clients can filter this method with the existing notification opt-out setting.
+Revisions are equality tokens, not clocks: never compare or merge them across
+threads or hosts. When concurrent responses disagree, refresh with `thread/read`.
+Offscreen threads converge on page refresh.
+
 # Guardian circuit-breaker errors
 
 Set `auto_review.circuit_break_action = "strict"` to include `TooManyDenials` in
@@ -352,6 +401,18 @@ A non-ephemeral fork copies the source thread's current attachments, even when f
 Attachment creation and deletion requests using the same thread ID are serialized across connections. The requesting client receives its response before the compact update is broadcast, and duplicate creates or absent deletes do not emit updates. Deleting the owning thread removes its attachments under the same lifecycle exclusion; queued attachment mutations then report that the thread was not found.
 
 # Thread plugin settings
+
+Plugin summaries returned by `plugin/list`, `plugin/installed`, `plugin/read`,
+and `plugin/share/list` report effective `enabled` state. When
+`plugins._default.enabled` is configured, an explicit
+`plugins."<plugin-name>@<marketplace-name>".enabled` overrides that default;
+a plugin disabled at its source remains disabled. Omitting the default preserves
+existing source and account enablement. Other plugin settings, including remembered
+tool approvals, inherit the activation default unless `enabled` is explicitly set.
+`plugin/search` retains its discovery behavior: results report `enabled: false`
+while preserving their installation state.
+Remote `plugin/install` still installs a policy-disabled package, but skips MCP and
+Apps authentication setup without writing an `enabled` override.
 
 `thread/settings/update` and `turn/start` accept `disabledPluginIds`, a list of
 `PluginSummary.id` values from `plugin/list`, in the

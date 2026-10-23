@@ -174,6 +174,9 @@ impl InferenceSession {
             /*include_timing_metrics*/ false,
             /*beta_features_header*/ None,
             /*concurrent_reasoning_summaries_enabled*/ false,
+            config
+                .features
+                .enabled(codex_features::Feature::OutputTokenReplay),
             /*attestation_provider*/ None,
             config.http_client_factory(),
             config.workspace_routing_context(),

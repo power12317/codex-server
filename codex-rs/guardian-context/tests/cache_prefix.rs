@@ -13,6 +13,7 @@ use codex_guardian_context::SectionInput;
 use codex_guardian_context::TranscriptFormat;
 use codex_guardian_context::TrustedSkills;
 use codex_guardian_context::TrustedTool;
+use codex_guardian_context::TrustedToolSource;
 use codex_guardian_context::default_registry;
 use codex_history::RetainedContext;
 use codex_history::RetainedInputSource;
@@ -39,6 +40,8 @@ impl SectionHistory for History {
 
 fn user_message(texts: Vec<String>) -> ResponseItem {
     ResponseItem::Message {
+        status: None,
+        encrypted_content: None,
         id: None,
         role: "user".to_owned(),
         content: texts
@@ -106,7 +109,7 @@ fn changing_retained_context_and_attestations_preserves_history_before_the_curre
             let tool = TrustedTool {
                 server: format!("server-{generation}"),
                 connector_id: None,
-                source: "user configuration".to_owned(),
+                source: TrustedToolSource::UserConfiguration("user configuration".to_owned()),
             };
             let skills = TrustedSkills {
                 paths: vec![format!("/skills/skill-{generation}/SKILL.md")],
@@ -197,7 +200,14 @@ fn changing_retained_context_and_attestations_preserves_history_before_the_curre
 
 #[test]
 fn snapshot_split_preserves_evidence_and_prefix_when_assistants_and_reviews_change() {
-    for message_id in [None, Some("instruction".to_owned())] {
+    for (format, message_id) in [TranscriptFormat::Line, TranscriptFormat::Json]
+        .into_iter()
+        .flat_map(|format| {
+            [None, Some("instruction".to_owned())]
+                .into_iter()
+                .map(move |message_id| (format, message_id))
+        })
+    {
         let has_source_id = message_id.is_some();
         let mut retained = RetainedContext::default();
         retained.record_user_message(
@@ -215,7 +225,8 @@ fn snapshot_split_preserves_evidence_and_prefix_when_assistants_and_reviews_chan
             items: vec![user_message(vec!["Current workspace evidence.".to_owned()])],
             retained: Some(retained),
         };
-        let profile = ContextProfile::asynchronous();
+        let mut profile = ContextProfile::asynchronous();
+        profile.transcript_format = format;
         let mut prefix = None;
         // Append, replace and remove reviews while assistant evidence grows.
         for generation in 0..4 {

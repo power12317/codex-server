@@ -1,5 +1,42 @@
 # Codex Server inference validation record
 
+## 2026-10-23 official release and shared credential locking
+
+The current source incorporates official `rust-v0.163.0`, commit
+`83086188ae0614bd882818ff1aa23f3194962012`, while retaining the main HTTP inference
+path and source-ticket behavior. Committed Cargo workspace/local lockfile versions
+remain `0.0.0`; release preparation stamps the tested official `0.163.0` identity.
+The native builder now retains the replay metadata supported by this release,
+including message/function status and output-text annotations/logprobs.
+
+Normal token updates participate in CPA's canonical credential-path `.lock`.
+The lock covers reading current JSON, checking enabled state and atomically
+replacing normal token fields. A deterministic subprocess test verifies concurrent
+metadata updates, disabling and renaming before the worker acquires the lock;
+nested SIWC metadata stays opaque and is retained.
+
+Validation used local upstreams and synthetic credentials:
+
+- **22** service library checks, **76** real master/worker cases, the dedicated
+  root-path check and all **3** shared-lock subprocess scenarios passed.
+- **316** protocol checks passed; stable/experimental exports and Python SDK types
+  were regenerated with the repository script.
+- **57** core client, **15** login client, **199** API, **108** tools and
+  **10** request-builder checks passed.
+- Exact version output and **4** complete initialize sequences matched the official
+  macOS arm64 app-server. The actual worker User-Agent equals the official binary's
+  result; request headers, both example clients and shared metadata probes passed.
+- The source-ticket probe made **5** model requests and received **3** expected
+  snapshots with original IPC headers and separate ordinary-log privacy.
+- The unchanged CPA main `97b7abb6` passed **44** real-worker leaf checks with the
+  Go race detector against this final candidate.
+
+The immutable local worker SHA256 is
+`cb71f1cc5e3853839386c80c60ba389eb4e6c5cb0c1e6e2dfd2eb070059f278c`.
+Artifact hashes are reproduction evidence, never compatibility gates. Earlier
+dated sections below describe their own checkpoints; local results do not claim
+completion of the Linux image workflow.
+
 ## 2026-10-23 capabilities and root WebSocket
 
 The public master and dedicated worker listener now accept the root WebSocket

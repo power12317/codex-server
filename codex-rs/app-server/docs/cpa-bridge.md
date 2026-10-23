@@ -199,7 +199,8 @@ bridge lifecycle. No local image execution or agent loop is introduced.
 
 The HTTP entry normalizes CPA's business input before the native builder.
 It accepts string input/content and inferable message/function wrappers, consumes
-response display status/annotations, and preserves text, encrypted reasoning,
+non-native display extensions, and preserves native message/function status,
+output-text annotations/logprobs, text, encrypted reasoning,
 compaction and tool call/result relationships. A missing result `call_id` is
 inferred only from one matching unfinished call in the current input. Ambiguous
 or contradictory associations fail with a specific adaptation error.
@@ -232,7 +233,7 @@ credential ownership, framing and cancellation remain checked. Local adaptation
 errors use `request_adaptation_error`; upstream HTTP failures preserve their
 original status, headers and body. Optional diagnostics cannot themselves become
 model transport failures. Inference resubmission after 401/429/5xx belongs to CPA,
-with zero worker inference retries. Official 0.162.1 identity is unchanged.
+with zero worker inference retries. Official 0.163.0 identity is unchanged.
 
 ## Response identity projection
 

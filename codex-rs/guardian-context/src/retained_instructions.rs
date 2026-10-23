@@ -228,20 +228,12 @@ impl ComposedContext {
                 SectionOutput {
                     id: "retained_assistant_context",
                     delivery: SectionDelivery::UserContent(
-                        std::iter::once(Budgeted::required(
-                            ContentItem::InputText {
-                                text: assistant_start.to_owned(),
-                            }
-                            .into(),
-                        ))
-                        .chain(assistant)
-                        .chain(std::iter::once(Budgeted::required(
-                            ContentItem::InputText {
-                                text: assistant_end.to_owned(),
-                            }
-                            .into(),
-                        )))
-                        .collect(),
+                        std::iter::once(Budgeted::required(assistant_start.to_owned().into()))
+                            .chain(assistant)
+                            .chain(std::iter::once(Budgeted::required(
+                                assistant_end.to_owned().into(),
+                            )))
+                            .collect(),
                     ),
                 },
             );
