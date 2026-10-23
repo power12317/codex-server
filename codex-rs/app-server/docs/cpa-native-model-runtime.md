@@ -3,8 +3,8 @@
 This document describes the sole model execution path and model-only extensions on
 `codex/native-model-runtime`.
 
-The fixed native reference is Codex `0.163.0`, commit
-`83086188ae0614bd882818ff1aa23f3194962012`. The client identity, originator and
+The fixed native reference is Codex `0.164.0`, commit
+`6aaac694803004a63c6f393d153c96d22521a6b9`. The client identity, originator and
 User-Agent remain the existing Codex identities.
 
 See [validation and reproduction](cpa-native-model-validation.md) for the fixed
@@ -71,7 +71,7 @@ cookie storage and sending remain unchanged; no handshake response is replayed.
 
 ### WebSocket turn-state metadata compatibility
 
-This branch deliberately extends official `0.163.0` in one parser rule: both
+This branch deliberately extends official `0.164.0` in one parser rule: both
 `response.metadata` and `codex.response.metadata` may supply
 `headers.x-codex-turn-state` on a WebSocket response. The unmodified official
 baseline accepts only the former for turn-state extraction.
@@ -89,7 +89,7 @@ unchanged.
 
 The `cpa/*` methods extend the official app-server envelope. Native model execution
 is the only implementation; there is no execution capability switch, legacy sender or CPA
-direct model fallback. The official runtime version remains `0.163.0`.
+direct model fallback. The official runtime version remains `0.164.0`.
 
 The root WebSocket path is `/`; the retired versioned bridge route is not an
 alias. Official initialization, health endpoints and authentication behavior are

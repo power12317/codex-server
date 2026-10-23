@@ -507,6 +507,7 @@ async fn cpa_native_images_dto_and_atomic_json_delivery() -> Result<()> {
     .enumerate()
     {
         let mut input = json!({"model":"gpt-image-2","prompt":"fixture","stream":stream});
+        input["turn_id"] = json!("caller-image-turn");
         if operation == "edits" {
             input["images"] = json!([{"image_url":"data:image/png;base64,aW1hZ2U="}]);
         }
@@ -523,6 +524,12 @@ async fn cpa_native_images_dto_and_atomic_json_delivery() -> Result<()> {
         let body = wire(&result);
         assert_eq!(body["stream"], stream);
         assert!(body.get("n").is_none());
+        let requests = upstream.received_requests().await.expect("image requests");
+        let headers = &requests.last().expect("latest image request").headers;
+        let turn_metadata: Value =
+            serde_json::from_str(headers["x-codex-turn-metadata"].to_str()?)?;
+        assert_eq!(turn_metadata["turn_id"], "caller-image-turn");
+        assert_eq!(headers["x-codex-image-turn-id"], "caller-image-turn");
     }
     for (key, value) in [
         ("mask", json!(true)),

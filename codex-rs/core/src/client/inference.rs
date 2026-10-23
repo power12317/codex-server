@@ -67,7 +67,7 @@ impl InferenceRequest {
                 ResponseItem::AdditionalTools {
                     id: None,
                     role: "developer".into(),
-                    tools: hosted,
+                    tools: hosted.into(),
                 },
             );
         }

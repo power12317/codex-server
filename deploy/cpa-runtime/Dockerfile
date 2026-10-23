@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Override both image arguments with immutable digests for a deployment build.
-ARG RUST_IMAGE=rust:1.95.0-bookworm
+ARG RUST_IMAGE=rust:1.99.1-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 FROM ${RUST_IMAGE} AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \

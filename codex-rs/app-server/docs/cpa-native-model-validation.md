@@ -2,12 +2,56 @@
 
 This report covers the experimental `codex/native-model-runtime` branch. It does
 not certify the stable HTTP bridge or a published Linux image. The fixed reference
-is official Codex `0.163.0`, commit
-`83086188ae0614bd882818ff1aa23f3194962012`.
+is official Codex `0.164.0`, commit
+`6aaac694803004a63c6f393d153c96d22521a6b9`.
 
-## 2026-10-23 official release and shared credential locking
+## 2026-10-23 official 0.164.0 source alignment
 
-The current source incorporates official `rust-v0.163.0`, commit
+This branch incorporates official `rust-v0.164.0`, commit
+`6aaac694803004a63c6f393d153c96d22521a6b9`. Native model execution, immediate
+streaming, continuation, original IPC headers and independent diagnostic completion
+remain intact. The model-only path makes a single attempt; CPA owns retries.
+New native image turn metadata uses the same mapped identity as the model request.
+The normal Agent sampling path retains official mailbox draining and tool metrics.
+
+The updated startup flow uses each managed worker's assigned credential. Shared
+credential saves retain the canonical `.lock` and preserve unknown fields,
+including `allow_codex_client_siwc`. Server does not interpret that switch or
+execute SIWC. Caller-owned schemas and supported replay metadata remain intact.
+
+Rust 1.99.1 builds the service. Committed Cargo workspace/local lockfile versions
+remain `0.0.0`; release preparation reproduces the tested `0.164.0` metadata
+byte-for-byte. Existing image destinations and workflow triggers are unchanged.
+
+Server validation used local mock upstreams and synthetic credentials:
+
+- **36** service library checks, **64** real master/worker integration cases,
+  the dedicated root/retired-path check and all **3** shared-lock scenarios passed.
+  Existing continuation and zero-retry assertions remain unchanged; image tests
+  also verify native turn metadata on the actual outgoing requests.
+- **317** protocol tests passed; stable/experimental schema exports and Python SDK
+  types were regenerated with the repository writer.
+- **57** core client, **10** builder, **15** login-client, **83** auth-manager,
+  **197** API, **108** tool, **168** transport, **14** image-extension and **2**
+  native retry-policy checks passed. Ignored writer/child helpers were explicitly
+  executed by their generation commands or parent test.
+- Exact executable version and **4** full initialize sequences matched the official
+  macOS arm64 app-server. The actual outgoing identity, both capability examples,
+  ordinary OAuth and opaque shared-metadata preservation probes passed.
+- All **5** release-preparation tests passed.
+
+Immutable worker SHA256:
+`8680f51cfb713d45ab1f68d7a3d08f5371eae4e0cc50e4e437033ed63cee1f14`.
+The CPA coordinator paired this worker with CPA native
+`ec3937d211eb1ed52a13bde4023e449214081323`; all **199** real-worker leaf checks
+and the Go race detector passed. This Server task did not execute CPA tests or
+modify CPA source.
+These checks do not claim cloud image publication or Windows runtime validation.
+Earlier sections below describe their own release checkpoints.
+
+## 2026-10-23 0.163.0 checkpoint and shared credential locking
+
+That checkpoint incorporated official `rust-v0.163.0`, commit
 `83086188ae0614bd882818ff1aa23f3194962012`. The dated sections below describe
 earlier checkpoints. Committed Cargo workspace and local lockfile versions remain
 `0.0.0`; release preparation reproduces the tested `0.163.0` build metadata

@@ -39,12 +39,14 @@ pub struct HttpClientBuilder {
     follow_redirects: bool,
     automatic_retries: bool,
     pub(crate) redirect_observed: Option<Arc<AtomicBool>>,
-    connect_timeout: Option<Duration>,
+    pub(crate) connect_timeout: Option<Duration>,
     chatgpt_cloudflare_cookie_store: bool,
     chatgpt_cookie_store: Option<Arc<ChatGptCookieStore>>,
     pub(crate) request_logging: RequestLogging,
     tls_backend: TlsBackend,
-    tls: HttpClientTlsConfig,
+    pub(crate) tls: HttpClientTlsConfig,
+    #[cfg(windows)]
+    windows_proxy_pipe_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -191,9 +193,21 @@ impl HttpClientBuilder {
             )
             .into_client());
         }
+        let route = http_client_factory.resolve_proxy_route(request_url);
+        #[cfg(windows)]
+        if crate::windows_proxy_auth::can_authenticate_route(request_url, &route) {
+            return Ok(crate::RouteAwareClientPool::with_builder_and_initial_route(
+                http_client_factory.clone(),
+                route_class,
+                self,
+                route,
+            )?
+            .into_client());
+        }
         self.chatgpt_cookie_store = http_client_factory.chatgpt_cookie_store();
         let (builder, request_logging, default_headers) = self.into_reqwest_parts();
-        let inner = http_client_factory.build_reqwest_client(builder, request_url, route_class)?;
+        let inner =
+            crate::outbound_proxy::build_reqwest_client_for_route(builder, route_class, &route)?;
         Ok(HttpClient::from_parts(
             inner,
             request_logging,
@@ -211,23 +225,31 @@ impl HttpClientBuilder {
         self.chatgpt_cookie_store = http_client_factory.chatgpt_cookie_store();
         let explicit_roots = self.tls.root_certificate.is_some();
         let (builder, request_logging, default_headers) = self.into_reqwest_parts();
-        let builder = crate::outbound_proxy::configure_builder_for_resolved_route(
-            builder,
-            route_class,
-            route,
-        )?;
         let inner = if explicit_roots {
-            builder
-                .build()
-                .map_err(BuildRouteAwareHttpClientError::ExplicitTls)?
+            crate::outbound_proxy::configure_builder_for_resolved_route(
+                builder,
+                route_class,
+                route,
+            )?
+            .build()
+            .map_err(BuildRouteAwareHttpClientError::ExplicitTls)?
         } else {
-            build_reqwest_client_with_custom_ca(builder)?
+            crate::outbound_proxy::build_reqwest_client_for_route(builder, route_class, route)?
         };
         Ok(TransportClient::new(
             inner,
             request_logging,
             default_headers,
         ))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn with_windows_proxy_pipe(
+        mut self,
+        pipe: &crate::windows_proxy_auth::ProxyPipe,
+    ) -> Self {
+        self.windows_proxy_pipe_path = Some(pipe.path().to_owned());
+        self
     }
 
     /// Builds a client using the transport's default proxy behavior.
@@ -368,6 +390,10 @@ impl HttpClientBuilder {
         if !self.automatic_retries {
             builder = builder.retry(reqwest::retry::never());
         }
+        #[cfg(windows)]
+        if let Some(path) = self.windows_proxy_pipe_path {
+            builder = builder.windows_named_pipe(path);
+        }
         if self.http2_prior_knowledge {
             builder = builder.http2_prior_knowledge();
         }
@@ -378,10 +404,10 @@ impl HttpClientBuilder {
         if let Some(certificate) = self.tls.root_certificate {
             builder = builder
                 .tls_built_in_root_certs(false)
-                .add_root_certificate(certificate);
+                .add_root_certificate(certificate.reqwest);
         }
         if let Some(identity) = self.tls.client_identity {
-            builder = builder.identity(identity).https_only(true);
+            builder = builder.identity(identity.reqwest).https_only(true);
         }
         if !self.follow_redirects {
             builder = builder.redirect(reqwest::redirect::Policy::none());
@@ -418,6 +444,8 @@ impl Default for HttpClientBuilder {
             request_logging: RequestLogging::Enabled,
             tls_backend: TlsBackend::TransportDefault,
             tls: HttpClientTlsConfig::default(),
+            #[cfg(windows)]
+            windows_proxy_pipe_path: None,
         }
     }
 }

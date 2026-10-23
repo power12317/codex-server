@@ -5,6 +5,7 @@ use codex_api::ImageResponse;
 use codex_api::ImagesClient;
 use codex_api::ReqwestTransport;
 use codex_api::map_api_error;
+use codex_core::X_CODEX_TURN_METADATA_HEADER;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClientFactory;
 use codex_login::default_client::add_originator_header;
@@ -130,12 +131,13 @@ impl CodexImagesBackend {
         &self,
         request: ImageGenerationRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(), ImageBackendError> {
         self.client_once("/images/generations")
             .await?
             .generate_live(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
@@ -145,12 +147,13 @@ impl CodexImagesBackend {
         &self,
         request: ImageEditRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(), ImageBackendError> {
         self.client_once("/images/edits")
             .await?
             .edit_live(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
@@ -161,12 +164,13 @@ impl CodexImagesBackend {
         &self,
         request: ImageGenerationRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
         self.client_once("/images/generations")
             .await?
             .generate(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
@@ -177,12 +181,13 @@ impl CodexImagesBackend {
         &self,
         request: ImageEditRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
         self.client_once("/images/edits")
             .await?
             .edit(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
@@ -193,12 +198,13 @@ impl CodexImagesBackend {
         &self,
         request: ImageGenerationRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
         self.client()
             .await?
             .generate(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
@@ -209,19 +215,24 @@ impl CodexImagesBackend {
         &self,
         request: ImageEditRequest,
         turn_id: &str,
+        codex_turn_metadata: Option<&str>,
     ) -> Result<(ImageResponse, Option<String>), ImageBackendError> {
         self.client()
             .await?
             .edit(
                 &request,
-                image_request_headers(self.originator.as_deref(), turn_id),
+                image_request_headers(self.originator.as_deref(), turn_id, codex_turn_metadata),
             )
             .await
             .map_err(ImageBackendError::from_image_request)
     }
 }
 
-fn image_request_headers(originator: Option<&str>, turn_id: &str) -> HeaderMap {
+fn image_request_headers(
+    originator: Option<&str>,
+    turn_id: &str,
+    codex_turn_metadata: Option<&str>,
+) -> HeaderMap {
     let mut headers = HeaderMap::new();
     if let Ok(turn_id) = HeaderValue::from_str(turn_id) {
         headers.insert(X_CODEX_IMAGE_TURN_ID_HEADER, turn_id);
@@ -229,5 +240,12 @@ fn image_request_headers(originator: Option<&str>, turn_id: &str) -> HeaderMap {
     if let Some(originator) = originator {
         add_originator_header(&mut headers, originator);
     }
+
+    if let Some(metadata) = codex_turn_metadata
+        && let Ok(metadata) = HeaderValue::from_str(metadata)
+    {
+        headers.insert(X_CODEX_TURN_METADATA_HEADER, metadata);
+    }
+
     headers
 }

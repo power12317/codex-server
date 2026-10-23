@@ -97,6 +97,7 @@ pub(super) async fn execute(
         Some(codex_login::default_client::originator().value),
     );
     let mapping = session.mapping();
+    let turn_metadata = session.turn_metadata_json();
     let turn_id = mapping
         .turn_id
         .as_deref()
@@ -115,10 +116,13 @@ pub(super) async fn execute(
                     options: request.options,
                 },
                 turn_id,
+                turn_metadata.as_deref(),
             )
             .await
     } else {
-        backend.generate_live_once(request, turn_id).await
+        backend
+            .generate_live_once(request, turn_id, turn_metadata.as_deref())
+            .await
     }
     .map(|_| ())
     .map_err(|error| native_failure(error.codex_error()))

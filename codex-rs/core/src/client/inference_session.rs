@@ -262,6 +262,11 @@ impl InferenceSession {
         }
     }
 
+    /// Native turn attribution for image requests, using the same mapped identity.
+    pub fn turn_metadata_json(&self) -> Option<String> {
+        self.metadata.turn_metadata_json()
+    }
+
     pub fn turn_state(&self) -> Option<&str> {
         self.turn_state.get().map(String::as_str)
     }
