@@ -1163,9 +1163,7 @@ impl ModelClient {
             tool_choice: controls
                 .and_then(|c| c.tool_choice.clone())
                 .unwrap_or_else(|| serde_json::json!("auto")),
-            parallel_tool_calls: controls
-                .and_then(|c| c.parallel_tool_calls)
-                .unwrap_or(prompt.parallel_tool_calls && !model_info.use_responses_lite),
+            parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
             reasoning: Some(reasoning),
             store: controls.and_then(|c| c.store).unwrap_or(false),
             stream: true,

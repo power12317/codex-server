@@ -62,7 +62,7 @@ async fn cpa_native_compatible_controls_and_tool_contracts(lite: bool) -> Result
         );
         let sent = wire(&result);
         assert_eq!(sent["include"], json!([]));
-        assert_eq!(sent["parallel_tool_calls"], true);
+        assert_eq!(sent["parallel_tool_calls"], !lite);
         assert_eq!(sent["store"], true);
         assert_eq!(sent["max_output_tokens"], 123);
         assert_eq!(sent["temperature"], 0.4);

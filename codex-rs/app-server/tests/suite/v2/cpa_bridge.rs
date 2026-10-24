@@ -6,6 +6,9 @@ mod native_runtime_tests;
 #[path = "cpa_bridge/schema_tests.rs"]
 mod schema_tests;
 
+#[path = "cpa_bridge/parallel_tests.rs"]
+mod parallel_tests;
+
 use anyhow::Result;
 use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::MockResponsesConfig;
