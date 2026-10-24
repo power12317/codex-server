@@ -262,3 +262,6 @@ pub fn all_model_presets() -> &'static Vec<ModelPreset> {
 pub fn builtin_collaboration_mode_presets() -> Vec<CollaborationModeMask> {
     collaboration_mode_presets::builtin_collaboration_mode_presets()
 }
+
+/// Native-type fixtures shared with external model-only bridge regressions.
+pub mod inference_fixtures;

@@ -170,7 +170,7 @@ async fn unsupported_tool_error_identifies_array_location() -> Result<()> {
         response["error"]["message"]
             .as_str()
             .expect("fixture response must contain the expected native fields")
-            .contains("tools[1]: unsupported tool type"),
+            .contains("tools[1]: unknown variant"),
         "{response}"
     );
     assert!(

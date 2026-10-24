@@ -154,7 +154,7 @@ pub enum ReasoningContext {
     AllTurns,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Reasoning {
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -257,7 +257,7 @@ pub struct ResponsesGenerationOptions {
 
 /// Controls the `text` field for the Responses API, combining verbosity and
 /// optional JSON schema output formatting.
-#[derive(Debug, Serialize, Default, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct TextControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verbosity: Option<OpenAiVerbosity>,
@@ -265,7 +265,7 @@ pub struct TextControls {
     pub format: Option<ResponsesTextFormat>,
 }
 
-#[derive(Debug, Serialize, Default, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenAiVerbosity {
     Low,

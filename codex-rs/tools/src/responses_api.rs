@@ -31,7 +31,7 @@ pub struct FreeformToolFormat {
     pub definition: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResponsesApiTool {
     pub name: String,
     pub description: String,
@@ -41,15 +41,18 @@ pub struct ResponsesApiTool {
     pub strict: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub defer_loading: Option<bool>,
+    #[serde(deserialize_with = "JsonSchema::deserialize_caller")]
     pub parameters: JsonSchema,
     #[serde(
         skip_serializing_if = "ToolOutputSchema::omit_from_request",
-        serialize_with = "ToolOutputSchema::serialize_request"
+        serialize_with = "ToolOutputSchema::serialize_request",
+        default,
+        deserialize_with = "ToolOutputSchema::deserialize_request"
     )]
     pub output_schema: Option<ToolOutputSchema>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 #[allow(clippy::large_enum_variant)]
 pub enum LoadableToolSpec {
@@ -60,7 +63,7 @@ pub enum LoadableToolSpec {
     Namespace(ResponsesApiNamespace),
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResponsesApiNamespace {
     pub name: String,
     pub description: String,
@@ -75,7 +78,7 @@ pub fn default_namespace_description(namespace_name: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 #[allow(clippy::large_enum_variant)]
 pub enum ResponsesApiNamespaceTool {

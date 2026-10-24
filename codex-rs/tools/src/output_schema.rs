@@ -23,6 +23,13 @@ impl ToolOutputSchema {
         Self(OutputSchemaStorage::CallerJson(Arc::new(value)))
     }
 
+    pub(crate) fn deserialize_request<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Self>, D::Error> {
+        <Option<Value> as serde::Deserialize>::deserialize(deserializer)
+            .map(|value| value.map(Self::from_caller))
+    }
+
     pub(crate) fn omit_from_request(value: &Option<Self>) -> bool {
         !value
             .as_ref()

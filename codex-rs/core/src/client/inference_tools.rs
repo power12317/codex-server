@@ -1,13 +1,5 @@
 //! Normalize inference tools without changing names, call IDs or schema constraints.
 use anyhow::Context;
-use codex_protocol::config_types::WebSearchFilters;
-use codex_protocol::config_types::WebSearchUserLocation;
-use codex_tools::FreeformTool;
-use codex_tools::FreeformToolFormat;
-use codex_tools::JsonSchema;
-use codex_tools::ResponsesApiNamespace;
-use codex_tools::ResponsesApiNamespaceTool;
-use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
 use serde_json::Value;
 use serde_json::json;
@@ -40,7 +32,6 @@ impl InferenceTools {
                         anyhow::anyhow!("{location}: namespace tools must be an array")
                     })?;
                     let mut native_children = Vec::new();
-                    let mut wire_children = Vec::new();
                     for (child_index, child) in children.iter().enumerate() {
                         let (spec, child) = parse_tool(child)
                             .with_context(|| format!("{location}.tools[{child_index}]"))?;
@@ -48,21 +39,16 @@ impl InferenceTools {
                             names.insert((Some(name.clone()), spec.name().to_owned())),
                             "duplicate tool name in namespace"
                         );
-                        native_children.push(match spec {
-                            ToolSpec::Function(tool) => ResponsesApiNamespaceTool::Function(tool),
-                            ToolSpec::Freeform(tool) => ResponsesApiNamespaceTool::Custom(tool),
-                            _ => anyhow::bail!(
-                                "{location}.tools[{child_index}]: namespace children must be function/custom tools"
-                            ),
-                        });
-                        wire_children.push(child);
+                        native_children.push(serde_json::from_value::<
+                            codex_tools::ResponsesApiNamespaceTool,
+                        >(child)?);
                     }
-                    native.push(ToolSpec::Namespace(ResponsesApiNamespace {
-                        name: name.clone(),
-                        description: description.clone(),
-                        tools: native_children,
-                    }));
-                    wire.push(json!({"type":"namespace", "name":name, "description":description, "tools":wire_children}));
+                    let mut declaration = value.clone();
+                    declaration["description"] = json!(description);
+                    declaration["tools"] = serde_json::to_value(native_children)?;
+                    let spec: ToolSpec = serde_json::from_value(declaration)?;
+                    wire.push(serde_json::to_value(&spec)?);
+                    native.push(spec);
                 } else {
                     let (spec, value) = parse_tool(value).with_context(|| location.clone())?;
                     anyhow::ensure!(
@@ -89,29 +75,48 @@ impl InferenceTools {
                     "nested tool_choice must select a function"
                 );
                 let namespace = value.get("namespace").filter(|v| !v.is_null()).cloned();
-                *value = json!({"type":"function", "name":name(function)?});
+                let selected = name(function)?.to_owned();
+                let mut flattened = value.as_object().unwrap().clone();
+                flattened.remove("function");
+                flattened.insert("type".into(), json!("function"));
+                for (key, field) in function.as_object().unwrap() {
+                    flattened
+                        .entry(key.clone())
+                        .or_insert_with(|| field.clone());
+                }
+                flattened.insert("name".into(), json!(selected));
+                *value = Value::Object(flattened);
                 if let Some(namespace) = namespace {
                     value["namespace"] = namespace;
                 }
             }
             if let Some(mode) = value.as_str() {
-                anyhow::ensure!(
-                    matches!(mode, "auto" | "none" | "required"),
-                    "unsupported tool_choice mode"
-                );
+                anyhow::ensure!(!mode.is_empty(), "tool_choice mode must not be empty");
                 anyhow::ensure!(
                     mode != "required" || !native.is_empty(),
                     "tool_choice requires at least one tool"
                 );
-            } else if matches!(
-                value["type"].as_str(),
-                Some("web_search" | "tool_search" | "image_generation")
-            ) {
+            } else if value.get("name").is_none() {
                 check_object(value)?;
-                anyhow::ensure!(
-                    wire.iter().any(|tool| tool["type"] == value["type"]),
-                    "tool_choice references undefined hosted/search tool"
-                );
+                // The native request carries tool_choice as JSON. Hosted and
+                // allowed-tools choices retain their full native shape; names
+                // are checked below only when a choice actually names a tool.
+                if value["type"] == "allowed_tools" {
+                    if let Some(choices) = value.get("tools").and_then(Value::as_array) {
+                        for selected in choices {
+                            if let Some(name) = selected.get("name").and_then(Value::as_str) {
+                                let namespace = selected
+                                    .get("namespace")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
+                                anyhow::ensure!(
+                                    names.contains(&(namespace, name.to_owned())),
+                                    "tool_choice references an undefined tool"
+                                );
+                            }
+                        }
+                    }
+                }
             } else {
                 check_object(value)?;
                 let selected = name(value)?;
@@ -217,124 +222,46 @@ fn parse_tool(value: &Value) -> anyhow::Result<(ToolSpec, Value)> {
     {
         value["type"] = json!("function");
     }
-    if value["type"] == "image_generation" {
-        let mut options = value
-            .as_object()
-            .context("image tool must be an object")?
-            .clone();
-        options.remove("type");
-        return Ok((ToolSpec::ImageGeneration { options }, value));
-    }
-    if value["type"] == "tool_search" {
-        check_object(&value)?;
-        let parameters = value
-            .get("parameters")
-            .cloned()
-            .unwrap_or_else(|| json!({"type":"object"}));
-        let spec = ToolSpec::ToolSearch {
-            execution: optional::<String>(&value, "execution")?.unwrap_or_else(|| "server".into()),
-            description: optional_description(&value)?,
-            parameters: caller_schema(&parameters)?,
-        };
-        return Ok((spec, value));
-    }
-    if value["type"] == "web_search" {
-        check_object(&value)?;
-        let spec = ToolSpec::WebSearch {
-            external_web_access: optional(&value, "external_web_access")?,
-            indexed_web_access: optional(&value, "indexed_web_access")?,
-            filters: optional::<WebSearchFilters>(&value, "filters")?.map(Into::into),
-            user_location: optional::<WebSearchUserLocation>(&value, "user_location")?
-                .map(Into::into),
-            search_context_size: optional(&value, "search_context_size")?,
-            search_content_types: optional(&value, "search_content_types")?,
-        };
-        return Ok((spec, value));
-    }
-    anyhow::ensure!(
-        matches!(value["type"].as_str(), Some("function" | "custom")),
-        "unsupported tool type: {}",
-        value["type"]
-    );
-    let tool_name = name(&value)?.to_owned();
-    let description = optional_description(&value)?;
-    let defer_loading = optional::<bool>(&value, "defer_loading")?;
-    match value["type"].as_str() {
+    normalize_declaration(&mut value)?;
+    // Native serde owns every field, including future additions. No projection
+    // through a hand-maintained list of tool fields or schema keywords.
+    let spec: ToolSpec = serde_json::from_value(value)?;
+    let wire = serde_json::to_value(&spec)?;
+    Ok((spec, wire))
+}
+
+fn normalize_declaration(value: &mut Value) -> anyhow::Result<()> {
+    let object = value.as_object_mut().context("tool must be an object")?;
+    // These are protocol defaults, not a filter on supplied declaration fields.
+    match object.get("type").and_then(Value::as_str) {
         Some("function") => {
-            check_object(&value)?;
-            let parameters = value
-                .get("parameters")
-                .cloned()
-                .unwrap_or_else(|| json!({"type":"object"}));
-            let strict = optional::<bool>(&value, "strict")?.unwrap_or(false);
-            let spec = ToolSpec::Function(ResponsesApiTool {
-                name: tool_name,
-                description: description.clone(),
-                strict,
-                defer_loading,
-                parameters: caller_schema(&parameters)?,
-                output_schema: value
-                    .get("output_schema")
-                    .filter(|v| !v.is_null())
-                    .cloned()
-                    .map(codex_tools::ToolOutputSchema::from_caller),
-            });
-            value["parameters"] = parameters;
-            value["description"] = json!(description);
-            Ok((spec, value))
+            name(&Value::Object(object.clone()))?;
+            default_field(object, "description", json!(""));
+            default_field(object, "strict", json!(false));
+            default_field(object, "parameters", json!({"type":"object"}));
         }
         Some("custom") => {
-            check_object(&value)?;
-            let format = value
-                .get("format")
-                .cloned()
-                .unwrap_or_else(|| json!({"type":"text"}));
-            let native_format = match format["type"].as_str() {
-                Some("text") => {
-                    check_object(&format)?;
-                    FreeformToolFormat {
-                        r#type: "text".into(),
-                        syntax: String::new(),
-                        definition: String::new(),
-                    }
-                }
-                Some("grammar") => {
-                    check_object(&format)?;
-                    serde_json::from_value(format.clone())?
-                }
-                _ => anyhow::bail!("unsupported custom tool format"),
-            };
-            value["format"] = format;
-            value["description"] = json!(description);
-            let spec = ToolSpec::Freeform(FreeformTool {
-                name: tool_name,
-                description,
-                defer_loading,
-                format: native_format,
-            });
-            Ok((spec, value))
+            name(&Value::Object(object.clone()))?;
+            default_field(object, "description", json!(""));
+            default_field(object, "format", json!({"type":"text"}));
         }
-        _ => {
-            anyhow::bail!("only caller-executed function/custom tools and namespaces are supported")
+        Some("tool_search") => {
+            default_field(object, "description", json!(""));
+            default_field(object, "execution", json!("server"));
+            // An explicitly malformed schema must still fail native parsing.
+            object
+                .entry("parameters")
+                .or_insert_with(|| json!({"type":"object"}));
         }
+        _ => {}
     }
+    Ok(())
 }
 
-fn optional<T: serde::de::DeserializeOwned>(value: &Value, key: &str) -> anyhow::Result<Option<T>> {
-    value
-        .get(key)
-        .map(|value| {
-            serde_json::from_value::<Option<T>>(value.clone()).with_context(|| key.to_owned())
-        })
-        .transpose()
-        .map(Option::flatten)
-}
-
-fn caller_schema(parameters: &Value) -> anyhow::Result<JsonSchema> {
-    let schema = parameters
-        .as_object()
-        .context("tool parameters must be a JSON Schema object")?;
-    Ok(JsonSchema::from_raw_schema(schema.clone()))
+fn default_field(object: &mut serde_json::Map<String, Value>, key: &str, default: Value) {
+    if object.get(key).is_none_or(Value::is_null) {
+        object.insert(key.into(), default);
+    }
 }
 
 #[cfg(test)]

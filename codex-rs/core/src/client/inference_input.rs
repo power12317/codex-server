@@ -30,16 +30,6 @@ pub(super) fn parse(items: &[Value]) -> anyhow::Result<Vec<ResponseItem>> {
                             if !part.contains_key("type") && part.contains_key("text") {
                                 part.insert("type".into(), json!("input_text"));
                             }
-                            // Native output replay retains arrays, including empty ones.
-                            // Older callers also use these keys for non-native UI metadata.
-                            for key in ["annotations", "logprobs"] {
-                                if part
-                                    .get(key)
-                                    .is_some_and(|value| !value.is_array() && !value.is_null())
-                                {
-                                    part.remove(key);
-                                }
-                            }
                         }
                     }
                 }
@@ -47,21 +37,6 @@ pub(super) fn parse(items: &[Value]) -> anyhow::Result<Vec<ResponseItem>> {
         }
         if fields.get("type").and_then(Value::as_str) == Some("compaction_summary") {
             fields.insert("type".into(), json!("compaction"));
-        }
-        // Message/function status is part of native sampled-output replay in 0.163.
-        // Preserve it alongside existing call statuses; unsupported item metadata
-        // is still consumed by the typed native representation.
-        if !matches!(
-            fields.get("type").and_then(Value::as_str),
-            Some(
-                "message"
-                    | "function_call"
-                    | "custom_tool_call"
-                    | "local_shell_call"
-                    | "tool_search_call"
-            )
-        ) {
-            fields.remove("status");
         }
         let kind = fields
             .get("type")
@@ -185,6 +160,110 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn export_native_formatter_expectations_for_http_replay() {
+        let home = tempfile::TempDir::new().unwrap();
+        let config = crate::config::ConfigBuilder::default()
+            .loader_overrides(codex_config::LoaderOverrides::without_managed_config_for_tests())
+            .codex_home(home.path().to_path_buf())
+            .build()
+            .await
+            .unwrap();
+        let mut model = codex_models_manager::test_support::construct_model_info_offline_for_tests(
+            "gpt-6.1-sol",
+            &config.to_models_manager_config(),
+        );
+        if let Ok(directory) = std::env::var("CODEX_INFERENCE_FIXTURE_DIR") {
+            let directory = std::path::Path::new(&directory);
+            std::fs::create_dir_all(directory).unwrap();
+            for lite in [false, true] {
+                model.use_responses_lite = lite;
+                let expected = crate::test_support::inference_fixtures::native_request_history(
+                    &config, &model,
+                );
+                let suffix = if lite { "lite" } else { "responses" };
+                for (name, value) in [
+                    (
+                        format!("native-history.expected-gpt-6.1-sol-{suffix}.json"),
+                        serde_json::to_value(expected).unwrap(),
+                    ),
+                    (
+                        format!("native-model-gpt-6.1-sol-{suffix}.json"),
+                        serde_json::to_value(&model).unwrap(),
+                    ),
+                ] {
+                    std::fs::write(
+                        directory.join(name),
+                        serde_json::to_string_pretty(&value).unwrap() + "\n",
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_native_history_field_survives_the_input_adapter() {
+        let items = crate::test_support::inference_fixtures::history();
+        let expected = serde_json::to_value(&items).unwrap();
+        let input = expected.as_array().unwrap();
+        let actual = serde_json::to_value(parse(input).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            items
+                .iter()
+                .map(crate::test_support::inference_fixtures::history_kind)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            17
+        );
+        if let Ok(directory) = std::env::var("CODEX_INFERENCE_FIXTURE_DIR") {
+            let directory = std::path::Path::new(&directory);
+            std::fs::create_dir_all(directory).unwrap();
+            for (name, value) in [
+                ("native-history.full.json", expected),
+                (
+                    "native-history.json",
+                    serde_json::to_value(crate::test_support::inference_fixtures::replay_history())
+                        .unwrap(),
+                ),
+                (
+                    "native-tools.json",
+                    serde_json::to_value(crate::test_support::inference_fixtures::tools()).unwrap(),
+                ),
+                (
+                    "native-controls.json",
+                    crate::test_support::inference_fixtures::request_controls(),
+                ),
+                (
+                    "source-metadata.json",
+                    crate::test_support::inference_fixtures::source_metadata(),
+                ),
+            ] {
+                std::fs::write(
+                    directory.join(name),
+                    serde_json::to_string_pretty(&value).unwrap() + "\n",
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn native_required_status_is_not_invented_and_optional_status_stays_optional() {
+        for item in [
+            json!({"type":"image_generation_call","result":"image"}),
+            json!({"type":"tool_search_output","execution":"client","tools":[]}),
+        ] {
+            assert!(parse(&[item]).is_err());
+        }
+        let input = json!([{"type":"web_search_call","action":{"type":"search","query":"fixture"}}, {"type":"compaction_trigger"}]);
+        assert_eq!(
+            serde_json::to_value(parse(input.as_array().unwrap()).unwrap()).unwrap(),
+            input
+        );
+    }
+
     #[test]
     fn response_output_adapts_to_native_history_without_changing_call_semantics() {
         let items = vec![
@@ -234,10 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn display_metadata_is_consumed_but_business_items_and_call_ids_are_required() {
+    fn invalid_native_content_and_missing_call_associations_are_reported() {
         let displayed = json!({"role":"assistant","status":"displayed","metadata":{"ui":true},"content":[{"type":"output_text","text":"a","annotations":"display extension","logprobs":{}}]});
-        let parsed = parse(&[displayed]).unwrap();
-        assert!(matches!(parsed[0], ResponseItem::Message { .. }));
+        assert!(parse(&[displayed]).is_err());
         for item in [
             json!({"type":"unknown_business","content":"must not disappear"}),
             json!({"type":"function_call_output","output":"missing association"}),
