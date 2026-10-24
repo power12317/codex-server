@@ -154,7 +154,7 @@ async fn cpa_main_plain_formats_and_default_state_controls() -> Result<()> {
     let _runtime = server(&upstream, &home).await?;
     let mut ws = connect(&home).await?;
     for (kind, reference) in [("text", Value::Null), ("json_object", json!(""))] {
-        let (logged,_)=exchange_compatible(&mut ws,start(json!({"model":"mock-model","input":"hello","stream":false,"store":true,"tool_choice":"none","include":[],"parallel_tool_calls":false,"text":{"format":{"type":kind}},"generate":true,"previous_response_id":reference,"background":false}))).await?;
+        let (logged,_)=exchange_compatible(&mut ws,start(json!({"model":"mock-model","input":"hello","stream":false,"store":true,"tool_choice":"none","include":[],"parallel_tool_calls":false,"text":{"format":{"type":kind}},"generate":true,"previous_response_id":reference,"background":false,"stream_options":{"reasoning_summary_delivery":null,"include_usage":false}}))).await?;
         let sent: Value = serde_json::from_str(logged["body"].as_str().unwrap())?;
         assert_eq!(sent["text"]["format"], json!({"type":kind}));
         assert_eq!(sent["tool_choice"], "none");

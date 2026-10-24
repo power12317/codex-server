@@ -75,6 +75,14 @@ impl InferenceRequest {
             .map(|mut options| {
                 // include_usage belongs to downstream Chat SSE delivery, not native sampling.
                 options.remove("include_usage");
+                // A null optional delivery preference means no StreamOptions,
+                // as in the existing native entry's Option handling.
+                if options
+                    .get("reasoning_summary_delivery")
+                    .is_some_and(Value::is_null)
+                {
+                    options.remove("reasoning_summary_delivery");
+                }
                 options
             })
             .filter(|options| !options.is_empty())
