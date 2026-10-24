@@ -94,6 +94,13 @@ impl JsonSchema {
         }
     }
 
+    /// Deserialize external declarations without the internal normalization policy.
+    pub(crate) fn deserialize_caller<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Self, D::Error> {
+        serde_json::Map::<String, JsonValue>::deserialize(deserializer).map(Self::from_raw_schema)
+    }
+
     /// Construct a scalar/object/array schema with a single JSON Schema type.
     fn typed(schema_type: JsonSchemaPrimitiveType, description: Option<String>) -> Self {
         Self {

@@ -2,6 +2,44 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn native_tool_choice_and_custom_format_shapes_are_not_projected_to_field_lists() {
+    let tool = json!({"type":"custom","name":"client_exec","description":"client tool","format":{"type":"text","syntax":"native-syntax","definition":"native-definition"}});
+    for choice in [
+        json!({"type":"custom","name":"client_exec","future_field":{"keep":true}}),
+        json!({"type":"allowed_tools","mode":"auto","tools":[{"type":"custom","name":"client_exec"}],"future_field":{"keep":true}}),
+    ] {
+        let request = json!({"tools":[tool],"tool_choice":choice});
+        let parsed = InferenceTools::parse(request.as_object().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&parsed.native).unwrap(),
+            request["tools"]
+        );
+        assert_eq!(parsed.choice, Some(choice));
+    }
+}
+
+#[test]
+fn every_native_tool_field_survives_the_declaration_adapter() {
+    let tools = crate::test_support::inference_fixtures::tools();
+    let expected = serde_json::to_value(&tools).unwrap();
+    let request = json!({"tools":expected});
+    let parsed = InferenceTools::parse(request.as_object().unwrap()).unwrap();
+    assert_eq!(serde_json::to_value(&parsed.native).unwrap(), expected);
+    assert_eq!(
+        codex_tools::create_tools_json_for_responses_lite(&parsed.native).unwrap(),
+        codex_tools::create_tools_json_for_responses_lite(&tools).unwrap()
+    );
+    assert_eq!(
+        tools
+            .iter()
+            .map(crate::test_support::inference_fixtures::tool_kind)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        6
+    );
+}
+
+#[test]
 fn normalizes_function_envelopes_without_losing_schema_or_choice() {
     let parameters = json!({"type":"object", "properties":{"value":{"type":"string", "encrypted":true}}, "required":["value"], "additionalProperties":false});
     let request = json!({"tools":[{"type":"function", "function":{"name":"run", "description":"test", "parameters":parameters, "strict":true, "defer_loading":false}}], "tool_choice":{"type":"function", "function":{"name":"run"}}});

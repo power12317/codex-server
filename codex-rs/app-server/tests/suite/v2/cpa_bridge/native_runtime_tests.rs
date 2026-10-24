@@ -406,7 +406,6 @@ async fn cpa_native_rejects_unexpressible_fields_without_model_requests() -> Res
     let _runtime = server(&upstream, &home).await?;
     let mut ws = connect(&home).await?;
     for (index, (key, value)) in [
-        ("extension", json!(true)),
         (
             "tool_choice",
             json!({"type":"function","name":"undeclared"}),
@@ -414,7 +413,6 @@ async fn cpa_native_rejects_unexpressible_fields_without_model_requests() -> Res
         ("previous_response_id", json!("old")),
         ("background", json!(true)),
         ("generate", json!(false)),
-        ("reasoning", json!({"future":1})),
         (
             "input",
             json!([{"type":"unknown_business","content":"must not be lost"}]),
@@ -441,6 +439,49 @@ async fn cpa_native_rejects_unexpressible_fields_without_model_requests() -> Res
             .unwrap()
             .iter()
             .any(|r| r.url.path().ends_with("/responses"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_native_types_own_unknown_business_fields_without_an_adapter_gate() -> Result<()> {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            completed(json!({"id":"native-fields","output":[]})),
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let home = TempDir::new()?;
+    let _runtime = server(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let result = exchange(
+        &mut ws,
+        rpc(
+            json!({"model":"mock-model","input":"hello",
+        "extension":true,"reasoning":{"future":1}}),
+            1250,
+        ),
+    )
+    .await?;
+    assert_eq!(
+        result.reply["result"]["statusCode"], 200,
+        "{}",
+        result.reply
+    );
+    assert!(result.error.is_none());
+    assert_eq!(
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|request| request.url.path() == "/v1/responses")
+            .count(),
+        1
     );
     Ok(())
 }

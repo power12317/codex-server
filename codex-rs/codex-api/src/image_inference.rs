@@ -95,7 +95,7 @@ impl ImageInferenceRequest {
     }
 }
 
-fn worker_owned_field(key: &str) -> bool {
+pub(crate) fn worker_owned_field(key: &str) -> bool {
     matches!(
         key,
         "headers"

@@ -2,7 +2,7 @@ use codex_protocol::models::ImageReference;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageGenerationRequest {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -18,7 +18,7 @@ pub struct ImageGenerationRequest {
     pub options: ImageRequestOptions,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageEditRequest {
     pub images: Vec<ImageReference>,
     pub prompt: String,
@@ -56,6 +56,17 @@ pub struct ImageRequestOptions {
     pub moderation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// Complete caller business options beyond the typed native image fields.
+    #[serde(default, flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ImageRequestOptions {
+    /// Called at the input boundary; native sends still serialize their own DTO.
+    pub fn retain_caller_business_options(&mut self) {
+        self.extensions
+            .retain(|key, _| !crate::image_inference::worker_owned_field(key));
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,4 +103,36 @@ pub struct ImageData {
     pub b64_json: String,
     #[serde(default)]
     pub generation_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    #[test]
+    fn native_image_input_preserves_all_fields_and_future_business_options() {
+        let expected = ImageEditRequest {
+            images: vec![ImageReference::File { file_id: "file-fixture".into() }],
+            prompt: "fixture".into(), background: Some(ImageBackground::Transparent),
+            model: "gpt-image-2".into(), n: Some(1), quality: Some(ImageQuality::Low),
+            size: Some("1024x1024".into()),
+            options: ImageRequestOptions {
+                mask: Some(ImageReference::File { file_id: "file-mask".into() }),
+                stream: Some(false), output_format: Some("webp".into()),
+                output_compression: Some(70), partial_images: Some(2),
+                response_format: Some("b64_json".into()), input_fidelity: Some("high".into()),
+                moderation: Some("auto".into()), user: Some("fixture".into()),
+                extensions: json!({"future_option":{"large":9007199254740993u64,"nullable":null,"enabled":false},"repeat":["a","b"]}).as_object().unwrap().clone(),
+            },
+        };
+        let wire = serde_json::to_value(&expected).unwrap();
+        let mut input = wire.clone();
+        input["headers"] = json!({"authorization":"caller-secret"});
+        input["client_metadata"] = json!({"session_id":"caller"});
+        let mut actual: ImageEditRequest = serde_json::from_value(input).unwrap();
+        actual.options.retain_caller_business_options();
+        assert_eq!(serde_json::to_value(actual).unwrap(), wire);
+    }
 }

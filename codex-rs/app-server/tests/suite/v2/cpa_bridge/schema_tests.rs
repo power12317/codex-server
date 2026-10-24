@@ -190,3 +190,92 @@ async fn cpa_workbuddy_schemas_and_client_tool_round_trip(lite: bool) -> Result<
     }
     Ok(())
 }
+
+#[test_case(false; "responses")]
+#[test_case(true; "responses_lite")]
+#[tokio::test]
+async fn cpa_all_native_history_and_tool_fields_reach_the_model(lite: bool) -> Result<()> {
+    use codex_core::test_support::inference_fixtures;
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture\",\"output\":[]}}\n\n",
+            "text/event-stream"))
+        .expect(1).mount(&upstream).await;
+    let home = TempDir::new()?;
+    prepare_account(&upstream, &home)?;
+    let config = load_default_config_for_test(&home).await;
+    let mut model = codex_core::test_support::construct_model_info_offline("mock-model", &config);
+    model.use_responses_lite = lite;
+    model.supports_reasoning_summary_parameter = true;
+    let expected_history =
+        serde_json::to_value(inference_fixtures::native_request_history(&config, &model))?;
+    let catalog = home.path().join("models.json");
+    std::fs::write(&catalog, serde_json::to_vec(&json!({"models":[model]}))?)?;
+    let cfg = home.path().join("state/shared.json/config.toml");
+    let original = std::fs::read_to_string(&cfg)?;
+    std::fs::write(
+        &cfg,
+        format!(
+            "model_catalog_json = {}\n{original}",
+            serde_json::to_string(&catalog)?
+        ),
+    )?;
+    let _runtime = launch(&upstream, &home).await?;
+    let mut ws = connect(&home).await?;
+    let history = serde_json::to_value(inference_fixtures::replay_history())?;
+    let tools = serde_json::to_value(inference_fixtures::tools())?;
+    let mut request = inference_fixtures::request_controls();
+    request["model"] = json!("mock-model");
+    request["input"] = history.clone();
+    request["tools"] = tools.clone();
+    let controls = request.clone();
+    schema_exchange(&mut ws, start(request)).await?;
+    let requests = upstream.received_requests().await.unwrap();
+    let body: Value = requests
+        .iter()
+        .find(|request| request.url.path() == "/v1/responses")
+        .unwrap()
+        .body_json()?;
+    let sent = body["input"].as_array().unwrap();
+    for original in expected_history.as_array().unwrap() {
+        assert!(
+            sent.contains(original),
+            "native history changed: {original}\nsent: {sent:?}"
+        );
+    }
+    // Native Lite wraps functions/custom declarations in its functions namespace.
+    // Image hosting on the native runtime uses an AdditionalTools prefix.
+    let mut declarations = body["tools"].as_array().cloned().unwrap_or_default();
+    for item in sent
+        .iter()
+        .filter(|item| item["type"] == "additional_tools" && item["id"] != "at_tools")
+    {
+        if let Some(tools) = item["tools"].as_array() {
+            declarations.extend(tools.clone());
+        }
+    }
+    let mut flattened = Vec::new();
+    for tool in declarations {
+        if tool["type"] == "namespace" && tool["name"] == "functions" {
+            flattened.extend(tool["tools"].as_array().unwrap().clone());
+        } else {
+            flattened.push(tool);
+        }
+    }
+    for tool in tools.as_array().unwrap() {
+        assert!(
+            flattened.contains(tool),
+            "native tool changed: {tool}\nsent: {flattened:?}"
+        );
+    }
+    for key in controls
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "input" | "tools" | "model"))
+    {
+        assert_eq!(body[key], controls[key], "native control: {key}");
+    }
+    Ok(())
+}

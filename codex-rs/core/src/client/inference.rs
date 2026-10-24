@@ -2,7 +2,6 @@
 use super::*;
 use anyhow::Context;
 use codex_api::ResponsesGenerationOptions;
-use codex_api::ResponsesTextFormat;
 use codex_protocol::models::BaseInstructions;
 use serde::de::DeserializeOwned;
 use serde_json::Map;
@@ -16,7 +15,7 @@ mod input;
 pub(super) struct NativeRequestControls {
     pub tool_choice: Option<Value>,
     pub include: Option<Vec<String>>,
-    pub format: Option<ResponsesTextFormat>,
+    pub format: Option<codex_api::ResponsesTextFormat>,
     pub context: Option<ReasoningContext>,
     pub verbosity: Option<VerbosityConfig>,
     pub parallel_tool_calls: Option<bool>,
@@ -72,22 +71,54 @@ impl InferenceRequest {
             );
         }
         let reasoning = object(request, "reasoning")?;
-        let text = object(request, "text")?;
-        let stream_options = object(request, "stream_options")?;
-        let effort =
-            optional(reasoning, "effort")?.or_else(|| config.model_reasoning_effort.clone());
-        let summary = optional(reasoning, "summary")?
+        let mut text = object(request, "text")?.cloned().unwrap_or_default();
+        if let Some(format) = text.get_mut("format").and_then(Value::as_object_mut) {
+            // Responses schema format has a defined default for omitted type/name/strict.
+            for key in ["type", "name", "strict"] {
+                if format.get(key).is_some_and(Value::is_null) {
+                    format.remove(key);
+                }
+            }
+            if !format.contains_key("type") && format.contains_key("schema") {
+                format.insert("type".into(), json!("json_schema"));
+            }
+        }
+        let codex_api::TextControls { format, verbosity } =
+            serde_json::from_value(Value::Object(text))?;
+        let verbosity = verbosity.map(|value| match value {
+            codex_api::OpenAiVerbosity::Low => VerbosityConfig::Low,
+            codex_api::OpenAiVerbosity::Medium => VerbosityConfig::Medium,
+            codex_api::OpenAiVerbosity::High => VerbosityConfig::High,
+        });
+        let stream_options = object(request, "stream_options")?
+            .cloned()
+            .map(|mut options| {
+                // include_usage belongs to downstream Chat SSE delivery, not native sampling.
+                options.remove("include_usage");
+                // A null optional delivery preference means no StreamOptions,
+                // as in the existing native entry's Option handling.
+                if options
+                    .get("reasoning_summary_delivery")
+                    .is_some_and(Value::is_null)
+                {
+                    options.remove("reasoning_summary_delivery");
+                }
+                options
+            })
+            .filter(|options| !options.is_empty())
+            .map(|options| serde_json::from_value(Value::Object(options)))
+            .transpose()?;
+        let codex_api::Reasoning {
+            effort,
+            summary,
+            context,
+        } = serde_json::from_value(Value::Object(reasoning.cloned().unwrap_or_default()))?;
+        let effort = effort.or_else(|| config.model_reasoning_effort.clone());
+        let summary = summary
             .or(config.model_reasoning_summary)
             .unwrap_or_default();
-        let mut generation = ResponsesGenerationOptions {
-            max_output_tokens: optional(Some(request), "max_output_tokens")?,
-            temperature: optional(Some(request), "temperature")?,
-            top_p: optional(Some(request), "top_p")?,
-            truncation: optional(Some(request), "truncation")?,
-            prompt_cache_retention: optional(Some(request), "prompt_cache_retention")?,
-            safety_identifier: optional(Some(request), "safety_identifier")?,
-            user: optional(Some(request), "user")?,
-        };
+        let mut generation: ResponsesGenerationOptions =
+            serde_json::from_value(Value::Object(request.clone()))?;
         for alias in ["max_completion_tokens", "max_tokens"] {
             if let Some(value) = optional::<u64>(Some(request), alias)? {
                 if let Some(existing) = generation.max_output_tokens {
@@ -103,27 +134,11 @@ impl InferenceRequest {
         let controls = NativeRequestControls {
             tool_choice: tools.choice,
             include: optional(Some(request), "include")?,
-            format: text
-                .and_then(|o| o.get("format"))
-                .filter(|v| !v.is_null())
-                .map(|v| {
-                    let mut format = v.clone();
-                    if let Some(o) = format.as_object_mut() {
-                        if !o.contains_key("type") && o.contains_key("schema") {
-                            o.insert("type".into(), json!("json_schema"));
-                        }
-                    }
-                    serde_json::from_value(format).context("invalid text.format")
-                })
-                .transpose()?,
-            context: optional(reasoning, "context")?,
-            verbosity: optional(text, "verbosity")?,
+            format,
+            context,
+            verbosity,
             parallel_tool_calls: optional(Some(request), "parallel_tool_calls")?,
-            stream_options: optional(stream_options, "reasoning_summary_delivery")?.map(
-                |reasoning_summary_delivery| StreamOptions {
-                    reasoning_summary_delivery,
-                },
-            ),
+            stream_options,
             store: optional(Some(request), "store")?,
             generate: optional(Some(request), "generate")?,
             generation,
@@ -190,82 +205,5 @@ fn validate_state(request: &Map<String, Value>) -> anyhow::Result<()> {
     }
     let _: Option<bool> = optional(Some(request), "stream")?;
     let _ = object(request, "client_metadata")?;
-    // Transport/auth/installation and display metadata belong to their own layer.
-    // Unknown business controls cannot be silently discarded as if implemented.
-    for key in request.keys() {
-        if matches!(
-            key.as_str(),
-            "model"
-                | "input"
-                | "instructions"
-                | "tools"
-                | "tool_choice"
-                | "reasoning"
-                | "parallel_tool_calls"
-                | "text"
-                | "service_tier"
-                | "stream"
-                | "store"
-                | "background"
-                | "include"
-                | "client_metadata"
-                | "metadata"
-                | "stream_options"
-                | "session_id"
-                | "thread_id"
-                | "turn_id"
-                | "prompt_cache_key"
-                | "parent_thread_id"
-                | "parent_turn_id"
-                | "root_turn_id"
-                | "thread_source"
-                | "subagent_kind"
-                | "agent_name"
-                | "request_kind"
-                | "window_id"
-                | "context_window_id"
-                | "headers"
-                | "authorization"
-                | "Authorization"
-                | "cookies"
-                | "installation_id"
-                | "account_id"
-                | "previous_response_id"
-                | "conversation"
-                | "generate"
-                | "max_output_tokens"
-                | "max_completion_tokens"
-                | "max_tokens"
-                | "temperature"
-                | "top_p"
-                | "truncation"
-                | "prompt_cache_retention"
-                | "safety_identifier"
-                | "user"
-        ) || key.starts_with("x-")
-            || key.starts_with("ws_request_")
-        {
-            continue;
-        }
-        anyhow::bail!(
-            "business field `{key}` has no native request mapping; it was not discarded or sent as a transport extension"
-        );
-    }
-    for (name, allowed) in [
-        ("reasoning", &["effort", "summary", "context"][..]),
-        ("text", &["format", "verbosity"][..]),
-        (
-            "stream_options",
-            &["include_usage", "reasoning_summary_delivery"][..],
-        ),
-    ] {
-        if let Some(object) = object(request, name)? {
-            for key in object.keys() {
-                if !allowed.contains(&key.as_str()) && key != "metadata" && !key.starts_with("x-") {
-                    anyhow::bail!("{name}.{key} has no native business mapping");
-                }
-            }
-        }
-    }
     Ok(())
 }
