@@ -84,6 +84,33 @@ Native normalization remains in force: Lite removes image detail; unsupported
 are filtered by native model policy; reasoning content and host-only attribution
 follow native serialization. These are not adapter schema-key filters.
 
+## Parallel calls follow the native model mode
+
+Caller `parallel_tool_calls` values still map to `Prompt.parallel_tool_calls`,
+with an omitted value defaulting to true. The shared native request builder uses
+the official 0.164.0 rule:
+
+```rust
+parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
+```
+
+Responses Lite therefore sends false for omitted, false, and true caller values.
+Ordinary Responses preserves explicit false/true and the adapter's true default.
+The actual native model catalog owns this decision; no caller Lite hint is
+required. A supplied true is accepted and normalized without a local admission
+error. The adapter's schema and history preservation do not override native
+model rules.
+
+`cpa_bridge/parallel_tests.rs` exercises all six mode/control combinations through
+real master/worker processes and a controlled upstream. Main covers its existing
+HTTP sender; the native runtime covers both HTTP and WebSocket senders. The mocks
+reject an actual Lite header/mirror paired with any value other than false.
+Tests inspect final upstream bodies/frames, function-call delivery, and the
+absence of local Bash execution. Lite plus an explicit true includes two turns;
+the native WebSocket test also checks connection reuse and continuation framing.
+Set `CODEX_PARALLEL_FIXTURE_DIR` to an output directory to export each verified
+upstream request and the returned events during these tests.
+
 ## Audit boundary
 
 The audit covers `client/inference*`, tool schema/declaration types, request DTOs,

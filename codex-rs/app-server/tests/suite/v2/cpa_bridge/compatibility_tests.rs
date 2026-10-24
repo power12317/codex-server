@@ -87,7 +87,7 @@ async fn cpa_main_compatible_controls_schemas_and_history(lite: bool) -> Result<
         assert_eq!(bytes, raw.as_bytes());
         let sent: Value = serde_json::from_str(logged["body"].as_str().unwrap())?;
         assert_eq!(sent["store"], true);
-        assert_eq!(sent["parallel_tool_calls"], true);
+        assert_eq!(sent["parallel_tool_calls"], !lite);
         assert_eq!(sent["include"], json!([]));
         assert_eq!(sent["temperature"], 0.4);
         assert_eq!(sent["top_p"], 0.7);

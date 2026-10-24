@@ -24,6 +24,9 @@ mod ticket_tests;
 #[path = "cpa_bridge/time_context_tests.rs"]
 mod time_context_tests;
 
+#[path = "cpa_bridge/parallel_tests.rs"]
+mod parallel_tests;
+
 use anyhow::Result;
 use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::MockResponsesConfig;
