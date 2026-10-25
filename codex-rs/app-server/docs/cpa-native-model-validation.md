@@ -5,6 +5,33 @@ not certify the stable HTTP bridge or a published Linux image. The fixed referen
 is official Codex `0.164.0`, commit
 `6aaac694803004a63c6f393d153c96d22521a6b9`.
 
+## 2026-10-25 release compiler recursion budget
+
+With pinned Rust 1.99.1 and debug assertions disabled, the native branch failed
+while computing the layout of `session::turn::run_turn()`: the compiler reported
+that its query depth increased by 130 and exceeded the default recursion limit.
+A normal dev-small build had not exposed this release-configuration failure.
+
+The core crate now sets `#![recursion_limit = "256"]`, as requested by the
+compiler diagnostic. This changes the compile-time query budget only. Native
+model execution, streaming, continuation, schema preservation, Lite parallel-call
+normalization, official 0.164.0 identity, and image publishing settings are intact.
+The same app-server check with `CARGO_PROFILE_DEV_SMALL_DEBUG_ASSERTIONS=false`
+failed before this attribute and passed afterward.
+
+Pinned `cargo +1.99.1 check --locked --release -p codex-app-server --bin
+codex-app-server` also passed on macOS arm64, with the Dockerfile's release debug
+setting disabled. Formatting and all five release-stamping tests passed. These
+checks do not create or publish a Linux image.
+
+The native image workflow's earlier Linux amd64 and arm64 jobs failed at the
+release Cargo build; anonymous GitHub annotations exposed only exit 101, not the
+complete Rust diagnostic. The compiler failure above was reproduced independently
+without Docker. The main image run 40111636549 completed both architectures and
+its manifest successfully, so this correction is confined to the native branch.
+Local checks do not certify Linux image publication; use the image workflow
+result to verify it.
+
 ## 2026-10-23 official 0.164.0 source alignment
 
 This branch incorporates official `rust-v0.164.0`, commit
