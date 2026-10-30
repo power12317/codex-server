@@ -943,6 +943,10 @@ async fn code_mode_session_provider_is_shared_across_threads() {
     config.codex_home = temp_dir.path().join("codex-home").abs();
     config.cwd = config.codex_home.abs();
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+    config
+        .features
+        .enable(Feature::CodeModeHostOutputTruncation)
+        .expect("enable the built-in provider's server truncation feature");
 
     let provider: Arc<dyn CodeModeSessionProvider> = Arc::new(DisabledCodeModeSessionProvider);
     let manager = ThreadManager::with_models_provider_and_home_for_tests(
@@ -951,6 +955,9 @@ async fn code_mode_session_provider_is_shared_across_threads() {
         config.codex_home.to_path_buf(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     )
+    // Exercise the production factory with the startup flag before overriding
+    // its lazy built-in provider. No host is started by this test.
+    .with_code_mode_host_program_for_tests(temp_dir.path().join("unused-code-mode-host"), &config)
     .with_code_mode_session_provider(Arc::clone(&provider));
     let first = manager
         .start_thread(StartThreadOptions::new(config.clone()))
@@ -1288,6 +1295,7 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
     let temp_dir = tempdir().expect("tempdir");
     let mut config = test_config().await;
     config.rollout_budget = Some(RolloutBudgetConfig {
+        enforce_limit: true,
         limit_tokens: 100,
         reminder_at_remaining_tokens: vec![75, 50, 25],
         sampling_token_weight: 1.0,
@@ -1388,6 +1396,7 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
         .expect("parent should have an environment");
     reviewer_environment.config =
         EnvironmentConfigState::Ready(codex_protocol::protocol::EnvironmentConfig {
+            environment_hooks: Default::default(),
             allow_login_shell: true,
             workspace_roots: reviewer_environment.workspace_roots.clone(),
             permission_profile: config.permissions.permission_profile_state().snapshot(),
@@ -2908,6 +2917,57 @@ async fn new_uses_active_provider_for_model_refresh() {
         )
         .await;
     assert_eq!(models_mock.requests().len(), 1);
+
+    // Thread startup must select the originator catalog before resolving model metadata.
+    for originator in [
+        "codex_work_cca",
+        "codex_work_web",
+        "codex_work_desktop",
+        "codex_work_mobile",
+        "chatgpt_cca",
+    ] {
+        let mut model = codex_models_manager::model_info::model_info_from_slug("gpt-5.5");
+        model.description = Some(originator.to_string());
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/models"))
+            .and(wiremock::matchers::header("originator", originator))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(ModelsResponse {
+                    models: vec![model],
+                }),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let started = manager
+            .start_thread(StartThreadOptions {
+                metrics_service_name: Some(originator.to_string()),
+                environments: Some(Vec::new()),
+                ..StartThreadOptions::new(config.clone())
+            })
+            .await
+            .expect("start scoped thread");
+        let model = started
+            .thread
+            .session
+            .services
+            .models_manager
+            .get_model_info("gpt-5.5", &config.to_models_manager_config())
+            .await;
+        assert_eq!(model.description.as_deref(), Some(originator));
+    }
+    let legacy = manager
+        .start_thread(StartThreadOptions {
+            metrics_service_name: Some("codex_cli_rs".to_string()),
+            environments: Some(Vec::new()),
+            ..StartThreadOptions::new(config)
+        })
+        .await
+        .expect("start legacy thread");
+    assert!(Arc::ptr_eq(
+        &legacy.thread.session.services.models_manager,
+        &manager.get_models_manager()
+    ));
 }
 
 #[tokio::test]

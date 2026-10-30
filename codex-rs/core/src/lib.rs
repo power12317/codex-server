@@ -4,6 +4,7 @@
 // user-visible output must go through the appropriate abstraction (e.g.,
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+#![recursion_limit = "256"]
 
 mod apply_patch;
 mod apps;
@@ -55,6 +56,7 @@ pub use codex_thread::GuardianAuthorizationVersion;
 pub use codex_thread::GuardianRootMessage;
 pub use codex_thread::GuardianRootSnapshot;
 pub use codex_thread::ThreadConfigSnapshot;
+pub use guardian::ScoreAuthorization as GuardianScoreAuthorization;
 pub use session::turn_context::TurnContext;
 pub use thread_startup_metadata::ThreadStartupMetadata;
 mod agent;
@@ -99,6 +101,7 @@ mod exec_policy;
 mod git_info_tests;
 mod guardian;
 pub mod guardian_review;
+mod hook_environment_executor;
 mod hook_mcp_executor;
 mod hook_runtime;
 mod image_preparation;
@@ -151,6 +154,13 @@ mod event_mapping;
 pub use codex_prompts as review_prompts;
 mod thread_manager;
 mod thread_spawn;
+pub use agent::host::HostThreadSpawnReservation;
+pub use agent::host::HostToolInvocationLookup;
+pub use agent::host::PreparedThreadSpawn;
+pub use agent::host::ToolInvocationContext;
+pub use thread_spawn::ThreadCreateRequest;
+pub use thread_spawn::ThreadSpawnError;
+pub use thread_spawn::ThreadSpawnResult;
 pub(crate) mod web_search;
 pub(crate) mod windows_sandbox_read_grants;
 pub use agent::control::ThreadEvictionOutcome;
@@ -164,6 +174,7 @@ pub use thread_manager::NewThread;
 pub use thread_manager::PromptCacheKey;
 pub use thread_manager::StartThreadOptions;
 pub use thread_manager::ThreadManager;
+pub use thread_manager::ThreadRegistration;
 pub use thread_manager::ThreadShutdownReport;
 pub use thread_manager::build_models_manager;
 pub use thread_manager::local_agent_graph_store_from_state_db;

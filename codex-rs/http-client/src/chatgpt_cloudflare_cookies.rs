@@ -192,7 +192,7 @@ fn routing_cookie_deadline(
     ))
 }
 
-fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {
+pub(crate) fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {
     let mut url = reqwest::Url::parse(&uri.to_string()).ok()?;
     // A secure WebSocket handshake has the same cookie scope as HTTPS.
     if url.scheme() == "wss" {
