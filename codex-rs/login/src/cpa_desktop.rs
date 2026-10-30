@@ -1,6 +1,6 @@
 //! Desktop host compatibility for one CPA credential worker. No native attestation.
 //!
-//! The host version is verified from ChatGPT.app; the engine version remains the
+//! The host version is verified from official platform release metadata; the engine version remains the
 //! actual Cargo build version. Account/system profiles never depend on a filename.
 use base64::Engine;
 use http::HeaderValue;

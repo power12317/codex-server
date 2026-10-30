@@ -841,6 +841,7 @@ mod snapshot {
 
 mod tools {
     use codex_app_server_protocol::ThreadItem;
+    use codex_app_server_protocol::ThreadItemPayload;
     use serde_json::Value;
     use serde_json::json;
 
@@ -1009,7 +1010,9 @@ mod tools {
                             .unwrap_or(codex_protocol::models::WebSearchAction::Other),
                         results: None,
                     };
-                    return Ok(codex_protocol::items::TurnItem::WebSearch(search).into());
+                    return Ok(ThreadItem::untimed(
+                        codex_protocol::items::TurnItem::WebSearch(search).into(),
+                    ));
                 }
                 "image_generation_call" => {
                     json!({"type":"imageGeneration","id":self.id,"status":status,"result":"",
@@ -1033,10 +1036,10 @@ mod tools {
                 }
             };
             let mut item: ThreadItem = serde_json::from_value(item)?;
-            if let ThreadItem::CommandExecution { model_context, .. } = &mut item {
+            if let ThreadItemPayload::CommandExecution { model_context, .. } = &mut item.payload {
                 model_context.clone_from(&self.model_context);
             }
-            if let ThreadItem::ImageGeneration(image) = &mut item {
+            if let ThreadItemPayload::ImageGeneration(image) = &mut item.payload {
                 image.imagegen_request_id =
                     self.item["imagegen_request_id"].as_str().map(str::to_owned);
                 image.generation_id = self.item["generation_id"].as_str().map(str::to_owned);
@@ -1253,6 +1256,8 @@ mod projection {
         client.track_turn_profile(TurnProfileFact {
             turn_id: turn_id.to_owned(),
             profile: TurnProfile {
+                // Inference-only projection does not run the turn critical-path recorder.
+                critical_path: Default::default(),
                 before_first_sampling_ms: 0,
                 sampling_ms: sampling,
                 compaction_ms: 0,

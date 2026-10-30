@@ -33,6 +33,7 @@ impl ManualLogin {
             &pkce,
             &state,
             options.forced_chatgpt_workspace_id.as_deref(),
+            None,
         )?;
         Ok(Self {
             auth_url,

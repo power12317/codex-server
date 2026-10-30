@@ -3,9 +3,12 @@
 This document describes the sole model execution path and model-only extensions on
 `codex/native-model-runtime`.
 
-The fixed native reference is Codex `0.164.0`, commit
-`6aaac694803004a63c6f393d153c96d22521a6b9`. The client identity, originator and
-User-Agent remain the existing Codex identities.
+The fixed source reference is official main
+`98f79517ab2392879c581626ec0588851b03d183`; the engine release stamp is
+`0.166.0`, selected from the latest official stable release. The source also
+contains fork extensions. Unmanaged identity retains official behavior; managed
+workers use the separately versioned Desktop compatibility profile described in
+[the identity audit](cpa-official-identity.md).
 
 See [validation and reproduction](cpa-native-model-validation.md) for the fixed
 official comparison, regression coverage and delivery limits.
@@ -66,15 +69,17 @@ actual connection. Handshake response cookies take precedence over cookies sent
 by that handshake; explicit deletion or invalid values clear the diagnostic node.
 Every model request on the connection reports it through the existing `oaiLbNode`
 field, including the initial and reused `response.create` frames. Reconnection
-derives a fresh value and never inherits another socket's diagnostic node. Native
-cookie storage and sending remain unchanged; no handshake response is replayed.
+derives a fresh value and never inherits another socket's diagnostic node. Cookie storage, parent-affinity pinning and sending follow the current upstream
+native lifecycle; diagnostics observe actual wire headers rather than recreating
+routing from the sanitized node. Handshake responses are not replayed as model data.
 
 ### WebSocket turn-state metadata compatibility
 
-This branch deliberately extends official `0.164.0` in one parser rule: both
+This branch deliberately extends official main at the reference above in one parser rule: both
 `response.metadata` and `codex.response.metadata` may supply
 `headers.x-codex-turn-state` on a WebSocket response. The unmodified official
-baseline accepts only the former for turn-state extraction.
+baseline uses its typed event turn-state extraction; the fork keeps its existing
+compatibility coverage for both envelope spellings.
 
 The existing native `OnceLock` still retains the first value within the turn.
 Subsequent requests on the same native session send that value in their existing
@@ -89,7 +94,7 @@ unchanged.
 
 The `cpa/*` methods extend the official app-server envelope. Native model execution
 is the only implementation; there is no execution capability switch, legacy sender or CPA
-direct model fallback. The official runtime version remains `0.164.0`.
+direct model fallback. The official runtime version is `0.166.0`.
 
 The root WebSocket path is `/`; the retired versioned bridge route is not an
 alias. Official initialization, health endpoints and authentication behavior are

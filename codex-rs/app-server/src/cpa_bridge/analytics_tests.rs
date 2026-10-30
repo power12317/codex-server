@@ -343,8 +343,10 @@ fn cpa_analytics_tools_use_native_notification_schemas() {
         let tool = tools::Tool::read(&item, 1000).unwrap();
         if item["type"] == "mcp_call" {
             assert!(matches!(
-                tool.project(31_000, "/", "upstream-thread").unwrap(),
-                codex_app_server_protocol::ThreadItem::McpToolCall { .. }
+                tool.project(31_000, "/", "upstream-thread")
+                    .unwrap()
+                    .payload,
+                codex_app_server_protocol::ThreadItemPayload::McpToolCall { .. }
             ));
         }
         assert!(

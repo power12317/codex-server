@@ -92,7 +92,7 @@ fn cpa_desktop_platform_status_and_host_engine_versions_are_distinct() {
         assert_eq!(
             identity.user_agent(),
             format!(
-                "Codex Desktop/{} ({platform}) dumb (Codex Desktop; 26.1023.51421)",
+                "Codex Desktop/{} ({platform}) dumb (Codex Desktop; 26.1027.30824)",
                 env!("CARGO_PKG_VERSION")
             )
         );

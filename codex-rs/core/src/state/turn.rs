@@ -40,9 +40,8 @@ pub(crate) struct ActiveTurn {
 /// State machine:
 /// - A turn starts in `CurrentTurn`, so queued child mail can join the next
 ///   model request for that turn.
-/// - After user-visible terminal output is recorded, we switch to `NextTurn`
-///   to leave late child mail queued instead of extending an already shown
-///   answer.
+/// - After a terminal answer is recorded, even an empty one, we switch to
+///   `NextTurn` to leave late child mail queued instead of extending the answer.
 /// - If the same task later gets explicit same-turn work again (a steered user
 ///   prompt or a tool call after an untagged preamble), we reopen `CurrentTurn`
 ///   so that pending child mail is drained into that follow-up request.
@@ -51,7 +50,7 @@ pub(crate) enum MailboxDeliveryPhase {
     /// Incoming mailbox messages can still be consumed by the current turn.
     #[default]
     CurrentTurn,
-    /// The current turn already emitted visible final answer text; mailbox
+    /// The current turn already emitted a terminal answer; mailbox
     /// messages should remain queued for a later turn.
     NextTurn,
 }
@@ -89,7 +88,7 @@ pub(crate) struct RunningTask {
 /// Mutable state for a single turn.
 #[derive(Default)]
 pub(crate) struct TurnState {
-    pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
+    pending_approvals: HashMap<String, PendingApproval>,
     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
     pending_user_input: HashMap<String, oneshot::Sender<AcceptedUserInputResponse>>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
@@ -103,6 +102,27 @@ pub(crate) struct TurnState {
     /// The last step captured for execution or selected from a speculative fallback.
     /// Remains absent until a step is captured; standalone local compaction has no step.
     pub(crate) last_known_step_context: Option<Arc<StepContext>>,
+}
+
+pub(crate) struct PendingApproval {
+    pub(crate) sender: oneshot::Sender<ReviewDecision>,
+    pub(crate) kind: codex_protocol::approvals::ExecApprovalKind,
+    pub(crate) turn_id: String,
+}
+
+impl PendingApproval {
+    pub(crate) fn validate(&self, decision: ReviewDecision) -> ReviewDecision {
+        if self.kind == codex_protocol::approvals::ExecApprovalKind::HumanCommand
+            && !matches!(
+                decision,
+                ReviewDecision::Approved | ReviewDecision::Denied { .. } | ReviewDecision::Abort
+            )
+        {
+            ReviewDecision::denied("Managed command policy requires a one-time human approval.")
+        } else {
+            decision
+        }
+    }
 }
 
 /// Host receipt metadata follows the response through the asynchronous tool waiter.
@@ -125,14 +145,24 @@ impl TurnState {
         &mut self,
         key: String,
         tx: oneshot::Sender<ReviewDecision>,
-    ) -> Option<oneshot::Sender<ReviewDecision>> {
-        self.pending_approvals.insert(key, tx)
+        kind: codex_protocol::approvals::ExecApprovalKind,
+        turn_id: String,
+    ) -> Option<PendingApproval> {
+        self.pending_approvals.insert(
+            key,
+            PendingApproval {
+                sender: tx,
+                kind,
+                turn_id,
+            },
+        )
     }
 
-    pub(crate) fn remove_pending_approval(
-        &mut self,
-        key: &str,
-    ) -> Option<oneshot::Sender<ReviewDecision>> {
+    pub(crate) fn pending_approval(&self, key: &str) -> Option<&PendingApproval> {
+        self.pending_approvals.get(key)
+    }
+
+    pub(crate) fn remove_pending_approval(&mut self, key: &str) -> Option<PendingApproval> {
         self.pending_approvals.remove(key)
     }
 

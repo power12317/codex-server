@@ -13,7 +13,7 @@ fn expected_ua(system: &str) -> String {
         "Mac OS 15.3.1"
     };
     format!(
-        "Codex Desktop/{} ({os}; x86_64) dumb (Codex Desktop; 26.1023.51421)",
+        "Codex Desktop/{} ({os}; x86_64) dumb (Codex Desktop; 26.1027.30824)",
         env!("CARGO_PKG_VERSION")
     )
 }

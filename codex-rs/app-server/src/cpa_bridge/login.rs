@@ -93,11 +93,8 @@ impl CpaBridge {
         }
         self.auth.reload().await;
         if result.status == "completed" {
-            self.config_manager.replace_cloud_config_bundle_loader(
-                self.auth.clone(),
-                self.config.chatgpt_base_url.clone(),
-                self.config.http_client_factory(),
-            );
+            self.config_manager
+                .update_managed_config_loader(self.auth.clone(), &self.config);
             self.config_manager
                 .sync_default_client_residency_requirement()
                 .await;
