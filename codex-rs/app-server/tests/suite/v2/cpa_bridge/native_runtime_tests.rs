@@ -171,7 +171,7 @@ async fn cpa_native_analytics_reuses_sender_without_extra_model_request() -> Res
     assert_eq!(turn["turn_id"], final_request["client_metadata"]["turn_id"]);
     assert_eq!(turn["model"], final_request["model"]);
     assert_eq!(turn["input_tokens"], 11);
-    assert_eq!(turn["app_server_client"]["client_name"], "codex-tui");
+    assert_eq!(turn["app_server_client"]["client_name"], "Codex Desktop");
     assert_eq!(turn["app_server_client"]["rpc_transport"], "stdio");
     assert_eq!(
         headers.get("authorization").unwrap(),
@@ -326,11 +326,11 @@ async fn cpa_native_completion_preserves_tools_extensions_and_identity() -> Resu
         .iter()
         .find(|r| r.url.path() == "/v1/responses")
         .unwrap();
-    assert_eq!(request.headers["originator"], "codex-tui");
+    assert_eq!(request.headers["originator"], "Codex Desktop");
     assert!(
         request.headers["user-agent"]
             .to_str()?
-            .starts_with(concat!("codex-tui/", env!("CARGO_PKG_VERSION")))
+            .starts_with(concat!("Codex Desktop/", env!("CARGO_PKG_VERSION")))
     );
     Ok(())
 }

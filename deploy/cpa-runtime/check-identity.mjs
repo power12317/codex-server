@@ -17,6 +17,7 @@ const image = process.argv[2];
 const binary = process.env.CODEX_TEST_BINARY;
 assert(image || binary, 'usage: node check-identity.mjs IMAGE');
 const version = (await readFile(new URL('./release-version', import.meta.url), 'utf8')).trim();
+const desktopVersion = (await readFile(new URL('./desktop-version', import.meta.url), 'utf8')).trim();
 const fixture = await mkdtemp(join(tmpdir(), 'codex-identity-'));
 const name = `codex-identity-${process.pid}`;
 const requests = [];
@@ -111,17 +112,39 @@ try {
   }));
   await writeFile(join(fixture, 'state', 'identity.json', 'config.toml'), `
 model = "gpt-6.1-sol"
-model_provider = "openai"
+model_provider = "identity_fixture"
 approval_policy = "never"
 sandbox_mode = "read-only"
 cli_auth_credentials_store = "file"
-openai_base_url = "${url}/v1"
 chatgpt_base_url = "${url}"
+[model_providers.identity_fixture]
+name = "OpenAI"
+base_url = "${url}/v1"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true
+[model_providers.identity_fixture.http_headers]
+User-Agent = "old-cli-override"
+ORIGINATOR = "old-cli-override"
+Version = "0.1.0"
+X-OAI-ATTESTATION = "provider-proof"
+X-Custom = "preserve-me"
+[model_providers.identity_fixture.env_http_headers]
+user-AGENT = "CODEX_IDENTITY_CHECK_STALE_HEADER"
+Originator = "CODEX_IDENTITY_CHECK_STALE_HEADER"
+VERSION = "CODEX_IDENTITY_CHECK_STALE_HEADER"
+x-oai-attestation = "CODEX_IDENTITY_CHECK_STALE_HEADER"
 `);
+  await mkdir(join(fixture, 'state', 'windows.json'), { recursive: true });
+  const windowsCredential = JSON.parse(await readFile(join(fixture, 'auths', 'identity.json'), 'utf8'));
+  windowsCredential.codex_client_system = 'windows';
+  await writeFile(join(fixture, 'auths', 'windows.json'), JSON.stringify(windowsCredential));
+  await writeFile(join(fixture, 'state', 'windows.json', 'config.toml'), await readFile(join(fixture, 'state', 'identity.json', 'config.toml')));
   const root = binary ? fixture : '/fixture';
   const environment = {
     CODEX_CPA_AUTH_DIR: `${root}/auths`, CODEX_HOME: `${root}/state`, CODEX_CPA_PORT: String(port),
     CODEX_APP_SERVER_LOGIN_ISSUER: url, CODEX_REFRESH_TOKEN_URL_OVERRIDE: `${url}/oauth/token`,
+    CODEX_IDENTITY_CHECK_STALE_HEADER: 'old-cli-env-override',
   };
   const childEnv = { ...process.env, ...environment };
   delete childEnv.CODEX_CPA_AUTH_FILE;
@@ -174,11 +197,36 @@ chatgpt_base_url = "${url}"
   });
   assert.equal(requests.length, 1, 'Expected exactly one local upstream inference request');
   const headers = requests[0];
-  assert.equal(headers.originator, 'codex-tui');
+  assert.equal(headers.originator, 'Codex Desktop');
   assert.equal(headers.version, version);
-  assert(headers['user-agent'].startsWith(`codex-tui/${version} (`), headers['user-agent']);
-  assert(headers['user-agent'].endsWith(`(codex-tui; ${version})`), headers['user-agent']);
-  console.log(JSON.stringify({ executableVersion: versionResult.stdout.trimEnd(), initializeUserAgent: initialized.userAgent, originator: headers.originator, version: headers.version, userAgent: headers['user-agent'] }));
+  assert.equal(headers['x-custom'], 'preserve-me');
+  assert.equal(headers['user-agent'], `Codex Desktop/${version} (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; ${desktopVersion})`);
+  const envelope = JSON.parse(headers['x-oai-attestation']);
+  assert.equal(envelope.v, 1); assert.equal(envelope.s, 0);
+  assert(headers['x-oai-attestation'].startsWith('{"v":1,"s":0,"t":"v1.'));
+  const inner = Buffer.from(envelope.t.slice(3), 'base64url');
+  assert(inner.subarray(0, 13).equals(Buffer.from([0xa3, 0x6a, ...Buffer.from('error_code'), 2])));
+
+  await rpc(3, 'cpa/inference/start', {
+    requestId: 'windows-identity-check', credentialId: 'windows.json', operation: 'responses',
+    sourceFormat: 'openai-response', sessionId: 'identity-check',
+    request: { model: 'gpt-6.1-sol', stream: true, input: [], tools: [],
+      headers: { 'user-agent': 'caller-cli', 'x-oai-attestation': 'caller-proof' } },
+  });
+  assert.equal(requests.length, 2, 'One model send per worker');
+  const windowsHeaders = requests[1];
+  assert.equal(windowsHeaders.originator, 'Codex Desktop');
+  assert.equal(windowsHeaders.version, version);
+  assert.equal(windowsHeaders['x-custom'], 'preserve-me');
+  assert.equal(windowsHeaders['user-agent'], `Codex Desktop/${version} (Windows 10.0.19044; x86_64) dumb (Codex Desktop; ${desktopVersion})`);
+  const windowsEnvelope = JSON.parse(windowsHeaders['x-oai-attestation']);
+  assert.equal(windowsEnvelope.v, 1); assert.equal(windowsEnvelope.s, 0);
+  const windowsInner = Buffer.from(windowsEnvelope.t.slice(3), 'base64url');
+  assert(windowsInner.subarray(0, 13).equals(Buffer.from([0xa3, 0x6a, ...Buffer.from('error_code'), 1])));
+  assert.notEqual(windowsEnvelope.t, envelope.t);
+  console.log(JSON.stringify({ executableVersion: versionResult.stdout.trimEnd(), initializeUserAgent: initialized.userAgent,
+    mac: { originator: headers.originator, version: headers.version, userAgent: headers['user-agent'], custom: headers['x-custom'], attestation: envelope },
+    windows: { originator: windowsHeaders.originator, version: windowsHeaders.version, userAgent: windowsHeaders['user-agent'], custom: windowsHeaders['x-custom'], attestation: windowsEnvelope } }));
 } catch (error) {
   console.error(logs);
   throw error;

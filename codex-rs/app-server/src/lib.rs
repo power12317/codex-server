@@ -519,6 +519,9 @@ pub async fn run_main_with_transport_options(
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<AppServerExit> {
     let cpa = cpa_config::CpaConfig::from_env()?;
+    if let Some(cpa) = &cpa {
+        codex_login::cpa_desktop::install_for_worker(&cpa.file)?;
+    }
     let cloud_skill_provider = match runtime_options.cloud_skills_snapshot {
         Some(path) => {
             let provider = tokio::task::spawn_blocking(move || {

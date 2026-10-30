@@ -29,6 +29,7 @@ const clients = [
   { name: 'codex-tui', version },
   { name: 'codex-backend', version },
   { name: 'identity-fixture', version: '1', title: 'Caller title' },
+  { name: 'Codex Desktop', title: 'Codex Desktop', version: (await readFile(new URL('./desktop-version', import.meta.url), 'utf8')).trim() },
   { name: 'invalid\nname', version: '1' },
 ];
 

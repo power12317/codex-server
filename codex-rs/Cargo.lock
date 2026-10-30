@@ -3895,6 +3895,7 @@ dependencies = [
  "codex-workload-identity",
  "core_test_support",
  "http 1.4.0",
+ "jiff",
  "jsonwebtoken",
  "keyring",
  "once_cell",

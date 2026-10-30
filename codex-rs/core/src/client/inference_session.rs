@@ -164,11 +164,21 @@ impl InferenceSession {
             .or_else(|| {
                 (source.thread_source.as_deref() == Some("subagent")).then(|| "subagent".to_owned())
             });
-        let session_source = subagent.as_ref().map_or(SessionSource::Cli, |kind| {
-            SessionSource::SubAgent(codex_protocol::protocol::SubAgentSource::Other(
-                kind.clone(),
-            ))
-        });
+        let managed_desktop = auth.cpa_credential_file().is_some();
+        let session_source = subagent.as_ref().map_or(
+            if managed_desktop {
+                SessionSource::VSCode
+            } else {
+                SessionSource::Cli
+            },
+            |kind| {
+                SessionSource::SubAgent(codex_protocol::protocol::SubAgentSource::Other(
+                    kind.clone(),
+                ))
+            },
+        );
+        let attestation_provider = managed_desktop
+            .then(|| Arc::new(DesktopAttestation) as Arc<dyn crate::AttestationProvider>);
         let mut provider_info = config.model_provider.clone();
         provider_info.request_max_retries = Some(0);
         provider_info.stream_max_retries = Some(0);
@@ -207,7 +217,7 @@ impl InferenceSession {
             config
                 .features
                 .enabled(codex_features::Feature::OutputTokenReplay),
-            /*attestation_provider*/ None,
+            attestation_provider,
             config.http_client_factory(),
             config.workspace_routing_context(),
             Vec::new(),
@@ -290,5 +300,20 @@ impl InferenceSession {
             turn_state: self.turn_state.clone(),
             metadata,
         }
+    }
+}
+
+/// Only managed workers use the locally assembled platform-unavailable status.
+/// Never consult an IPC client or load DeviceCheck.
+#[derive(Debug)]
+struct DesktopAttestation;
+impl crate::AttestationProvider for DesktopAttestation {
+    fn header_for_request(
+        &self,
+        _context: crate::AttestationContext,
+    ) -> crate::GenerateAttestationFuture<'_> {
+        Box::pin(async {
+            codex_login::cpa_desktop::worker_identity().map(|identity| identity.attestation())
+        })
     }
 }

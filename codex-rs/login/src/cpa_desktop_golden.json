@@ -1,0 +1,32 @@
+{
+  "provenance": "Pure Qi/Jne CBOR functions extracted from official ChatGPT.app 26.1023.51421; synthetic signals; no native addon loaded. Expected envelopes preserve outer v,s,t order.",
+  "time": "2026-10-30T12:00:00Z",
+  "signals": {
+    "Windows": {
+      "schemaVersion": 1,
+      "preferredLanguages": [
+        "ja-JP"
+      ],
+      "locale": "ja-JP",
+      "timezone": "Asia/Tokyo",
+      "screenSizeSum": 3000,
+      "screenScale": 1,
+      "appSessionId": "e1147499-6b03-4b32-91a3-fb2111240e5e"
+    },
+    "Mac": {
+      "schemaVersion": 1,
+      "preferredLanguages": [
+        "ja-JP"
+      ],
+      "locale": "ja-JP",
+      "timezone": "Asia/Tokyo",
+      "screenSizeSum": 2340,
+      "screenScale": 2,
+      "appSessionId": "8d6982df-fee4-450a-80e9-3b3994dd9447"
+    }
+  },
+  "envelopes": {
+    "windows": "{\"v\":1,\"s\":0,\"t\":\"v1.o2plcnJvcl9jb2RlAWlidW5kbGVfaWRwY29tLm9wZW5haS5jb2RleGFmWEunAAEBgWVqYS1KUAJlamEtSlADakFzaWEvVG9reW8EGQu4BQEGeCRlMTE0NzQ5OS02YjAzLTRiMzItOTFhMy1mYjIxMTEyNDBlNWU\"}",
+    "mac": "{\"v\":1,\"s\":0,\"t\":\"v1.o2plcnJvcl9jb2RlAmlidW5kbGVfaWRwY29tLm9wZW5haS5jb2RleGFmWEunAAEBgWVqYS1KUAJlamEtSlADakFzaWEvVG9reW8EGQkkBQIGeCQ4ZDY5ODJkZi1mZWU0LTQ1MGEtODBlOS0zYjM5OTRkZDk0NDc\"}"
+  }
+}

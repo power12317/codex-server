@@ -6,6 +6,8 @@ codex_rust_crate(
         "src/assets/error.html",
         "src/assets/success.html",
         "src/assets/success_legacy.html",
+        "src/cpa_desktop_golden.json",
+        "//:deploy/cpa-runtime/desktop-version",
     ],
     crate_name = "codex_login",
     test_shard_counts = {

@@ -27,6 +27,7 @@ use std::fmt;
 use std::num::NonZeroU64;
 use std::path::Component;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::sync::PoisonError;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -49,6 +50,30 @@ pub enum ResidencyRequirement {
 }
 
 static REQUIREMENTS_RESIDENCY: RwLock<Option<ResidencyRequirement>> = RwLock::new(None);
+
+struct ManagedClientIdentity {
+    user_agent: HeaderValue,
+    originator: HeaderValue,
+    version: HeaderValue,
+}
+
+static MANAGED_CLIENT_IDENTITY: OnceLock<ManagedClientIdentity> = OnceLock::new();
+
+/// Installs one credential worker's immutable identity before any provider is built.
+/// Unmanaged processes never install it and retain configured header precedence.
+pub fn install_managed_client_identity(
+    user_agent: HeaderValue,
+    originator: HeaderValue,
+    version: HeaderValue,
+) -> Result<(), &'static str> {
+    MANAGED_CLIENT_IDENTITY
+        .set(ManagedClientIdentity {
+            user_agent,
+            originator,
+            version,
+        })
+        .map_err(|_| "managed client identity already installed")
+}
 
 /// Sets the process-wide residency requirement loaded from managed configuration.
 pub fn set_managed_residency_requirement(enforce_residency: Option<ResidencyRequirement>) {
@@ -447,6 +472,14 @@ other non-default provider fields are not supported"
             .unwrap_or_else(|| default_base_url.to_string());
 
         let mut headers = self.build_header_map()?;
+        if let Some(identity) = MANAGED_CLIENT_IDENTITY.get() {
+            headers.insert(http::header::USER_AGENT, identity.user_agent.clone());
+            headers.insert("originator", identity.originator.clone());
+            headers.insert("version", identity.version.clone());
+            // Only native inference send sites may supply request attestation.
+            // A configured proof must not leak into catalog or other requests.
+            headers.remove("x-oai-attestation");
+        }
         if let Some(requirement) = read_managed_residency_requirement() {
             let value = match requirement {
                 ResidencyRequirement::Us => HeaderValue::from_static("us"),

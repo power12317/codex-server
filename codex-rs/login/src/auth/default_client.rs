@@ -98,6 +98,12 @@ pub fn set_default_originator(value: String) -> Result<(), SetOriginatorError> {
 }
 
 pub fn originator() -> Originator {
+    if crate::cpa_desktop::worker_identity().is_some() {
+        return Originator {
+            value: crate::cpa_desktop::ORIGINATOR.into(),
+            header_value: HeaderValue::from_static(crate::cpa_desktop::ORIGINATOR),
+        };
+    }
     if let Ok(guard) = ORIGINATOR.read()
         && let Some(originator) = guard.as_ref()
     {
@@ -150,6 +156,9 @@ pub fn is_first_party_chat_originator(originator_value: &str) -> bool {
 }
 
 pub fn get_codex_user_agent() -> String {
+    if let Some(identity) = crate::cpa_desktop::worker_identity() {
+        return identity.user_agent();
+    }
     // OS discovery can spawn subprocesses on Linux. Reuse it across requests,
     // while continuing to read the mutable originator and suffix below.
     static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);

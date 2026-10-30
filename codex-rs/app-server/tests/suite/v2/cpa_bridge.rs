@@ -9,6 +9,9 @@ mod schema_tests;
 #[path = "cpa_bridge/parallel_tests.rs"]
 mod parallel_tests;
 
+#[path = "cpa_bridge/desktop_tests.rs"]
+mod desktop_tests;
+
 use anyhow::Result;
 use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::MockResponsesConfig;
@@ -134,6 +137,14 @@ async fn launch_with_timezone(
     home: &TempDir,
     timezone: Option<&str>,
 ) -> Result<TestAppServer> {
+    launch_with_env(upstream, home, &[("TZ", timezone)]).await
+}
+
+async fn launch_with_env(
+    upstream: &MockServer,
+    home: &TempDir,
+    overrides: &[(&str, Option<&str>)],
+) -> Result<TestAppServer> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port().to_string();
     drop(listener);
@@ -142,7 +153,7 @@ async fn launch_with_timezone(
     TestAppServer::builder()
         .with_codex_home(home.path())
         .with_env_overrides(&[
-            ("TZ", timezone),
+            ("TZ", None),
             (
                 "CODEX_CPA_AUTH_DIR",
                 Some(&home.path().display().to_string()),
@@ -160,6 +171,7 @@ async fn launch_with_timezone(
                 Some(&format!("{}/oauth/token", upstream.uri())),
             ),
         ])
+        .with_env_overrides(overrides)
         .build()
         .await
 }

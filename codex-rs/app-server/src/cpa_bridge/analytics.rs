@@ -1161,7 +1161,18 @@ mod projection {
             num_input_images: snapshot.images,
             submission_type: None,
             ephemeral: true,
-            session_source: codex_protocol::protocol::SessionSource::Cli,
+            session_source: if snapshot.originator == codex_login::cpa_desktop::ORIGINATOR {
+                metadata["subagent_kind"].as_str().map_or(
+                    codex_protocol::protocol::SessionSource::VSCode,
+                    |kind| {
+                        codex_protocol::protocol::SessionSource::SubAgent(
+                            codex_protocol::protocol::SubAgentSource::Other(kind.into()),
+                        )
+                    },
+                )
+            } else {
+                codex_protocol::protocol::SessionSource::Cli
+            },
             model: model.clone(),
             model_provider: "openai".into(),
             permission_profile: permission_profile.clone(),

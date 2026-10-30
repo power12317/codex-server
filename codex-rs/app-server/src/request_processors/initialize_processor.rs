@@ -81,7 +81,8 @@ impl InitializeRequestProcessor {
         let analytics_initialize_params = params.clone();
         let capabilities = params.capabilities.unwrap_or_default();
         let experimental_api_enabled = capabilities.experimental_api;
-        let request_attestation = capabilities.request_attestation;
+        let request_attestation = capabilities.request_attestation
+            && codex_login::cpa_desktop::worker_identity().is_none();
         let extensions = capabilities.extensions.as_ref();
         let mut client_mcp_extensions = codex_mcp::client_mcp_extensions(
             extensions,
@@ -104,7 +105,8 @@ impl InitializeRequestProcessor {
         }
         // Activate only the embedded TUI and local desktop host. Client-supplied
         // extensions cannot opt other hosts into verification.
-        let user_verification_enabled = experimental_api_enabled
+        let user_verification_enabled = codex_login::cpa_desktop::worker_identity().is_none()
+            && experimental_api_enabled
             && matches!(
                 (session.origin, name.as_str()),
                 (ConnectionOrigin::InProcess, "codex-tui")

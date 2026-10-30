@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod auth_env_telemetry;
+pub mod cpa_desktop;
 pub mod test_support;
 pub mod token_data;
 pub use auth::WorkspaceRouting;

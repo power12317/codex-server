@@ -224,7 +224,7 @@ impl Worker {
             }
         });
         let response = tokio::time::timeout(Duration::from_secs(/*secs*/ 30), worker.rpc("initialize", json!({
-            "clientInfo":{"name":"codex-tui","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}
+            "clientInfo":{"name":codex_login::cpa_desktop::ORIGINATOR,"title":codex_login::cpa_desktop::ORIGINATOR,"version":codex_login::cpa_desktop::APP_VERSION},"capabilities":{"experimentalApi":true}
         }))).await??;
         anyhow::ensure!(
             response.get("result").is_some(),
