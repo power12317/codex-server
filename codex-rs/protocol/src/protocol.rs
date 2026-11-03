@@ -41,6 +41,7 @@ use crate::mcp::RequestId;
 use crate::memory_citation::MemoryCitation;
 use crate::models::ActivePermissionProfile;
 use crate::models::AgentMessageInputContent;
+use crate::models::AudioReference;
 use crate::models::BaseInstructions;
 use crate::models::ContentItem;
 use crate::models::ImageDetail;
@@ -219,6 +220,15 @@ pub struct ConversationStartParams {
     /// Overrides the configured realtime protocol version for this session only.
     pub version: Option<RealtimeConversationVersion>,
     pub voice: Option<RealtimeVoice>,
+}
+
+/// A caller-owned realtime sideband. Dropping either direction seals input and ends
+/// the attachment after accepted messages drain. The caller supplies bounded channels
+/// and one complete JSON message per item.
+#[derive(Debug)]
+pub struct RealtimeSidebandTransport {
+    pub incoming: tokio::sync::mpsc::Receiver<String>,
+    pub outgoing: tokio::sync::mpsc::Sender<String>,
 }
 
 impl fmt::Debug for ConversationStartParams {
@@ -719,6 +729,13 @@ pub enum Op {
         reply: oneshot::Sender<CodexResult<()>>,
     },
 
+    /// Attach an existing call using caller-provided I/O without opening a socket.
+    RealtimeConversationAttachStream {
+        params: ConversationStartParams,
+        transport: RealtimeSidebandTransport,
+        reply: oneshot::Sender<CodexResult<()>>,
+    },
+
     /// Send audio input to the running realtime conversation stream.
     #[debug("RealtimeConversationAudio {{ item_id: {:?}, sample_rate: {}, num_channels: {}, samples_per_channel: {:?} }}", _0.frame.item_id, _0.frame.sample_rate, _0.frame.num_channels, _0.frame.samples_per_channel)]
     RealtimeConversationAudio(ConversationAudioParams),
@@ -1093,6 +1110,7 @@ impl Op {
             Self::CleanBackgroundTerminals => "clean_background_terminals",
             Self::RealtimeConversationStart(_) => "realtime_conversation_start",
             Self::RealtimeConversationAttach { .. } => "realtime_conversation_attach",
+            Self::RealtimeConversationAttachStream { .. } => "realtime_conversation_attach_stream",
             Self::RealtimeConversationAudio(_) => "realtime_conversation_audio",
             Self::RealtimeConversationText(_) => "realtime_conversation_text",
             Self::RealtimeConversationSpeech(_) => "realtime_conversation_speech",
@@ -1169,8 +1187,9 @@ pub enum AskForApproval {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 pub struct GranularApprovalConfig {
-    /// Whether to allow shell command approval requests, including inline
+    /// Whether to allow sandbox escalation approval requests, including inline
     /// `with_additional_permissions` and `require_escalated` requests.
+    /// Dangerous commands can still request approval within existing permissions.
     pub sandbox_approval: bool,
     /// Whether to allow prompts triggered by execpolicy `prompt` rules.
     pub rules: bool,
@@ -1643,6 +1662,14 @@ pub enum EventMsg {
     ViewImageToolCall(ViewImageToolCallEvent),
 
     ExecApprovalRequest(ExecApprovalRequestEvent),
+
+    /// Ends an in-process network prompt, including when its proxy request is dropped.
+    #[serde(skip)]
+    #[schemars(skip)]
+    #[ts(skip)]
+    NetworkApprovalResolved {
+        approval_id: String,
+    },
 
     RequestPermissions(RequestPermissionsEvent),
 
@@ -2168,6 +2195,11 @@ pub struct ItemCompletedEvent {
     pub thread_id: ThreadId,
     pub turn_id: String,
     pub item: TurnItem,
+    /// Native tokens in the completed assistant message, including any sampled footer.
+    /// Completion telemetry only; absent for items without a producer-supplied count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub content_token_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub started_at_ms: Option<i64>,
@@ -2769,6 +2801,14 @@ pub enum UserMessageImageKind {
     File,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum UserMessageAudioKind {
+    Inline,
+    File,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct UserMessageEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2810,6 +2850,16 @@ pub struct UserMessageEvent {
     /// legacy UI history events and correspond to audio sent to the model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio: Option<Vec<String>>,
+    /// File-backed audio references. When `audio_order` is complete, consumers
+    /// combine this with `audio` without duplicating inline payloads. Older
+    /// producers may instead store the complete ordered reference list here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_references: Option<Vec<AudioReference>>,
+    /// Inline and file-backed audio kinds in their original input order.
+    /// New mixed-input producers populate this alongside the split `audio` and
+    /// `audio_references` fields; when absent, consumers retain the prior shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_order: Vec<UserMessageAudioKind>,
     /// Local file paths sourced from `UserInput::LocalAudio`. These are kept so
     /// clients can reattach audio when editing history and should not be
     /// treated as API-ready URLs.
@@ -2839,6 +2889,30 @@ impl UserMessageEvent {
         inline_count == self.images.as_ref().map_or(0, Vec::len)
             && file_count == self.file_ids.as_ref().map_or(0, Vec::len)
     }
+
+    /// Returns whether `audio_order` accounts for every split audio reference exactly once.
+    pub fn has_complete_audio_order(&self) -> bool {
+        if self.audio_order.is_empty() {
+            return false;
+        }
+
+        let mut inline_count = 0;
+        let mut file_count = 0;
+        for audio_kind in &self.audio_order {
+            match audio_kind {
+                UserMessageAudioKind::Inline => inline_count += 1,
+                UserMessageAudioKind::File => file_count += 1,
+            }
+        }
+
+        inline_count == self.audio.as_ref().map_or(0, Vec::len)
+            && file_count == self.audio_references.as_ref().map_or(0, Vec::len)
+            && self.audio_references.as_ref().is_none_or(|references| {
+                references
+                    .iter()
+                    .all(|reference| matches!(reference, AudioReference::File { .. }))
+            })
+    }
 }
 
 /// Returns the user-facing preview text for a user message.
@@ -2859,7 +2933,13 @@ pub fn user_message_preview(user: &UserMessageEvent) -> Option<String> {
     {
         return Some("[Image]".to_string());
     }
-    if user.audio.as_ref().is_some_and(|audio| !audio.is_empty()) || !user.local_audio.is_empty() {
+    if user.audio.as_ref().is_some_and(|audio| !audio.is_empty())
+        || user
+            .audio_references
+            .as_ref()
+            .is_some_and(|audio| !audio.is_empty())
+        || !user.local_audio.is_empty()
+    {
         return Some("[Audio]".to_string());
     }
     None
@@ -3359,6 +3439,9 @@ pub struct HistoryPosition {
 /// and should be used when there is no config override.
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
 pub struct SessionMeta {
+    /// Scope discovery to the creator. Absent on threads created before account filtering.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub account_scoped: bool,
     /// ChatGPT user that created this thread; absent when unavailable or for older threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator_user_id: Option<String>,
@@ -3442,6 +3525,7 @@ impl Default for SessionMeta {
     fn default() -> Self {
         let id = ThreadId::default();
         SessionMeta {
+            account_scoped: false,
             creator_user_id: None,
             creator_account_id: None,
             session_id: id.into(),
@@ -4754,6 +4838,7 @@ mod tests {
     use crate::items::UserMessageItem;
     use crate::items::WebSearchItem;
     use crate::mcp::CallToolResult;
+    use crate::models::AudioReference;
     use crate::permissions::FileSystemAccessMode;
     use crate::permissions::FileSystemPath;
     use crate::permissions::FileSystemSandboxEntry;
@@ -5684,6 +5769,7 @@ mod tests {
     #[test]
     fn item_completed_event_from_image_generation_emits_end_event() {
         let event = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             item: TurnItem::ImageGeneration(ImageGenerationItem {
@@ -5722,6 +5808,7 @@ mod tests {
     #[test]
     fn item_completed_event_from_file_change_emits_patch_end_event() {
         let event = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(0),
@@ -5761,6 +5848,7 @@ mod tests {
     #[test]
     fn item_completed_event_from_mcp_tool_call_emits_end_event() {
         let event = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(0),
@@ -5842,6 +5930,7 @@ mod tests {
             }),
         };
         let completed = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(10),
@@ -5920,6 +6009,7 @@ mod tests {
             }),
         };
         let completed = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(10),
@@ -5965,6 +6055,7 @@ mod tests {
     #[test]
     fn review_mode_item_completion_emits_legacy_events_with_ids() {
         let entered = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(0),
@@ -5978,6 +6069,7 @@ mod tests {
             }),
         };
         let exited = ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             started_at_ms: Some(0),
@@ -6038,6 +6130,7 @@ mod tests {
     #[test]
     fn item_completed_event_defaults_missing_completed_at_ms() {
         let mut value = serde_json::to_value(ItemCompletedEvent {
+            content_token_count: None,
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             item: TurnItem::UserMessage(UserMessageItem::new(&[])),
@@ -6289,7 +6382,14 @@ mod tests {
                 detail: Some(ImageDetail::Original),
             },
             crate::user_input::UserInput::Audio {
-                audio_url: "https://example.com/remote.mp3".to_string(),
+                audio: AudioReference::Inline {
+                    audio_url: "https://example.com/remote.mp3".to_string(),
+                },
+            },
+            crate::user_input::UserInput::Audio {
+                audio: AudioReference::File {
+                    file_id: "file_audio".to_string(),
+                },
             },
             crate::user_input::UserInput::LocalAudio {
                 path: local_audio_path.clone(),
@@ -6334,16 +6434,41 @@ mod tests {
             Some(vec!["https://example.com/remote.mp3".to_string()])
         );
         assert_eq!(event.local_audio, vec![local_audio_path]);
+        assert_eq!(
+            event.audio_references,
+            Some(vec![AudioReference::File {
+                file_id: "file_audio".to_string(),
+            }])
+        );
+        assert_eq!(
+            event.audio_order,
+            vec![UserMessageAudioKind::Inline, UserMessageAudioKind::File]
+        );
+        // Earlier readers ignore the new ordered field and retain inline recordings.
+        #[derive(Deserialize)]
+        struct EarlierUserMessageEvent {
+            audio: Option<Vec<String>>,
+        }
+        let earlier: EarlierUserMessageEvent = serde_json::from_value(event_json).unwrap();
+        assert_eq!(earlier.audio, event.audio);
     }
 
     #[test]
     fn audio_only_user_message_has_placeholder_preview() {
-        let event = UserMessageEvent {
-            audio: Some(vec!["https://example.com/remote.mp3".to_string()]),
-            ..Default::default()
-        };
-
-        assert_eq!(user_message_preview(&event), Some("[Audio]".to_string()));
+        for event in [
+            UserMessageEvent {
+                audio: Some(vec!["https://example.com/remote.mp3".to_string()]),
+                ..Default::default()
+            },
+            UserMessageEvent {
+                audio_references: Some(vec![AudioReference::File {
+                    file_id: "file_audio".into(),
+                }]),
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(user_message_preview(&event), Some("[Audio]".to_string()));
+        }
     }
 
     #[test]

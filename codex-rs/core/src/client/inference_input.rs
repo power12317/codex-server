@@ -189,7 +189,7 @@ mod tests {
                     ),
                     (
                         format!("native-model-gpt-6.1-sol-{suffix}.json"),
-                        serde_json::to_value(&model).unwrap(),
+                        serde_json::to_value(&*model).unwrap(),
                     ),
                 ] {
                     std::fs::write(

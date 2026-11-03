@@ -63,6 +63,7 @@ pub(crate) use self::runtime::LocalAgentRuntime;
 pub(crate) use self::watch::StatusSubscription;
 pub(in crate::agent) use spawn::effective_spawn_config;
 pub(in crate::agent) use spawn::fresh_child_history_and_tools;
+pub(in crate::agent) use spawn::inherited_dynamic_tools;
 pub(in crate::agent) use spawn_guard::PendingSpawn;
 pub(in crate::agent) use spawn_guard::SpawnOwner;
 
@@ -147,6 +148,7 @@ impl LocalAgentControl {
             .await
         {
             Ok(TurnInputSubmission::Started { turn_id, .. }) => Ok(turn_id),
+            Ok(TurnInputSubmission::Accepted) => unreachable!("user input returns a turn outcome"),
             Ok(TurnInputSubmission::Steered { .. }) => {
                 // MAv1 exposes an opaque `submission_id` to the model. The legacy
                 // `Op::UserInput` path returned a fresh ID for every steer, while the
@@ -211,6 +213,7 @@ impl LocalAgentControl {
             .await;
         let completed_at_ms = now_unix_timestamp_ms();
         let completed = ItemCompletedEvent {
+            content_token_count: None,
             thread_id,
             turn_id: turn_id.clone(),
             item,

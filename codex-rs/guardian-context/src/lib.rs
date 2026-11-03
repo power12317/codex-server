@@ -69,6 +69,8 @@ pub use retained_instructions::RetainedInstructionItem;
 pub use retained_instructions::retained_assistant_message;
 
 mod action;
+mod allocation;
+pub use allocation::PreparedElasticContext;
 mod enforcement;
 pub(crate) use enforcement::BudgetPriority;
 pub use enforcement::Budgeted;
@@ -102,6 +104,7 @@ pub use composition::ComposedContext;
 pub use composition::ContextPresentation;
 pub use composition::MAX_TEXT_PART_ESTIMATED_TOKENS;
 pub use composition::PreparedTranscript;
+pub use preparation::ContextBudgeting;
 pub use preparation::ContextProfile;
 pub use preparation::SyncImagePreparer;
 pub use preparation::SyncPreparation;
@@ -290,6 +293,8 @@ pub trait SectionContributor: Send + Sync {
 pub enum SectionError {
     /// One native message or tool-call ID identifies different evidence.
     ConflictingNativeMessage,
+    /// Configured reservations must neither overcommit nor underfill the nominal budget.
+    SectionMinimumTotalMismatch { total: u128 },
     /// Evidence required by this contributor for the current input is missing.
     MissingRequiredEvidence { section: &'static str },
     /// A section cannot be delivered by the requested consumer.
@@ -301,6 +306,10 @@ pub enum SectionError {
 impl std::fmt::Display for SectionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SectionMinimumTotalMismatch { total } => write!(
+                formatter,
+                "elastic section minimums must sum to DEFAULT_MAX_INPUT_TOKENS ({DEFAULT_MAX_INPUT_TOKENS}), got {total}"
+            ),
             Self::ConflictingNativeMessage => {
                 formatter.write_str("conflicting native messages or tool calls share an ID")
             }

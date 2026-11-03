@@ -1,7 +1,7 @@
 # Official release identity
 
 This branch synchronizes official `openai/codex` main at
-`98f79517ab2392879c581626ec0588851b03d183` and retains the service's model-only
+`f7167ac895c869c60ae00a2d7f518a9977cd1205` and retains the service's model-only
 extensions. The engine stamp is selected independently from the latest stable
 release, [`rust-v0.166.0`](https://github.com/openai/codex/releases/tag/rust-v0.166.0),
 commit `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`. The source includes unreleased

@@ -192,7 +192,7 @@ are described through factual capabilities.
 ## Runtime release identity
 
 The current source synchronizes official `openai/codex` main at
-`98f79517ab2392879c581626ec0588851b03d183`. The engine stamp comes independently
+`f7167ac895c869c60ae00a2d7f518a9977cd1205`. The engine stamp comes independently
 from the latest official stable release, `rust-v0.166.0` at
 `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`. Existing fork changes and previously
 integrated upstream commits remain in the merge history. The source includes

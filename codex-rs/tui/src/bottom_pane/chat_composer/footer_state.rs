@@ -44,6 +44,7 @@ pub(super) struct ComposerLayout {
     pub(super) status: Rect,
     pub(super) composer: Rect,
     pub(super) remote_images: Rect,
+    pub(super) thumbnails: Rect,
     pub(super) textarea: Rect,
     pub(super) popup: Rect,
     pub(super) footer: Rect,
@@ -71,6 +72,9 @@ pub(crate) enum CommandPopupPlacement {
 pub(crate) struct ComposerRenderOptions<'a> {
     /// Fullscreen limits the composer independently of activity and modal views.
     pub(crate) max_height: Option<u16>,
+    /// Fill the empty cell next to the right pane's divider without moving the input.
+    pub(crate) extend_composer_background_left: bool,
+    pub(crate) image_previews: Option<&'a crate::transcript_image::composer::ComposerImages>,
     pub(crate) rendered_selection:
         Option<&'a std::cell::RefCell<crate::rendered_selection::RenderedSelection>>,
     /// Reserve a shared hint row independently of whether it currently contains a notice.
@@ -80,6 +84,8 @@ pub(crate) struct ComposerRenderOptions<'a> {
     pub(crate) textarea_right_reserve: u16,
     /// Keep configured status below the composer while hints occupy the final row.
     pub(crate) separate_status_line: bool,
+    /// Topmost frame row available for suggestions overlaying the transcript.
+    pub(crate) overlay_top: u16,
     pub(crate) command_popup_placement: CommandPopupPlacement,
     pub(crate) footer: Option<&'a TranscriptFooter>,
 }

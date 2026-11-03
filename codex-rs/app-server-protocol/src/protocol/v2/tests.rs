@@ -26,6 +26,7 @@ use codex_protocol::mcp::McpServerInfo;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use codex_protocol::models::AudioReference;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
 use codex_protocol::models::ImageDetail;
@@ -2129,6 +2130,7 @@ fn config_granular_approval_policy_is_marked_experimental() {
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
         web_search: None,
+        client_search_provider: None,
         tools: None,
         instructions: None,
         developer_instructions: None,
@@ -2164,6 +2166,7 @@ fn config_approvals_reviewer_is_marked_experimental() {
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
         web_search: None,
+        client_search_provider: None,
         tools: None,
         instructions: None,
         developer_instructions: None,
@@ -3143,6 +3146,28 @@ fn network_requirements_serializes_canonical_and_legacy_fields() {
 }
 
 #[test]
+fn audio_references_round_trip_through_core_and_json() {
+    for wire in [
+        json!({"type": "audio", "url": "data:audio/wav;base64,AAA"}),
+        json!({"type": "audio", "fileId": "file_audio"}),
+    ] {
+        let input: UserInput = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(UserInput::from(input.into_core())).unwrap(),
+            wire
+        );
+    }
+    let old_input: UserInput = serde_json::from_value(
+        json!({"type": "audio", "fileId": "file_audio", "durationMs": 1_000}),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(UserInput::from(old_input.into_core())).unwrap(),
+        json!({"type": "audio", "fileId": "file_audio"})
+    );
+}
+
+#[test]
 fn core_turn_item_into_thread_item_converts_supported_variants() {
     let user_item = TurnItem::UserMessage(UserMessageItem {
         id: "user-1".to_string(),
@@ -3163,7 +3188,14 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                 detail: Some(ImageDetail::Original),
             },
             CoreUserInput::Audio {
-                audio_url: "data:audio/wav;base64,AAA".to_string(),
+                audio: AudioReference::Inline {
+                    audio_url: "data:audio/wav;base64,AAA".to_string(),
+                },
+            },
+            CoreUserInput::Audio {
+                audio: AudioReference::File {
+                    file_id: "file_audio".into(),
+                },
             },
             CoreUserInput::LocalAudio {
                 path: PathBuf::from("local/audio.mp3"),
@@ -3200,7 +3232,14 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                     detail: Some(ImageDetail::Original),
                 },
                 UserInput::Audio {
-                    url: "data:audio/wav;base64,AAA".to_string(),
+                    audio: crate::AudioReference::Inline {
+                        url: "data:audio/wav;base64,AAA".to_string()
+                    }
+                },
+                UserInput::Audio {
+                    audio: crate::AudioReference::File {
+                        file_id: "file_audio".into(),
+                    }
                 },
                 UserInput::LocalAudio {
                     path: PathBuf::from("local/audio.mp3"),
@@ -3854,11 +3893,15 @@ fn user_input_into_core_preserves_media_fields() {
 
     assert_eq!(
         UserInput::Audio {
-            url: "data:audio/wav;base64,AAA".to_string(),
+            audio: crate::AudioReference::Inline {
+                url: "data:audio/wav;base64,AAA".to_string()
+            }
         }
         .into_core(),
         CoreUserInput::Audio {
-            audio_url: "data:audio/wav;base64,AAA".to_string(),
+            audio: AudioReference::Inline {
+                audio_url: "data:audio/wav;base64,AAA".to_string()
+            }
         }
     );
 
