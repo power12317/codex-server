@@ -737,6 +737,9 @@ pub struct Config {
     /// Blank config values are treated as unset, like other Guardian policy overrides.
     pub guardian_conversation_history_prompt: Option<String>,
 
+    /// Optional bounded developer message for the gated denial reconsideration pass.
+    pub guardian_denial_reconsideration_prompt: Option<String>,
+
     /// Optional per-response history-tool budget. Guardian defaults to 4,000 tokens and
     /// preserves stricter parent tool limits.
     pub guardian_conversation_history_max_output_tokens: Option<NonZeroUsize>,
@@ -1634,7 +1637,7 @@ impl ConfigBuilder {
 
 async fn config_toml_from_layers(layers: &ConfigLayerStack) -> std::io::Result<ConfigToml> {
     // The loader resolves paths relative to each layer's file before deserialization.
-    match layers.effective_config().try_into() {
+    match ConfigToml::try_from(layers.effective_config()) {
         Ok(config_toml) => Ok(config_toml),
         Err(err) => {
             if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
@@ -1953,16 +1956,20 @@ impl Config {
                 .enabled(Feature::SkillMcpDependencyInstall),
             approval_policy: self.permissions.approval_policy.clone(),
             permission_profile: self.permissions.permission_profile().clone(),
+            host_cwd: self.cwd.clone(),
             config_layer_stack: self.config_layer_stack.clone(),
             plugins: self.plugins.clone(),
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
             environment_use_mxc: HashMap::new(),
-            server_permission_profiles: HashMap::new(),
+            server_permissions: HashMap::new(),
             codex_self_exe: self.codex_self_exe.clone(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
+            apps_early_resource_discovery: self
+                .features
+                .enabled(Feature::AppsEarlyResourceDiscovery),
             prefix_mcp_tool_names: self.prefix_mcp_tool_names(),
             non_prefixed_mcp_tool_servers: if self
                 .features
@@ -2240,8 +2247,7 @@ pub fn deserialize_config_toml_with_base(
     // This guard ensures that any relative paths that is deserialized into an
     // [AbsolutePathBuf] is resolved against `config_base_dir`.
     let _guard = AbsolutePathBufGuard::new(config_base_dir);
-    root_value
-        .try_into()
+    ConfigToml::try_from(root_value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
@@ -4299,6 +4305,20 @@ impl Config {
             .auto_review
             .as_ref()
             .and_then(|auto_review| auto_review.conversation_history_max_output_tokens);
+        let guardian_denial_reconsideration_prompt = cfg.auto_review.as_ref().and_then(|auto_review| {
+            normalize_guardian_policy_config(
+                auto_review.experimental_denial_reconsideration_prompt.as_deref(),
+            )
+        });
+        if guardian_denial_reconsideration_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.len() > crate::context::GuardianDenialReconsideration::MAX_BYTES)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "auto_review.experimental_denial_reconsideration_prompt exceeds 1,000 UTF-8 bytes",
+            ));
+        }
         let personality = personality.or(cfg.personality);
 
         let experimental_compact_prompt_path = cfg.experimental_compact_prompt_file.as_ref();
@@ -4665,6 +4685,7 @@ impl Config {
             guardian_policy_template,
             guardian_transcript_mode,
             guardian_conversation_history_prompt,
+            guardian_denial_reconsideration_prompt,
             guardian_conversation_history_max_output_tokens,
             guardian_review_timeout: cfg
                 .auto_review
@@ -4924,11 +4945,8 @@ impl Config {
         &self,
         profile_name: &str,
     ) -> std::io::Result<PermissionProfileToml> {
-        let cfg: ConfigToml = self
-            .config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| {
+        let cfg =
+            ConfigToml::try_from(self.config_layer_stack.effective_config()).map_err(|err| {
                 std::io::Error::new(
                     ErrorKind::InvalidInput,
                     format!(
@@ -4952,11 +4970,8 @@ impl Config {
     ) -> std::io::Result<Option<NetworkProxySpec>> {
         let profile_allows_network_proxy =
             profile_allows_configured_network_proxy(permission_profile);
-        let cfg: ConfigToml = self
-            .config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| {
+        let cfg =
+            ConfigToml::try_from(self.config_layer_stack.effective_config()).map_err(|err| {
                 std::io::Error::new(
                     ErrorKind::InvalidInput,
                     format!(

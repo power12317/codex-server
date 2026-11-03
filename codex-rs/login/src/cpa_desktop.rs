@@ -13,14 +13,41 @@ use std::io;
 use std::sync::OnceLock;
 
 pub const ORIGINATOR: &str = "Codex Desktop";
-pub const APP_VERSION: &str =
+pub const MAC_APP_VERSION: &str =
     include_str!("../../../deploy/cpa-runtime/desktop-version").trim_ascii();
+pub const WINDOWS_APP_VERSION: &str =
+    include_str!("../../../deploy/cpa-runtime/desktop-windows-version").trim_ascii();
 static WORKER: OnceLock<DesktopIdentity> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopSystem {
     Windows,
     Mac,
+}
+
+impl DesktopSystem {
+    fn from_credential(value: &Value) -> Self {
+        if value["codex_client_system"]
+            .as_str()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("windows"))
+        {
+            Self::Windows
+        } else {
+            Self::Mac
+        }
+    }
+
+    fn app_version(self) -> &'static str {
+        match self {
+            Self::Windows => WINDOWS_APP_VERSION,
+            Self::Mac => MAC_APP_VERSION,
+        }
+    }
+}
+
+/// Selects host metadata for the same CPA-owned platform used by the child worker.
+pub fn app_version_for_credential(value: &Value) -> &'static str {
+    DesktopSystem::from_credential(value).app_version()
 }
 
 #[derive(Clone, Debug)]
@@ -34,14 +61,7 @@ pub struct DesktopIdentity {
 impl DesktopIdentity {
     /// Only CPA-owned metadata is used. Missing/legacy system values mean Mac.
     pub fn from_credential(value: &Value) -> Self {
-        let system = if value["codex_client_system"]
-            .as_str()
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("windows"))
-        {
-            DesktopSystem::Windows
-        } else {
-            DesktopSystem::Mac
-        };
+        let system = DesktopSystem::from_credential(value);
         // Do not seed from refresh/access tokens, credential_id, or its path.
         // Older files without either identity use the same explicit legacy bucket.
         let account = value["account_id"]
@@ -71,6 +91,10 @@ impl DesktopIdentity {
         }
     }
 
+    pub fn app_version(&self) -> &'static str {
+        self.system.app_version()
+    }
+
     pub fn user_agent(&self) -> String {
         let platform = match self.system {
             DesktopSystem::Windows => "Windows 10.0.19044; x86_64",
@@ -79,8 +103,9 @@ impl DesktopIdentity {
         // Same official app-server layout, with explicit compatibility OS/arch
         // parameters and the headless terminal observed in the official artifact.
         format!(
-            "{ORIGINATOR}/{} ({platform}) dumb ({ORIGINATOR}; {APP_VERSION})",
-            env!("CARGO_PKG_VERSION")
+            "{ORIGINATOR}/{} ({platform}) dumb ({ORIGINATOR}; {})",
+            env!("CARGO_PKG_VERSION"),
+            self.app_version()
         )
     }
 

@@ -176,3 +176,132 @@ async fn cpa_shared_save_waits_for_latest_metadata() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+fn cpa_reload_token(generation: &str) -> String {
+    use base64::Engine;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "iss":"https://auth.openai.com", "session_id":"assigned-session",
+            "sub":"assigned-user", "fixture_generation":generation,
+            "https://api.openai.com/auth":{
+                "chatgpt_account_id":"assigned-owner", "chatgpt_user_id":"assigned-user"
+            }
+        }))
+        .unwrap(),
+    );
+    format!("e30.{payload}.c2ln")
+}
+
+async fn cpa_reload_fixture() -> anyhow::Result<(tempfile::TempDir, CpaCredentialFile, AuthManager)>
+{
+    use base64::Engine;
+    let home = tempfile::TempDir::new()?;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(
+        &json!({"https://api.openai.com/auth":{"chatgpt_account_id":"assigned-owner", "chatgpt_user_id":"assigned-user"}}),
+    )?);
+    let file = CpaCredentialFile {
+        path: home.path().join("assigned.json"),
+        credential_id: "assigned.json".into(),
+    };
+    std::fs::write(
+        &file.path,
+        serde_json::to_vec(&json!({"type":"codex","codex_cli":{"enabled":true},
+            "id_token":format!("e30.{payload}.c2ln"),"access_token":cpa_reload_token("before"),
+            "refresh_token":"fake-refresh","account_id":"assigned-owner",
+            "last_refresh":Utc::now().to_rfc3339()}))?,
+    )?;
+    std::fs::write(
+        home.path().join("auth.json"),
+        serde_json::to_vec(&json!({"auth_mode":"apikey","OPENAI_API_KEY":"wrong-source"}))?,
+    )?;
+    let manager = AuthManager::new_from_auth_config(
+        AuthConfig {
+            codex_home: home.path().to_path_buf(),
+            auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+            keyring_backend_kind: AuthKeyringBackendKind::default(),
+            forced_login_method: None,
+            forced_chatgpt_workspace_id: None,
+            managed_auth_policy: ManagedAuthPolicy::default(),
+            chatgpt_base_url: None,
+            auth_route_config: crate::test_support::transport_default_auth_route_config(),
+        },
+        false,
+        Some(file.clone()),
+        None,
+    )
+    .await;
+    Ok((home, file, manager))
+}
+
+struct OtherCpaReloadSource;
+
+impl ExternalAuth for OtherCpaReloadSource {
+    fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
+        Box::pin(async { Ok(CodexAuth::from_api_key("wrong-external-source")) })
+    }
+
+    fn refresh(&self, _: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
+        self.resolve()
+    }
+}
+
+#[tokio::test]
+async fn cpa_cached_reload_uses_assigned_file_and_enforces_auth_mode() -> anyhow::Result<()> {
+    let (_home, file, manager) = cpa_reload_fixture().await?;
+    assert_eq!(
+        manager.auth_cached().unwrap().get_token()?,
+        cpa_reload_token("before")
+    );
+    manager
+        .set_external_auth(Arc::new(OtherCpaReloadSource))
+        .await?;
+    assert!(manager.reload().await);
+    assert_eq!(
+        manager.auth_cached().unwrap().get_token()?,
+        cpa_reload_token("before")
+    );
+    let before = *manager.auth_change_state_receiver().borrow();
+    let mut value = file.read()?;
+    value["access_token"] = json!(cpa_reload_token("after"));
+    std::fs::write(&file.path, serde_json::to_vec(&value)?)?;
+    // The return value tracks auth kind; token rotation publishes a new
+    // credential generation while preserving the account and source owner.
+    assert!(!manager.reload_with_cached_auth().await?);
+    let after = *manager.auth_change_state_receiver().borrow();
+    assert!(after.generation > before.generation);
+    assert_eq!(after.owner_generation, before.owner_generation);
+    assert_eq!(after.source_generation, before.source_generation);
+    assert_eq!(after.login_generation, before.login_generation);
+    let auth = manager.auth_cached().unwrap();
+    assert_eq!(auth.get_account_id().as_deref(), Some("assigned-owner"));
+    assert_eq!(auth.get_token()?, cpa_reload_token("after"));
+    manager.restrict_auth_modes(vec![AuthMode::ApiKey])?;
+    assert!(manager.reload_with_cached_auth().await?);
+    assert!(manager.auth_cached().is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpa_cached_reload_reports_read_failure_without_replacing_owner() -> anyhow::Result<()> {
+    let (_home, file, manager) = cpa_reload_fixture().await?;
+    let before = *manager.auth_change_state_receiver().borrow();
+    std::fs::write(&file.path, b"invalid JSON")?;
+    assert!(manager.reload_with_cached_auth().await.is_err());
+    assert_eq!(
+        manager
+            .inner
+            .read()
+            .unwrap()
+            .auth
+            .as_ref()
+            .unwrap()
+            .get_token()?,
+        cpa_reload_token("before")
+    );
+    assert_eq!(*manager.auth_change_state_receiver().borrow(), before);
+    // Public reads still reject the invalid CPA file; the retained owner cannot send headers.
+    assert!(manager.auth_cached().is_none());
+    assert!(manager.reload().await);
+    assert!(manager.inner.read().unwrap().auth.is_none());
+    Ok(())
+}

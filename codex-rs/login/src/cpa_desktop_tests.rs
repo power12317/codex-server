@@ -89,10 +89,15 @@ fn cpa_desktop_platform_status_and_host_engine_versions_are_distinct() {
         ("mac", 2, "Mac OS 15.3.1; x86_64"),
     ] {
         let identity = fixture(system);
+        let host = if system == "windows" {
+            "26.1027.51404"
+        } else {
+            "26.1027.61615"
+        };
         assert_eq!(
             identity.user_agent(),
             format!(
-                "Codex Desktop/{} ({platform}) dumb (Codex Desktop; 26.1027.30824)",
+                "Codex Desktop/{} ({platform}) dumb (Codex Desktop; {host})",
                 env!("CARGO_PKG_VERSION")
             )
         );

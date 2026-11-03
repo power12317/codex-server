@@ -93,6 +93,8 @@ pub(super) struct Worker {
 impl Worker {
     pub(super) async fn start(root: &Path, home: &Path, id: &str) -> anyhow::Result<Arc<Self>> {
         tokio::fs::create_dir_all(home).await?;
+        let metadata: Value = serde_json::from_slice(&tokio::fs::read(root.join(id)).await?)?;
+        let desktop_version = codex_login::cpa_desktop::app_version_for_credential(&metadata);
         let args = {
             let mut args = Vec::new();
             let mut source = std::env::args_os().skip(/*n*/ 1);
@@ -224,7 +226,7 @@ impl Worker {
             }
         });
         let response = tokio::time::timeout(Duration::from_secs(/*secs*/ 30), worker.rpc("initialize", json!({
-            "clientInfo":{"name":codex_login::cpa_desktop::ORIGINATOR,"title":codex_login::cpa_desktop::ORIGINATOR,"version":codex_login::cpa_desktop::APP_VERSION},"capabilities":{"experimentalApi":true}
+            "clientInfo":{"name":codex_login::cpa_desktop::ORIGINATOR,"title":codex_login::cpa_desktop::ORIGINATOR,"version":desktop_version},"capabilities":{"experimentalApi":true}
         }))).await??;
         anyhow::ensure!(
             response.get("result").is_some(),

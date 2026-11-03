@@ -279,7 +279,8 @@ pub(crate) enum RecapTrigger {
 
 #[derive(Debug)]
 pub(crate) struct AgentsOverviewThreadRefresh {
-    pub(crate) threads: std::collections::HashMap<ThreadId, Option<Thread>>,
+    pub(crate) cleared_unread: Vec<ThreadId>,
+    pub(crate) threads: std::collections::HashMap<ThreadId, Option<(Thread, bool)>>,
     pub(crate) last_messages: std::collections::HashMap<ThreadId, String>,
     pub(crate) recent_seed_complete: bool,
     pub(crate) discovery: Option<crate::app::agents_overview_discovery::AgentsOverviewDiscovery>,
@@ -290,6 +291,22 @@ pub(crate) struct AgentsOverviewThreadRefresh {
 pub(crate) struct AgentPickerThreadRefresh {
     pub(crate) threads: Vec<Thread>,
     pub(crate) archived_thread_ids: std::collections::HashSet<ThreadId>,
+}
+
+/// Source-backed replacement for the outgoing widget's width-bound streaming rows.
+#[derive(Debug)]
+pub(crate) enum CapturedSideStream {
+    Answer(Arc<crate::history_cell::AgentMarkdownCell>),
+    Plan(Arc<crate::history_cell::ProposedPlanCell>),
+}
+
+/// Presentation retained alongside the transcript while its composer is inactive.
+#[derive(Debug)]
+pub(crate) struct CapturedSideDisplay {
+    pub(crate) active: Option<Box<dyn HistoryCell>>,
+    pub(crate) auxiliary: Vec<crate::terminal_hyperlinks::HyperlinkLine>,
+    pub(crate) draft: String,
+    pub(crate) status: Option<String>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -316,11 +333,16 @@ pub(crate) enum AppEvent {
     /// Open the live command center for recent and locally retained root sessions.
     OpenAgentsOverview,
     ShowMoreAgentsOverview,
+    RefreshViewedThread {
+        backend_id: crate::backend_id::BackendId,
+        thread_id: ThreadId,
+        revision: String,
+    },
     /// Create an empty thread from the command center.
     NewAgentsOverviewSession {
         cwd: Option<AbsolutePathBuf>,
     },
-    /// Update the daemon-wide overview after a background thread listing finishes.
+    /// Update the agents overview after a background thread listing finishes.
     AgentsOverviewThreadsLoaded {
         request_id: Uuid,
         result: Result<AgentsOverviewThreadRefresh, String>,
@@ -398,14 +420,6 @@ pub(crate) enum AppEvent {
     RunAgentsOverviewAction {
         thread_id: ThreadId,
         action: AgentsOverviewAction,
-    },
-    /// Start the shared app-server daemon without moving the current embedded session.
-    #[cfg(any(unix, windows))]
-    StartAgentsDaemon,
-    /// Report whether starting the shared app-server daemon succeeded.
-    #[cfg(any(unix, windows))]
-    AgentsDaemonStarted {
-        result: Result<(), String>,
     },
     /// Open the agent picker for switching active threads.
     OpenAgentPicker,
@@ -556,6 +570,24 @@ pub(crate) enum AppEvent {
         name: Option<String>,
     },
 
+    /// Resolve the /new host before offering choices about the displayed checkout.
+    ChooseNewSessionCheckout {
+        name: Option<String>,
+    },
+
+    /// Start on the current worktree's host, ignoring the saved new-thread host.
+    NewSessionInCurrentWorktree {
+        name: Option<String>,
+    },
+
+    /// Move an empty conversation to the next connected backend.
+    CycleNewConversationBackend,
+
+    /// Continue a provider-locked conversation in a fresh chat using its saved history.
+    ContinueProviderChat {
+        thread_id: ThreadId,
+    },
+
     /// Create a managed checkout and start or fork a session into it.
     StartManagedWorktree {
         mode: ManagedWorktreeMode,
@@ -598,6 +630,7 @@ pub(crate) enum AppEvent {
 
     /// Result of the fresh startup thread that is attached after the input UI is live.
     StartupThreadStarted {
+        backend_id: crate::backend_id::BackendId,
         result: color_eyre::Result<AppServerStartedThread>,
     },
 
@@ -624,6 +657,17 @@ pub(crate) enum AppEvent {
     ClearUi {
         name: Option<String>,
     },
+
+    /// Move the outgoing transcript once its previously queued history edits have run.
+    ParkSideCompanion {
+        pair: ThreadId,
+        thread_id: ThreadId,
+        stream: Option<CapturedSideStream>,
+        display: CapturedSideDisplay,
+    },
+
+    /// Release input and drawing after the destination snapshot's queued history edits.
+    SideReplayFinished(ThreadId),
 
     /// Clear history queued by the previous thread before the new thread's replay events.
     ResetTranscriptForThreadSwitch,
@@ -652,10 +696,13 @@ pub(crate) enum AppEvent {
     /// Resume a thread by UUID or thread name inside the running TUI session.
     ResumeSessionByIdOrName(String),
 
-    /// Archive the current active main thread and exit after it succeeds.
+    /// Attach a conversation through the registered backend that owns it.
+    ResumeBackendSession(crate::resume_picker::SessionTarget),
+
+    /// Archive the current active main thread and return to the command center.
     ArchiveCurrentThread,
 
-    /// Permanently delete the current active main thread and exit after it succeeds.
+    /// Permanently delete the current active main thread and return to the command center.
     DeleteCurrentThread,
 
     /// Fork the current session into a new thread, optionally assigning it a name.
@@ -681,6 +728,8 @@ pub(crate) enum AppEvent {
     /// escape hatch that skips shutdown and may drop in-flight work (e.g.,
     /// background tasks, rollout flush, or child process cleanup).
     Exit(ExitMode),
+    /// The user accepted stopping other sessions owned by this embedded server.
+    ConfirmedEmbeddedExit(ExitMode),
 
     /// Apply a choice from the running-task exit menu to its originating thread.
     RunningTaskExit {
@@ -1158,6 +1207,14 @@ pub(crate) enum AppEvent {
     /// command path because those callers expect the visible skill state to be current when their command
     /// completes.
     SkillsListLoaded {
+        cwd: PathBuf,
+        result: Result<SkillsListResponse, String>,
+    },
+
+    /// Result of the skills refresh issued while replaying a docked conversation.
+    SideReplaySkillsLoaded {
+        request_id: Uuid,
+        thread_id: ThreadId,
         cwd: PathBuf,
         result: Result<SkillsListResponse, String>,
     },

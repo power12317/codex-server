@@ -12,8 +12,13 @@ fn expected_ua(system: &str) -> String {
     } else {
         "Mac OS 15.3.1"
     };
+    let host = if system == "windows" {
+        "26.1027.51404"
+    } else {
+        "26.1027.61615"
+    };
     format!(
-        "Codex Desktop/{} ({os}; x86_64) dumb (Codex Desktop; 26.1027.30824)",
+        "Codex Desktop/{} ({os}; x86_64) dumb (Codex Desktop; {host})",
         env!("CARGO_PKG_VERSION")
     )
 }

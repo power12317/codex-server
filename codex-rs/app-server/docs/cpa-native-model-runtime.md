@@ -4,7 +4,7 @@ This document describes the sole model execution path and model-only extensions 
 `codex/native-model-runtime`.
 
 The fixed source reference is official main
-`98f79517ab2392879c581626ec0588851b03d183`; the engine release stamp is
+`f7167ac895c869c60ae00a2d7f518a9977cd1205`; the engine release stamp is
 `0.166.0`, selected from the latest official stable release. The source also
 contains fork extensions. Unmanaged identity retains official behavior; managed
 workers use the separately versioned Desktop compatibility profile described in

@@ -18,6 +18,7 @@ const binary = process.env.CODEX_TEST_BINARY;
 assert(image || binary, 'usage: node check-identity.mjs IMAGE');
 const version = (await readFile(new URL('./release-version', import.meta.url), 'utf8')).trim();
 const desktopVersion = (await readFile(new URL('./desktop-version', import.meta.url), 'utf8')).trim();
+const windowsDesktopVersion = (await readFile(new URL('./desktop-windows-version', import.meta.url), 'utf8')).trim();
 const fixture = await mkdtemp(join(tmpdir(), 'codex-identity-'));
 const name = `codex-identity-${process.pid}`;
 const requests = [];
@@ -218,7 +219,7 @@ x-oai-attestation = "CODEX_IDENTITY_CHECK_STALE_HEADER"
   assert.equal(windowsHeaders.originator, 'Codex Desktop');
   assert.equal(windowsHeaders.version, version);
   assert.equal(windowsHeaders['x-custom'], 'preserve-me');
-  assert.equal(windowsHeaders['user-agent'], `Codex Desktop/${version} (Windows 10.0.19044; x86_64) dumb (Codex Desktop; ${desktopVersion})`);
+  assert.equal(windowsHeaders['user-agent'], `Codex Desktop/${version} (Windows 10.0.19044; x86_64) dumb (Codex Desktop; ${windowsDesktopVersion})`);
   const windowsEnvelope = JSON.parse(windowsHeaders['x-oai-attestation']);
   assert.equal(windowsEnvelope.v, 1); assert.equal(windowsEnvelope.s, 0);
   const windowsInner = Buffer.from(windowsEnvelope.t.slice(3), 'base64url');

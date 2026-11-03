@@ -1,10 +1,14 @@
 use codex_protocol::models::ImageReference;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageGenerationRequest {
     pub prompt: String,
+    // Caller format controls stay in options; upstream constructs typed outputs directly.
+    #[serde(flatten, skip_deserializing)]
+    pub output: Option<ImageOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
     pub model: String,
@@ -22,6 +26,9 @@ pub struct ImageGenerationRequest {
 pub struct ImageEditRequest {
     pub images: Vec<ImageReference>,
     pub prompt: String,
+    // Caller format controls stay in options; upstream constructs typed outputs directly.
+    #[serde(flatten, skip_deserializing)]
+    pub output: Option<ImageOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
     pub model: String,
@@ -69,6 +76,26 @@ impl ImageRequestOptions {
     }
 }
 
+/// Optional GIF controls accepted by the Images generation and edit endpoints.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct GifOptions {
+    /// Number of frames (2–16). Defaults to 9.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 2, max = 16))]
+    pub frame_count: Option<u32>,
+    /// Duration of each frame in milliseconds (20–2000). Defaults to 200.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 20, max = 2000))]
+    pub frame_duration_ms: Option<u32>,
+}
+
+/// The Images API expects the format and its controls as sibling fields.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(tag = "output_format", rename_all = "lowercase")]
+pub enum ImageOutput {
+    Gif(GifOptions),
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageBackground {
@@ -114,6 +141,7 @@ mod tests {
     #[test]
     fn native_image_input_preserves_all_fields_and_future_business_options() {
         let expected = ImageEditRequest {
+            output: None,
             images: vec![ImageReference::File { file_id: "file-fixture".into() }],
             prompt: "fixture".into(), background: Some(ImageBackground::Transparent),
             model: "gpt-image-2".into(), n: Some(1), quality: Some(ImageQuality::Low),
@@ -134,5 +162,33 @@ mod tests {
         let mut actual: ImageEditRequest = serde_json::from_value(input).unwrap();
         actual.options.retain_caller_business_options();
         assert_eq!(serde_json::to_value(actual).unwrap(), wire);
+    }
+
+    #[test]
+    fn native_gif_output_has_one_format_for_caller_and_typed_requests() {
+        let wire = json!({"model":"gpt-image-2","prompt":"fixture","output_format":"gif",
+            "frame_count":4,"frame_duration_ms":100});
+        let caller: ImageGenerationRequest = serde_json::from_value(wire.clone()).unwrap();
+        let typed = ImageGenerationRequest {
+            prompt: "fixture".into(),
+            output: Some(ImageOutput::Gif(GifOptions {
+                frame_count: Some(4),
+                frame_duration_ms: Some(100),
+            })),
+            model: "gpt-image-2".into(),
+            background: None,
+            n: None,
+            quality: None,
+            size: None,
+            options: ImageRequestOptions::default(),
+        };
+        for request in [caller, typed] {
+            let encoded = serde_json::to_string(&request).unwrap();
+            assert_eq!(encoded.matches("\"output_format\"").count(), 1);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&encoded).unwrap(),
+                wire
+            );
+        }
     }
 }

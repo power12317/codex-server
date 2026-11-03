@@ -191,6 +191,7 @@ impl AuthManager {
                 auth_config_from(config),
                 /*enable_codex_api_key_env*/ false,
                 Some(file),
+                /*allowed_auth_modes*/ None,
             )
             .await,
         )

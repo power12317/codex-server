@@ -143,7 +143,8 @@ impl App {
                 | Ok(crate::session_resume::ResolveCwdOutcome::ContinueAfterPrompt(cwd)) => cwd,
                 Ok(crate::session_resume::ResolveCwdOutcome::Continue(None)) => current_cwd.clone(),
                 Ok(crate::session_resume::ResolveCwdOutcome::Exit) => {
-                    return Err(AppRunControl::Exit(ExitReason::UserRequested));
+                    self.app_event_tx.send(AppEvent::Exit(ExitMode::Immediate));
+                    return Err(AppRunControl::Continue);
                 }
             }
         };
@@ -238,7 +239,7 @@ impl App {
         clippy::too_many_arguments,
         reason = "The destination target is explicit alongside the existing trust interaction inputs."
     )]
-    async fn confirm_directory_trust_for_target(
+    pub(super) async fn confirm_directory_trust_for_target(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
@@ -276,9 +277,6 @@ impl App {
         if result.should_exit {
             if options.cancel == Some(crate::onboarding::TrustCancelAction::CurrentTask) {
                 return Err(AppRunControl::Continue);
-            }
-            if !target.supports_command_center() {
-                return Err(AppRunControl::Exit(ExitReason::UserRequested));
             }
             if self
                 .chat_widget

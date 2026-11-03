@@ -63,6 +63,7 @@ impl ImageInferenceRequest {
     ) -> Result<NativeImageInferenceRequest, ApiError> {
         let request = match operation {
             ImageOperation::Generate => NativeImageRequest::Generate(ImageGenerationRequest {
+                output: None,
                 prompt: self.prompt.clone(),
                 background: self.background,
                 model: self.model.clone(),
@@ -72,6 +73,7 @@ impl ImageInferenceRequest {
                 options: Default::default(),
             }),
             ImageOperation::Edit => NativeImageRequest::Edit(ImageEditRequest {
+                output: None,
                 images: self
                     .images
                     .clone()

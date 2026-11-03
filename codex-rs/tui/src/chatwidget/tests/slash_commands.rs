@@ -807,6 +807,7 @@ async fn goal_slash_command_uses_plain_text_for_mentions() {
             mention: "figma".to_string(),
             path: "app://figma".to_string(),
         }],
+        crate::bottom_pane::ShellPrefixHandling::Interpret,
     );
 
     chat.handle_key_event(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
@@ -1251,6 +1252,7 @@ async fn interrupted_merged_message_history_encodes_mentions_once() {
             mention: "figma".to_string(),
             path: "app://figma".to_string(),
         }],
+        crate::bottom_pane::ShellPrefixHandling::Interpret,
     );
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -3115,30 +3117,15 @@ async fn slash_archive_confirmation_requests_current_thread_archive() {
 
 #[tokio::test]
 async fn slash_delete_confirmation_requests_current_thread_delete() {
-    let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500").unwrap();
-    for target in [
-        crate::AppServerTarget::Embedded,
-        crate::AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        },
-        crate::AppServerTarget::Remote { endpoint },
-    ] {
-        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-        chat.set_command_center_enabled(target.supports_command_center());
-        chat.dispatch_command(SlashCommand::Delete);
-        assert!(chat.bottom_pane.has_active_view());
-        assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
-        let popup = render_bottom_popup(&chat, /*width*/ 80);
-        if matches!(target, crate::AppServerTarget::Embedded) {
-            assert_chatwidget_snapshot!("slash_delete_confirmation_popup", popup);
-        } else {
-            assert_chatwidget_snapshot!("slash_delete_confirmation_command_center", popup);
-        }
-        chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-        chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-        assert_matches!(rx.try_recv(), Ok(AppEvent::DeleteCurrentThread));
-    }
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.dispatch_command(SlashCommand::Delete);
+    assert!(chat.bottom_pane.has_active_view());
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("slash_delete_confirmation_command_center", popup);
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    assert_matches!(rx.try_recv(), Ok(AppEvent::DeleteCurrentThread));
 }
 
 #[tokio::test]

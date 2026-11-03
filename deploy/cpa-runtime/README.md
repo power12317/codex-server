@@ -194,7 +194,7 @@ uses native incremental business delivery with explicit capability metadata.
 ## Runtime release identity
 
 The current upstream source is official main
-`98f79517ab2392879c581626ec0588851b03d183`. The release stamp is selected from
+`f7167ac895c869c60ae00a2d7f518a9977cd1205`. The release stamp is selected from
 the latest official stable tag, `rust-v0.166.0` at
 `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`. Existing fork changes and previously
 integrated upstream commits remain in the merge history. This is a fork build

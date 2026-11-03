@@ -1234,6 +1234,7 @@ mod projection {
             );
             client.track_notification(&ServerNotification::ItemCompleted(
                 ItemCompletedNotification {
+                    content_token_count: None,
                     thread_id: snapshot.thread.clone(),
                     turn_id: turn_id.to_owned(),
                     item,

@@ -1,7 +1,7 @@
 # Official engine identity and managed Desktop compatibility
 
 The native-runtime branch synchronizes official `openai/codex` main at
-`98f79517ab2392879c581626ec0588851b03d183` and retains the fork's model-only
+`f7167ac895c869c60ae00a2d7f518a9977cd1205` and retains the fork's model-only
 master/worker extensions. Its release version is selected independently from the
 latest official stable tag, `rust-v0.166.0`, commit
 `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`. The fork source includes unreleased
@@ -37,24 +37,25 @@ from its existing shared credential JSON, selects Windows case-insensitively.
 Missing, `mac`, and legacy values select the fixed Mac x64 profile. Neither the
 client's headers nor the physical server's ARM architecture selects the profile.
 
-The Desktop host version is pinned separately in
-`deploy/cpa-runtime/desktop-version` to **26.1027.30824**, independently verified
-from official platform release metadata on 2026-10-30:
+Desktop host versions are pinned per platform, independently from the engine:
+`deploy/cpa-runtime/desktop-version` is the Mac x64 host **26.1027.61615**;
+`deploy/cpa-runtime/desktop-windows-version` is the Windows host **26.1027.51404**.
+Both were verified from official platform release metadata on 2026-11-04:
 
 - [Windows Store update metadata](https://persistent.oaistatic.com/codex-app-prod/windows-store-update.json):
-  `releaseVersion=26.1027.30824`, `packageIdentity=OpenAI.Codex`,
-  `storeProductId=9PLM9XGG6VKS`. Its `buildVersion=26.1027.3384.0` is the Windows
+  `releaseVersion=26.1027.51404`, `packageIdentity=OpenAI.Codex`,
+  `storeProductId=9PLM9XGG6VKS`. Its `buildVersion=26.1027.6604.0` is the Windows
   package build and is not the host release version used in clientInfo or UA.
 - [Mac x64 appcast](https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml):
-  first item `shortVersionString=26.1027.30824`, Sparkle build `22943`, minimum
-  system version `13.0`, published `Thu, 29 Oct 2026 18:03:41 +0000`, linking
-  `ChatGPT-darwin-x64-26.1027.30824.zip`. No Desktop archive is required at runtime.
+  first item `shortVersionString=26.1027.61615`, Sparkle build `24141`, minimum
+  system version `13.0`, published `Mon, 02 Nov 2026 01:43:28 +0000`, linking
+  `ChatGPT-darwin-x64-26.1027.61615.zip`. No Desktop archive is required at runtime.
 
 The managed compatibility profiles use these exact UA shapes:
 
 ```text
-Codex Desktop/0.166.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1027.30824)
-Codex Desktop/0.166.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1027.30824)
+Codex Desktop/0.166.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1027.51404)
+Codex Desktop/0.166.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1027.61615)
 ```
 
 The engine segment comes from the actual stamped `CARGO_PKG_VERSION`; source
@@ -65,8 +66,8 @@ not new measurements or an inference from a deployment machine. The official x64
 reference can run under existing Rosetta on an Apple Silicon validation host;
 that does not make the host a physical Intel Mac.
 
-The master initializes workers with Desktop clientInfo and the separate host
-version. Managed root inference uses the native app-server's `VSCode` session
+The master initializes workers with Desktop clientInfo and the host version
+selected from the same CPA-owned platform metadata. Managed root inference uses the native app-server's `VSCode` session
 source; subagent source selection remains distinct. The master, standalone
 app-server and unmanaged CLI retain their official initialize/originator/UA
 behavior. Managed initialize does not request an IPC attestation callback or

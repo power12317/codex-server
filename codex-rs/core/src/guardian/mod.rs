@@ -34,12 +34,12 @@ pub(crate) use score_authorization::ServingAssessment;
 pub(crate) mod test_host;
 
 use codex_protocol::items::ModelInvocationContext;
+use codex_protocol::openai_models::CatalogModel;
 use std::sync::Arc;
 
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
@@ -99,7 +99,7 @@ pub(crate) struct GuardianReviewContext {
     environments: TurnEnvironmentSnapshot,
     project_instructions: Option<Arc<LoadedAgentsMd>>,
     // Model and reasoning inputs are carried for the follow-up Guardian and V2 migrations.
-    pub(crate) model_info: Arc<ModelInfo>,
+    pub(crate) model_info: Arc<CatalogModel>,
     pub(crate) reasoning_effort: Option<ReasoningEffort>,
     pub(crate) reasoning_summary: ReasoningSummary,
     pub(crate) personality: Option<Personality>,
@@ -207,8 +207,6 @@ use codex_guardian_reviewer::guardian_output_schema;
 #[cfg(test)]
 use approval_request::guardian_assessment_action;
 #[cfg(test)]
-use approval_request::guardian_request_turn_id;
-#[cfg(test)]
 use codex_guardian_reviewer::GuardianReviewOutcome;
 #[cfg(test)]
 use prompt::GuardianPromptMode;
@@ -218,8 +216,6 @@ use prompt::GuardianTranscriptCursor;
 use prompt::build_guardian_prompt_items;
 #[cfg(test)]
 use prompt::collect_guardian_prompt_items_with_parent_turn;
-#[cfg(test)]
-use prompt::render_guardian_transcript_entries;
 #[cfg(test)]
 use review::run_guardian_review_session_with_retry as run_guardian_review_session_for_test;
 #[cfg(test)]

@@ -13,6 +13,7 @@ fn id(prefix: &str, suffix: &str) -> Option<ResponseItemId> {
 
 fn metadata() -> Option<InternalChatMessageMetadataPassthrough> {
     Some(InternalChatMessageMetadataPassthrough {
+        content_token_count: None,
         turn_id: Some("fixture-turn".into()),
         create_time: Some(1234.into()),
         content_item_kinds: None,
@@ -42,7 +43,9 @@ pub fn content() -> Vec<ContentItem> {
             detail: Some(ImageDetail::High),
         },
         ContentItem::InputAudio {
-            audio_url: "data:audio/wav;base64,AA==".into(),
+            audio: codex_protocol::models::AudioReference::Inline {
+                audio_url: "data:audio/wav;base64,AA==".into(),
+            },
         },
         ContentItem::OutputText {
             text: "output".into(),
@@ -483,7 +486,7 @@ pub fn check_nested_native_variants(
             image: _,
             detail: _,
         } => (),
-        ContentItem::InputAudio { audio_url: _ } => (),
+        ContentItem::InputAudio { audio: _ } => (),
         ContentItem::OutputText {
             text: _,
             annotations: _,
