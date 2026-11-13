@@ -250,9 +250,10 @@ pub(crate) async fn recover_response_stream(
         return Ok(());
     }
 
-    if retry_state.retries >= max_retries
-        && client_session.try_switch_fallback_transport(context.telemetry, context.model_info)
-    {
+    let requires_http_fallback = err.requires_http_fallback();
+    let switched = (requires_http_fallback || retry_state.retries >= max_retries)
+        && client_session.try_switch_fallback_transport(context.telemetry, context.model_info);
+    if switched {
         // Changing transport must not bypass the server's retry deadline.
         if let Some(retry_after) = retry_after {
             tokio::time::sleep_until(retry_after.deadline()).await;
@@ -262,6 +263,8 @@ pub(crate) async fn recover_response_stream(
                 "Falling back from WebSockets to HTTPS transport. {err:#}"
             ))
             .await;
+    }
+    if switched || requires_http_fallback {
         retry_state.retries = 0;
         return Ok(());
     }

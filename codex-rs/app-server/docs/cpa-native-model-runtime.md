@@ -4,8 +4,8 @@ This document describes the sole model execution path and model-only extensions 
 `codex/native-model-runtime`.
 
 The fixed source reference is official main
-`f7167ac895c869c60ae00a2d7f518a9977cd1205`; the engine release stamp is
-`0.166.0`, selected from the latest official stable release. The source also
+`672e99fed8da8e5efc3268c52cddc4fc97ffd078`; the engine release stamp is
+`0.167.2`, selected from the latest official stable release. The source also
 contains fork extensions. Unmanaged identity retains official behavior; managed
 workers use the separately versioned Desktop compatibility profile described in
 [the identity audit](cpa-official-identity.md).
@@ -18,9 +18,14 @@ official comparison, regression coverage and delivery limits.
 Caller input is mapped to native `Prompt`, model controls and session metadata.
 `InferenceSession::execute` calls the native model client's single-attempt entry.
 The existing `request_max_retries` and `stream_max_retries` are zero for this
-model-only client. HTTP transport retries, 401 recovery/resend, stream recovery,
-WebSocket reconnect after failure and WebSocket-to-HTTP fallback do not replay a
-worker invocation. The default CLI/Agent entry retains its original recovery.
+model-only client. The sole resend exception is a remote WebSocket close code
+1009 before any text frame: exactly one HTTP resend is allowed, regardless of
+the close reason. Metadata and malformed text count as received text. Local
+`max_message_bytes` rejection, 401, disconnects and other errors never qualify.
+A failed HTTP resend is terminal. The resend retains the original authentication
+owner; a changed credential source aborts dispatch. `generate=false` remains WebSocket-only
+prewarming, so a rejected warmup does not start HTTP generation. The default CLI/Agent entry retains its
+original recovery.
 
 Native serialization, authentication before a send, compression, transport
 selection, cookies, configured proxy routing and normal redirect policy are
@@ -43,8 +48,10 @@ original native lifecycle. Cached turn contexts retain their own first ticket,
 so a new turn can reuse the socket without inheriting the previous turn's ticket.
 Concurrent requests in the same logical thread serialize; independent threads
 and credentials remain concurrent. Credential isolation, synthetic turn lifetime
-and title-request ephemerality are unchanged. The worker never silently retries
-a failed call.
+and title-request ephemerality are unchanged. Only the peer-1009 exception
+described above can resend a failed call. With runtime authentication enabled,
+the official client rebuilds WebSocket connections per request and clears its
+continuation cache; this behavior remains intact.
 
 The caller supplies complete history. Responses output envelopes are converted
 to typed native history: message/function status, encrypted output and output-text annotations/logprobs
@@ -94,7 +101,7 @@ unchanged.
 
 The `cpa/*` methods extend the official app-server envelope. Native model execution
 is the only implementation; there is no execution capability switch, legacy sender or CPA
-direct model fallback. The official runtime version is `0.166.0`.
+direct model fallback. The official runtime version is `0.167.2`.
 
 The root WebSocket path is `/`; the retired versioned bridge route is not an
 alias. Official initialization, health endpoints and authentication behavior are

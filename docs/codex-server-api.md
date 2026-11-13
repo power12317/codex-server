@@ -380,15 +380,20 @@ payloads and sequence numbers are preserved. Only terminal response events wait
 for native success; there is no special tool-completion gate. The server never
 executes caller tools or fabricates their results.
 
-Each invocation makes one native model attempt. Worker request/stream retries
-are zero; HTTP retries, 401 recovery/resend, stream recovery and WebSocket failure
-fallback do not issue another model call. Native construction, authentication
+Each invocation makes one native model attempt, with one narrow exception: a
+remote WebSocket close code 1009 before any text frame allows exactly one HTTP
+resend. The close reason may be empty or nonempty. Any received text, including
+metadata or malformed text, prevents the resend. Local `max_message_bytes`
+rejection, 401, disconnects and all other errors do not qualify. The HTTP resend
+is terminal on failure; there is no third send. The resend retains the original
+authentication owner; a changed credential source aborts dispatch. `generate=false` remains
+WebSocket-only prewarming and never starts HTTP generation. Worker request/stream retry
+budgets remain zero. Native construction, authentication
 before sending, compression, transport choice and normal redirects are preserved.
 Ordinary CLI entry points retain their existing behavior.
 
 There is no attempt notification or attempt ID. Errors immediately return to CPA
-for its existing error/retry rules; the worker supplies neither a replacement
-request nor an additional retry policy. Once content has reached a downstream
+for its existing error/retry rules after the narrow peer-1009 exception above. Once content has reached a downstream
 client, that stream must end with the error instead of concatenating another
 response. An explicit new client request is a separate invocation.
 
@@ -527,3 +532,20 @@ The current schemas live in
 [`cpa.rs`](../codex-rs/app-server-protocol/src/protocol/v2/cpa.rs). The enclosing
 `v2` source directory is the official app-server type layout. It does not
 introduce a versioned service URL or a private protocol-number gate.
+
+
+## Optional runtime agent identity
+
+The upstream `runtime_agent_instances` feature remains disabled by default.
+Enabling that existing feature uses the official runtime registration and
+per-request assertion flow, including its existing `runtime_auth_mode` behavior.
+There is no additional service setting and no forced enablement.
+
+Each credential worker owns its installation ID, shared-file `AuthManager`,
+ephemeral signing key and runtime registration. The worker shares its runtime
+owner between model discovery, inference and first-party API clients. Different
+credentials never share that owner or signing key. Caller session/thread mappings
+remain separate from account authentication. Registration occurs when a
+first-party request, including model discovery, needs it. Constructing the
+runtime owner itself does not register or generate a key. Credential rotation and disablement
+continue to use the existing credential source and official runtime invalidation.

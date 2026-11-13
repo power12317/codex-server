@@ -153,6 +153,7 @@ impl InferenceRequest {
                 text: optional(Some(request), "instructions")?.unwrap_or_default(),
                 ..Default::default()
             },
+            prompt_cache_ttl: parse_cache_ttl(request)?,
             ..Default::default()
         };
         Ok(Self {
@@ -163,6 +164,20 @@ impl InferenceRequest {
             controls,
         })
     }
+}
+
+fn parse_cache_ttl(request: &Map<String, Value>) -> anyhow::Result<Option<crate::PromptCacheTtl>> {
+    let Some(options) = object(request, "prompt_cache_options")? else {
+        return Ok(None);
+    };
+    let Some(value) = options.get("ttl").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    Ok(Some(match value.as_str() {
+        Some("30m") => crate::PromptCacheTtl::ThirtyMinutes,
+        Some("12h") => crate::PromptCacheTtl::TwelveHours,
+        _ => anyhow::bail!("prompt_cache_options.ttl must be 30m or 12h"),
+    }))
 }
 
 fn object<'a>(

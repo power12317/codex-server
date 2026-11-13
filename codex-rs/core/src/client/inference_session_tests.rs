@@ -96,3 +96,69 @@ fn title_classification_requires_explicit_metadata() {
         assert!(InferenceIdentity::from_request(request.as_object().unwrap()).is_title());
     }
 }
+
+#[tokio::test]
+async fn inference_uses_the_worker_runtime_provider_without_another_owner() {
+    use std::sync::Arc;
+    let mut config = crate::config::test_config().await;
+    config
+        .features
+        .enable(codex_features::Feature::RuntimeAgentInstances)
+        .unwrap();
+    let auth = codex_login::AuthManager::from_auth_for_testing(
+        codex_login::CodexAuth::from_api_key("worker-fixture"),
+    );
+    let runtime = crate::build_runtime_auth_manager(
+        &config,
+        auth.clone(),
+        "00000000-0000-0000-0000-000000000001",
+    )
+    .unwrap();
+    let provider = codex_model_provider::ProviderAuthContext {
+        credentials: auth.clone(),
+        runtime_auth: Some((runtime.clone(), config.runtime_auth_mode)),
+    }
+    .model_provider(config.model_provider.clone());
+    let source = InferenceIdentity {
+        session_id: Some("source-session".into()),
+        thread_id: Some("source-child".into()),
+        turn_id: Some("source-turn".into()),
+        ..Default::default()
+    };
+    let session = super::InferenceSession::new_with_provider(
+        &config,
+        auth,
+        "00000000-0000-0000-0000-000000000001",
+        "worker-fixture",
+        &source,
+        Some(provider.clone()),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&session.client.state.provider, &provider));
+    assert!(Arc::ptr_eq(
+        &session.client.state.provider.runtime_auth().unwrap().0,
+        &runtime
+    ));
+}
+
+#[tokio::test]
+async fn caller_prompt_cache_ttl_uses_the_native_prompt_field() {
+    let config = crate::config::test_config().await;
+    for (value, expected) in [
+        ("30m", crate::PromptCacheTtl::ThirtyMinutes),
+        ("12h", crate::PromptCacheTtl::TwelveHours),
+    ] {
+        let request = json!({"input":[],"prompt_cache_options":{"ttl":value}});
+        let parsed = crate::client::inference::InferenceRequest::parse(
+            &config,
+            request.as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed.prompt.prompt_cache_ttl, Some(expected));
+    }
+    let invalid = json!({"input":[],"prompt_cache_options":{"ttl":"unknown"}});
+    assert!(
+        crate::client::inference::InferenceRequest::parse(&config, invalid.as_object().unwrap())
+            .is_err()
+    );
+}

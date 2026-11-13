@@ -120,6 +120,7 @@ async fn drain_turns(owner: &InferenceAnalytics, server: &MockServer, count: usi
 async fn cpa_analytics_waits_then_uses_existing_sender_and_real_connection() {
     let (owner, server, _home) = harness().await;
     tokio::time::pause();
+    let started_at = tokio::time::Instant::now();
     let exchange = owner.exchange(37);
     send(&exchange, &request(json!([])));
     tokio::time::advance(Duration::from_secs(2)).await;
@@ -137,6 +138,41 @@ async fn cpa_analytics_waits_then_uses_existing_sender_and_real_connection() {
     );
     assert!(events(&server).await.is_empty());
     tokio::time::advance(Duration::from_secs(1)).await;
+    // Tokio timers have millisecond resolution. Advance one tick so the deadline
+    // callback records its timestamp before drain resumes the real clock.
+    tokio::time::advance(Duration::from_millis(1)).await;
+    for _ in 0..1000 {
+        if owner
+            .state
+            .lock()
+            .unwrap()
+            .values()
+            .any(|thread| !thread.completed.is_empty())
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        owner
+            .state
+            .lock()
+            .unwrap()
+            .values()
+            .any(|thread| !thread.completed.is_empty()),
+        "deadline task must record completion while the clock is paused"
+    );
+    let completed_at = owner
+        .state
+        .lock()
+        .unwrap()
+        .values()
+        .flat_map(|thread| thread.completed.values())
+        .copied()
+        .next()
+        .unwrap();
+    let expected_duration = completed_at.duration_since(started_at).as_millis() as u64;
+    assert!((32_000..=32_001).contains(&expected_duration));
     let recorded = drain(&owner, &server).await;
     let turn = &recorded
         .iter()
@@ -146,8 +182,8 @@ async fn cpa_analytics_waits_then_uses_existing_sender_and_real_connection() {
     assert_eq!(turn["session_id"], "upstream-session");
     assert_eq!(turn["root_turn_id"], "upstream-root");
     assert_eq!(turn["model"], "final-upstream-model");
-    assert_eq!(turn["duration_ms"], 32_000);
-    assert_eq!(turn["after_last_sampling_ms"], 30_000);
+    assert_eq!(turn["duration_ms"], expected_duration);
+    assert_eq!(turn["after_last_sampling_ms"], expected_duration - 2_000);
     assert_eq!(turn["sampling_ms"], 2_000);
     assert_eq!(turn["input_tokens"], 10);
     assert_eq!(turn["app_server_client"]["rpc_transport"], "websocket");

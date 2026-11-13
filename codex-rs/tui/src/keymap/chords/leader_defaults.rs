@@ -26,13 +26,35 @@ pub(in crate::keymap) fn register(
             .filter(|binding| binding.is_leader())
             .count(),
     );
+    use KeyCode::Char;
     use KeymapContext::Chat;
     use KeymapContext::Global;
-    for (context, name, completion) in [
-        (Global, "change_host", 'b'),
-        (Global, "select_transcript", '['),
-        (Chat, "open_presets", 'p'),
-        (Global, "hide_pane", '-'),
+    for (context, name, completion, spec) in [
+        (Global, "change_host", Char('b'), "b"),
+        (Global, "select_transcript", Char('['), "["),
+        (Chat, "open_presets", Char('p'), "p"),
+        (Global, "focus_main_composer", Char('c'), "c"),
+        (Global, "focus_sidebar_content", Char('s'), "s"),
+        (Global, "hide_pane", Char('-'), "-"),
+        (Global, "focus_pane_left", KeyCode::Left, "left"),
+        (Global, "focus_pane_left", Char('h'), "h"),
+        (Global, "focus_pane_right", KeyCode::Right, "right"),
+        (Global, "focus_pane_right", Char('l'), "l"),
+        (Global, "toggle_pane_zoom", Char('z'), "z"),
+        (Global, "move_divider_left", Char('H'), "shift-h"),
+        (Global, "move_divider_right", Char('L'), "shift-l"),
+        (Global, "equalize_pane_widths", Char('='), "="),
+        (Global, "resize_panes", Char('r'), "r"),
+        (Global, "minimize_pane_width", Char(','), ","),
+        (Global, "maximize_pane_width", Char('.'), "."),
+        (Global, "close_sidebar_tab", Char('w'), "w"),
+        (Global, "focus_sidebar_tabs", Char('t'), "t"),
+        (Global, "sidebar_up", KeyCode::BackTab, "shift-tab"),
+        (Global, "sidebar_down", KeyCode::Tab, "tab"),
+        (Global, "sidebar_up", KeyCode::Up, "up"),
+        (Global, "sidebar_up", Char('k'), "k"),
+        (Global, "sidebar_down", KeyCode::Down, "down"),
+        (Global, "sidebar_down", Char('j'), "j"),
     ] {
         if remaining == 0 {
             break;
@@ -54,9 +76,9 @@ pub(in crate::keymap) fn register(
                 action,
                 chord: KeyChord {
                     prefix,
-                    completion: crate::key_hint::plain(KeyCode::Char(completion)),
+                    completion: crate::key_hint::KeyBinding::from_event(completion.into()),
                 },
-                spec: format!("leader {completion}"),
+                spec: format!("leader {spec}"),
             };
             if !resolved.chords.bindings.iter().any(|existing| {
                 binding.overlaps(existing.action) && existing.chord == binding.chord

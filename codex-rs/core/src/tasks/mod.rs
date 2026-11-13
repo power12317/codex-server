@@ -5,6 +5,7 @@ mod regular;
 mod review;
 mod user_shell;
 
+use crate::McpRefreshReason;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -26,6 +27,7 @@ use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 
+use crate::agent::helper_daybreak::turn::HelperTurnAdmission;
 use crate::codex_thread::BackgroundTerminalInfo;
 use crate::config::Config;
 use crate::context::ContextualUserFragment;
@@ -304,7 +306,7 @@ impl Session {
             .enabled(Feature::ExecutorCapabilityDiscoveryV2)
         {
             // MCP contributors must project the new inventory even if their other inputs match.
-            self.request_mcp_runtime_reprojection();
+            self.request_mcp_runtime_reprojection(McpRefreshReason::TaskStartedExecutorDiscovery);
         }
         self.activate_plugin_selection(&turn_context).await;
         // Inherited or recovered roots are applied before task start. Otherwise this
@@ -315,6 +317,11 @@ impl Session {
         let task: Arc<dyn AnySessionTask> = Arc::new(task);
         let task_kind = task.kind();
         let span_name = task.span_name();
+        crate::turn_timing::review_execution::observe_pending_review_execution(
+            self,
+            &turn_context.turn_timing_state,
+        )
+        .await;
         let started_at = Instant::now();
         let turn_started_at_unix_ms = turn_context
             .turn_timing_state
@@ -331,6 +338,9 @@ impl Session {
         let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
+            if self.outcome_handoffs_closed() {
+                return;
+            }
             let turn = active.get_or_insert_with(ActiveTurn::default);
             debug_assert!(turn.task.is_none());
             turn.finishing = None;
@@ -348,6 +358,15 @@ impl Session {
         .await;
 
         let mut active = self.active_turn.lock().await;
+        // Shutdown closes registration before taking this same lock to abort active work.
+        let outcome_handoff = if let Some(reporting) = &self.outcome_reporting {
+            if reporting.handoffs.is_closed() {
+                return;
+            }
+            Some(reporting.handoffs.token())
+        } else {
+            None
+        };
         let turn = active.get_or_insert_with(ActiveTurn::default);
         debug_assert!(turn.task.is_none());
         // Record lineage only when the task starts: settings changes can invalidate a reservation.
@@ -357,7 +376,7 @@ impl Session {
         )
         .await;
         let host_admission = self.host_turn_admission();
-        let (agent_execution_guard, task_input, pending_admission_input) = match &host_admission {
+        let (agent_execution_guard, task_input, pending_initial_input) = match &host_admission {
             Some(_) => (None, Vec::new(), Some(input)),
             None => (
                 self.services.agent_control.admit_turn(
@@ -469,7 +488,8 @@ impl Session {
             cancellation_token,
             turn_context: Arc::clone(&turn_context),
             _agent_execution_guard: agent_execution_guard,
-            pending_admission_input,
+            outcome_handoff,
+            pending_initial_input,
             _diagnostics_guard: ACTIVE_TURNS.track(),
             _timer: timer,
         };
@@ -516,6 +536,7 @@ impl Session {
             return;
         };
 
+        let helper_admission = HelperTurnAdmission::capture(self);
         self.services
             .models_manager
             .refresh_after_auth_change(self.get_config().await.http_client_factory())
@@ -540,9 +561,10 @@ impl Session {
         };
         let (input, mut start_options) =
             self.input_queue.get_pending_input(&self.active_turn).await;
-        if !input.iter().any(
+        let triggered = input.iter().any(
             |item| matches!(item, TurnInput::InterAgentCommunication(mail) if mail.trigger_turn),
-        ) {
+        );
+        if !triggered {
             // Queue-only wakes retain the previous turn context without selecting a new task.
             start_options = previous_options;
             start_options.cyber_access_program = self
@@ -551,8 +573,11 @@ impl Session {
                 .and_then(|context| context.cyber_access_program);
         }
         let options = NewTurnContextOptions {
+            direct_only_tool_namespaces: start_options.direct_only_tool_namespaces,
             final_output_json_schema: start_options.final_output_json_schema,
+            prompt_cache_ttl: start_options.prompt_cache_ttl,
             cyber_access_program: start_options.cyber_access_program,
+            helper_admission: triggered.then_some(helper_admission).flatten(),
         };
         let turn_context = match session_configuration {
             Some(configuration) => {
@@ -713,7 +738,7 @@ impl Session {
             regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
         let finishing = CancellationToken::new();
         let finish_recording = finishing.clone().drop_guard();
-        let (turn_state, unadmitted_task, mut pending_input) = {
+        let (turn_state, unadmitted_task, mut pending_input, outcome_handoff) = {
             let mut active = self.active_turn.lock().await;
             let active_turn = active.as_mut()?;
             if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
@@ -732,8 +757,10 @@ impl Session {
             active_turn.finishing = Some(finishing);
             (
                 Arc::clone(&active_turn.turn_state),
-                task.pending_admission_input.is_some().then_some(task.task),
-                task.pending_admission_input.unwrap_or_default(),
+                (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
+                    .then_some(task.task),
+                task.pending_initial_input.unwrap_or_default(),
+                task.outcome_handoff,
             )
         };
         turn_context
@@ -759,10 +786,11 @@ impl Session {
                 std::mem::take(&mut ts.token_usage_by_model),
             )
         };
+        let model_info = turn_context.capture_current_model_info();
         let record_result = run_hooks_and_record_inputs(
             self,
             &turn_context,
-            &turn_context.capture_current_model_info(),
+            &model_info,
             &pending_input,
             PersistContext::Standard,
         )
@@ -970,6 +998,7 @@ impl Session {
             // The parent can request another review as soon as it receives this event.
             self.send_event(turn_context.as_ref(), event).await;
         }
+        drop(outcome_handoff);
         if cleared_active_turn {
             self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
         }
@@ -1070,10 +1099,10 @@ impl Session {
         let _ = task.handle.await;
 
         if let Err(error) = self
-            .record_unadmitted_input(
+            .record_pending_initial_input(
                 &task.turn_context,
                 turn_state,
-                task.pending_admission_input,
+                task.pending_initial_input,
                 Some(&reason),
             )
             .await

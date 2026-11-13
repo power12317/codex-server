@@ -79,6 +79,7 @@ fn projects_failed_turn_completion_as_snapshot() {
         misalignment: None,
         message: "request failed".to_string(),
         codex_error_info: None,
+        rejected_audio_file_ids: Vec::new(),
     };
 
     let changes = project(RolloutItem::EventMsg(EventMsg::TurnComplete(
@@ -128,6 +129,7 @@ fn projects_completed_canonical_turn_items() {
         }],
     });
     let agent_item = TurnItem::AgentMessage(AgentMessageItem {
+        moderation: None,
         id: "agent-1".to_string(),
         content: vec![AgentMessageContent::Text {
             text: "done".to_string(),

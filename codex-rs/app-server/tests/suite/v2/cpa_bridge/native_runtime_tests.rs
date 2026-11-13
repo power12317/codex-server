@@ -850,6 +850,7 @@ async fn cpa_native_http_errors_do_not_retry_and_preserve_the_original_response(
 }
 
 #[test_case::test_case(401)]
+#[test_case::test_case(403)]
 #[test_case::test_case(426)]
 #[test_case::test_case(503)]
 #[tokio::test]
@@ -1028,3 +1029,6 @@ async fn cpa_same_request_id_on_new_connection_has_independent_worker_routes() -
 
 #[path = "compatibility_tests.rs"]
 mod compatibility_tests;
+
+#[path = "peer_size_tests.rs"]
+mod peer_size_tests;

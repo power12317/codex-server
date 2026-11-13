@@ -578,3 +578,61 @@ starts with empty routing state. Logs and JSON traces for these probes are under
   isolated experimental workflow after paired acceptance. Starting that workflow
   does not establish image publication.
 - Stable main/gateway worktrees and the stable image package are unchanged.
+
+## 2026-11-13 official main, runtime identity and peer-size fallback
+
+This update merges official main `672e99fed8da8e5efc3268c52cddc4fc97ffd078`
+while retaining the native model-only execution path. Source workspace and local
+lockfile package versions stay `0.0.0`; build copies use official stable
+`0.167.2`. Managed Desktop host pins remain macOS `26.1027.61615` and Windows
+`26.1027.51404`, with the existing User-Agent, platform and attestation behavior.
+
+The official `runtime_agent_instances` feature stays disabled by default. When
+enabled, each credential worker shares its runtime registration across native
+model discovery, Responses, Images and first-party clients. Installation IDs,
+ephemeral signing keys and registrations remain isolated between workers. The
+same shared-file `AuthManager` owns refresh, rotation and disablement.
+
+Worker request/stream retry budgets remain zero. The only model resend is one
+HTTP request after a remote WebSocket close code 1009 before any text frame.
+The close reason may be empty or nonempty. Metadata, malformed text and
+`response.created` count as text; Ping/Pong do not. Local size preflight,
+authentication errors, disconnects and other close codes do not qualify. A
+failed HTTP resend is terminal. The original authentication owner is retained
+across the resend, and `generate=false` remains WebSocket-only prewarming.
+
+Validation against the stamped macOS arm64 build copy:
+
+| Check | Result |
+| --- | --- |
+| Official runtime-agent unit tests | 28 passed |
+| Inference identities, context replacement, tool schemas and cache TTL | 21 passed |
+| Worker runtime owner, registration keys, rotation and disablement | 4 passed |
+| Service and real worker regressions | 140 passed |
+| Protocol regressions | 326 passed; fixture writer remains ignored |
+| Stable/experimental schemas and Python SDK regeneration | Passed through the repository generator |
+| Reusable workflow permissions | `actionlint` passed; 34 nested jobs checked |
+
+The service matrix includes the peer-1009 conditions above, successful and
+failed HTTP resends, no third request, complete input/tool preservation, native
+continuation, first-ticket reuse and both Desktop profiles. A two-worker TLS
+proxy test verifies distinct installation IDs/public keys and correct runtime
+assertions on Responses and Images. It uses synthetic credentials and local
+mock endpoints.
+
+The analytics-delay regression now observes its completion timestamp while the
+Tokio clock is paused, before real network draining. One virtual millisecond
+accounts for the timer-wheel boundary; the test checks the 30-second minimum,
+the exact observed duration and the exact two-second sampling duration. No
+production timing behavior changed.
+
+Postmerge CI grants only `contents: read` by default, with `actions: read` added
+at the V8 reusable-workflow call that requires it. Triggers, image names and
+release strategy remain unchanged. Local tests do not certify a Linux image;
+the existing image workflow performs the Linux builds and image checks.
+
+The standalone build and full official initialize comparison passed with
+`codex-app-server 0.167.2`. The actual worker identity probe passed for both
+managed Desktop profiles, including their original host versions and
+attestation payload structure. The tested macOS arm64 executable has SHA256
+`cb43c61b18f1ee784a2166d6a275e94517d44017636368a666df08148b2c66b2`.

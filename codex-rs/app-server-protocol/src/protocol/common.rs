@@ -499,6 +499,26 @@ enum GetAccountRateLimitsParamsTypeScript {
     Undefined,
 }
 
+/// Preserve null and explicit undefined params while adding provider selection to gateway reads.
+#[allow(dead_code)]
+#[derive(TS)]
+#[ts(untagged)]
+enum GatewayOAuthReadParamsTypeScript {
+    Params(Option<v2::GatewayOAuthReadParams>),
+    #[ts(type = "undefined")]
+    Undefined,
+}
+
+/// Preserve null and explicit undefined params while adding provider selection to gateway login.
+#[allow(dead_code)]
+#[derive(TS)]
+#[ts(untagged)]
+enum GatewayOAuthLoginParamsTypeScript {
+    Params(Option<v2::GatewayOAuthLoginParams>),
+    #[ts(type = "undefined")]
+    Undefined,
+}
+
 client_request_definitions! {
     #[experimental("cpa/credential/reload")]
     CpaCredentialReload => "cpa/credential/reload" {
@@ -941,6 +961,7 @@ client_request_definitions! {
     },
     ThreadItemsList => "thread/items/list" {
         params: v2::ThreadItemsListParams,
+        inspect_params: true,
         // Explicitly concurrent: this primarily reads append-only rollout storage.
         serialization: None,
         response: v2::ThreadItemsListResponse,
@@ -964,6 +985,12 @@ client_request_definitions! {
         params: v2::ThreadInjectItemsParams,
         serialization: thread_id(params.thread_id),
         response: v2::ThreadInjectItemsResponse,
+    },
+    #[experimental("thread/prepareApprovedPlan")]
+    ThreadPrepareApprovedPlan => "thread/prepareApprovedPlan" {
+        params: v2::ThreadPrepareApprovedPlanParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadPrepareApprovedPlanResponse,
     },
     SkillsList => "skills/list" {
         params: v2::SkillsListParams,
@@ -1137,6 +1164,7 @@ client_request_definitions! {
     #[experimental("turn/settings/update")]
     TurnSettingsUpdate => "turn/settings/update" {
         params: v2::TurnSettingsUpdateParams,
+        inspect_params: true,
         serialization: thread_id(params.thread_id),
         response: v2::TurnSettingsUpdateResponse,
     },
@@ -1205,12 +1233,12 @@ client_request_definitions! {
         response: v2::ModelListResponse,
     },
     GatewayOAuthRead => "account/gatewayOAuth/read" {
-        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        params: #[ts(optional, as = "Option<GatewayOAuthReadParamsTypeScript>", inline)] #[serde(default, skip_serializing_if = "Option::is_none")] v2::NullableGatewayOAuthReadParams,
         serialization: None,
         response: v2::GatewayOAuthReadResponse,
     },
     GatewayOAuthLogin => "account/gatewayOAuth/login" {
-        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        params: #[ts(optional, as = "Option<GatewayOAuthLoginParamsTypeScript>", inline)] #[serde(default, skip_serializing_if = "Option::is_none")] v2::NullableGatewayOAuthLoginParams,
         serialization: None,
         response: v2::GatewayOAuthLoginResponse,
     },
@@ -1443,6 +1471,12 @@ client_request_definitions! {
         params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
         serialization: global("account-auth"),
         response: v2::LogoutAccountResponse,
+    },
+
+    GetAccountSecuritySetup => "account/securitySetup/read" {
+        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        serialization: None,
+        response: v2::GetAccountSecuritySetupResponse,
     },
 
     GetAccountRateLimits => "account/rateLimits/read" {
@@ -2624,6 +2658,7 @@ mod tests {
         let mcp_resource_read = ClientRequest::McpResourceRead {
             request_id: request_id(),
             params: v2::McpResourceReadParams {
+                meta: None,
                 thread_id: Some("thread-1".to_string()),
                 origin_call_id: None,
                 server: "server-a".to_string(),
@@ -2811,6 +2846,7 @@ mod tests {
                 cursor: None,
                 limit: None,
                 sort_direction: None,
+                defer_output: None,
             },
         };
         assert_eq!(thread_items_list.serialization_scope(), None);
@@ -2818,6 +2854,7 @@ mod tests {
         let mcp_resource_read = ClientRequest::McpResourceRead {
             request_id: request_id(),
             params: v2::McpResourceReadParams {
+                meta: None,
                 thread_id: None,
                 origin_call_id: None,
                 server: "server-a".to_string(),
@@ -3372,6 +3409,7 @@ mod tests {
                     extra: None,
                     session_id: "67e55044-10b1-426f-9247-bb680e5fe0c7".to_string(),
                     forked_from_id: None,
+                    attached_to_thread_id: None,
                     parent_thread_id: None,
                     preview: "first prompt".to_string(),
                     ephemeral: true,
@@ -3431,6 +3469,7 @@ mod tests {
                         "extra": null,
                         "sessionId": "67e55044-10b1-426f-9247-bb680e5fe0c7",
                         "forkedFromId": null,
+                        "attachedToThreadId": null,
                         "parentThreadId": null,
                         "preview": "first prompt",
                         "ephemeral": true,
@@ -3833,7 +3872,8 @@ mod tests {
                 "params": {
                     "limit": null,
                     "cursor": null,
-                    "includeHidden": null
+                    "includeHidden": null,
+                    "modelProvider": null
                 }
             }),
             serde_json::to_value(&request)?,
@@ -4645,6 +4685,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 thread_settings: v2::ThreadSettings {
                     disabled_plugin_ids: Vec::new(),
+                    environments: Some(Vec::new()),
                     cwd: absolute_path("/tmp/repo"),
                     approval_policy: v2::AskForApproval::Never,
                     approvals_reviewer: v2::ApprovalsReviewer::User,

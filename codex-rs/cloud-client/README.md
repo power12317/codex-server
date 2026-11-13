@@ -59,3 +59,51 @@ they must not create duplicate transcript rows. Disconnects, untyped recovery
 notifications and uncertain overlap require authoritative history reload. This
 crate exposes the read primitives; a coordinated resync/display state machine is
 still required before claiming lossless resume or live/history reconciliation.
+
+`add_user_message` submits ordered text and image parts using the thread's existing
+configuration. Use `UserMessageInput::Text` or `UserMessageInput::Image` with an
+`ImageReference::Url` (inline data URLs only) or `ImageReference::FileId` and optional
+`ImageDetail`. Image-only input is supported; local paths must be converted by the
+caller before submission. URL prefixes are case-insensitive and must contain
+nonempty data; HTTP image URLs are rejected locally because the backend would
+omit them. File IDs must be nonblank. Requests containing images have a 3.75 MiB
+encoded-envelope cap, reserving 256 KiB below CCA's 4 MiB forwarding limit. Plain
+text retains the 64 MiB encoded-message limit. Text parts carry optional UTF-8
+byte spans through `UserMessageTextElement`; empty span lists preserve the plain
+text wire encoding. User-message summaries retain ordered content and client IDs
+for both text and image echoes.
+
+Choose `StartIfIdle`, `Steer`, or `Queue` explicitly; admission distinguishes
+started, steered, duplicate and queued results. Persist a unique client message ID
+with each logical input and keep it unchanged when reconciling an uncertain
+submission. Success means admission, not completion. `interrupt_turn` addresses
+one thread/turn and does not stop the thread or delete queued input. Duplicate
+admission exposes only the original turn ID when supplied. Its wire turn status
+is synthesized by the backend and does not describe current lifecycle state;
+reload history or observe Attach instead of treating the receipt as an active turn.
+
+`MutationError::InvalidRequest` means local validation rejected the request before
+sending. `OutcomeUnknown` retains the source error: even a server error can follow
+admission, so status codes alone do not prove rejection. Malformed success replies
+and mismatched response IDs are also uncertain. No automatic retry is performed;
+dropping a pending call does not undo remote work. Reconcile with server state
+before deciding whether another attempt is safe. Other input kinds, configuration
+overrides and automated outcome reconciliation are not implemented.
+
+The attach example accepts two optional additional arguments to explicitly send
+one message after attaching: a persisted client message ID and the text. It uses
+`StartIfIdle`, drains events during admission, and prints only redacted event kinds:
+
+```sh
+cargo run -p codex-cloud-client --example attach -- "$CODEX_CLOUD_GRPC_ENDPOINT" "$CODEX_CLOUD_THREAD_ID" "$CODEX_CLOUD_MESSAGE_ID" 'Explain this project'
+```
+
+`prewarm_default_thread` prepares an ordinary coding thread in the default managed
+cloud environment, with optional model/provider selection. It returns the native
+thread identity and resolved settings without a separate activation RPC. The
+service makes the thread discoverable when it admits the first user message.
+The service owns executor selection and paths; the caller supplies no local cwd,
+workspace roots, custom configuration, or Aeon mode. This API does not request an
+ephemeral thread. Prewarm is sent once; a timeout, disconnect or malformed response
+can leave a prepared thread whose identity the caller did not receive. No retry
+or cleanup is automatic.

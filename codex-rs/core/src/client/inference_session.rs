@@ -143,6 +143,17 @@ impl InferenceSession {
         scope: &str,
         source: &InferenceIdentity,
     ) -> anyhow::Result<Self> {
+        Self::new_with_provider(config, auth, installation_id, scope, source, None)
+    }
+
+    pub fn new_with_provider(
+        config: &crate::config::Config,
+        auth: Arc<AuthManager>,
+        installation_id: &str,
+        scope: &str,
+        source: &InferenceIdentity,
+        provider: Option<SharedModelProvider>,
+    ) -> anyhow::Result<Self> {
         let mapped = source.map(scope)?;
         anyhow::ensure!(
             source.turn_id.is_some(),
@@ -182,8 +193,16 @@ impl InferenceSession {
         let mut provider_info = config.model_provider.clone();
         provider_info.request_max_retries = Some(0);
         provider_info.stream_max_retries = Some(0);
+        let provider = provider.unwrap_or_else(|| {
+            let runtime = crate::build_runtime_auth_manager(config, auth.clone(), installation_id);
+            codex_model_provider::ProviderAuthContext {
+                credentials: auth,
+                runtime_auth: runtime.map(|runtime| (runtime, config.runtime_auth_mode)),
+            }
+            .model_provider(provider_info)
+        });
         let client = ModelClient::new(
-            Some(auth),
+            provider,
             if config
                 .features
                 .enabled(codex_features::Feature::UseAgentIdentity)
@@ -193,7 +212,7 @@ impl InferenceSession {
                 AgentIdentityAuthPolicy::JwtOnly
             },
             ThreadId::from_string(&mapped.thread_id)?,
-            provider_info,
+            crate::session::session::Session::new_item_id_generator(),
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,
@@ -265,7 +284,11 @@ impl InferenceSession {
             thread_id: self.metadata.thread_id.clone(),
             parent_thread_id: self.metadata.parent_thread_id.map(|id| id.to_string()),
             window_id: self.metadata.window_id.clone(),
-            context_window_id: self.metadata.context_window_id.map(|id| id.to_string()),
+            context_window_id: self
+                .metadata
+                .context_window_id
+                .as_ref()
+                .map(|id| id.to_string()),
             turn_id: self.metadata.turn_id.clone(),
             parent_turn_id: self.metadata.parent_turn_id.clone(),
             root_turn_id: self.metadata.root_turn_id.clone(),
@@ -293,7 +316,9 @@ impl InferenceSession {
         let mut metadata = self.metadata.clone();
         metadata.window_id = format!("{}:{number}", metadata.thread_id);
         metadata.window_number = Some(number);
-        metadata.context_window_id = Some(context_window_id);
+        metadata.context_window_id = Some(codex_protocol::ContextWindowId::Text(
+            context_window_id.to_string(),
+        ));
         Self {
             client_gate: self.client_gate.clone(),
             client: self.client.clone(),

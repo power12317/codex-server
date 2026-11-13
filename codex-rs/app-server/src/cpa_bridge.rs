@@ -15,7 +15,6 @@ use codex_core::config::Config;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::SharedModelProvider;
-use codex_model_provider::create_model_provider;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
@@ -24,7 +23,7 @@ use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 pub(crate) use upstream::record as record_request;
 
-const UPSTREAM: &str = "f7167ac895c869c60ae00a2d7f518a9977cd1205";
+const UPSTREAM: &str = "672e99fed8da8e5efc3268c52cddc4fc97ffd078";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
 pub(crate) struct CpaBridge {
@@ -48,6 +47,7 @@ impl CpaBridge {
         config_manager: crate::config_manager::ConfigManager,
         auth: Arc<AuthManager>,
         installation_id: String,
+        runtime_auth: Option<Arc<codex_core::InferenceRuntimeAuthManager>>,
         models: codex_models_manager::manager::SharedModelsManager,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: codex_analytics::AnalyticsEventsClient,
@@ -55,9 +55,18 @@ impl CpaBridge {
         let credential_id = auth
             .cpa_credential_file()
             .map(|file| file.credential_id.clone());
-        let provider = credential_id
-            .as_ref()
-            .map(|_| create_model_provider(config.model_provider.clone(), Some(auth.clone())));
+        let provider = credential_id.as_ref().map(|_| {
+            codex_model_provider::ProviderAuthContext {
+                credentials: auth.clone(),
+                runtime_auth: runtime_auth.map(|runtime| (runtime, config.runtime_auth_mode)),
+            }
+            .model_provider({
+                let mut info = config.model_provider.clone();
+                info.request_max_retries = Some(0);
+                info.stream_max_retries = Some(0);
+                info
+            })
+        });
 
         let analytics = analytics::InferenceAnalytics::new(
             analytics_events_client,

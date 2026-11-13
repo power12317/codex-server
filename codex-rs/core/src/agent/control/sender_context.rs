@@ -5,6 +5,7 @@
 
 use crate::context::GuardianSenderMessages;
 use crate::context_manager::ContextManager;
+use crate::session::session::Session;
 use codex_history::RolloutItem;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
@@ -103,7 +104,7 @@ impl LocalAgentRuntime {
                                 ContextManager::reconstruct_rollout(
                                     &stored.items,
                                     meta.history_mode,
-                                    ContextManager::new(),
+                                    ContextManager::new(Session::new_item_id_generator()),
                                     // Tool bodies are not sender authorization evidence.
                                     TruncationPolicy::Bytes(0),
                                 )

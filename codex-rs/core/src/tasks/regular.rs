@@ -1,7 +1,12 @@
+use crate::McpRefreshReason;
+use crate::agent::helper_daybreak::turn::SavedProgramResolution;
 use std::sync::Arc;
 
 use codex_async_utils::OrCancelExt;
 use codex_extension_api::TurnStartPhase;
+use codex_protocol::protocol::InternalSessionSource;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use futures::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
@@ -56,7 +61,11 @@ impl SessionTask for RegularTask {
             .config
             .features
             .enabled(codex_features::Feature::CriticalPathTiming)
-            && !ctx.session_source.is_non_root_agent()
+            && !matches!(
+                ctx.session_source,
+                SessionSource::Internal(InternalSessionSource::MemoryConsolidation)
+                    | SessionSource::SubAgent(SubAgentSource::MemoryConsolidation)
+            )
         {
             ctx.turn_timing_state.enable_critical_path();
         }
@@ -75,17 +84,25 @@ impl SessionTask for RegularTask {
                         == TurnStartPhase::RegularTaskStart
                         && contributor.requires_mcp_runtime(&sess.services.thread_extension_data)
                 });
-            let preparation = sess
-                .emit_turn_start_lifecycle(
+            let preparation = async {
+                sess.emit_turn_start_lifecycle(
                     &ctx,
                     /*token_usage_at_turn_start*/ None,
                     TurnStartPhase::RegularTaskStart,
                 )
-                .or_cancel(&cancellation_token)
                 .await;
+                if prepares_mcp {
+                    // Resource discovery can overlap the fetch. Wait before reprojection.
+                    sess.wait_for_apps_tool_refresh().await;
+                }
+            }
+            .or_cancel(&cancellation_token)
+            .await;
             // Even cancelled discovery may have cleared the previous account's catalog.
             if prepares_mcp {
-                sess.request_mcp_runtime_reprojection();
+                sess.request_mcp_runtime_reprojection(
+                    McpRefreshReason::TurnStartContributorPreparedMcp,
+                );
             }
             if preparation.is_err() {
                 return SessionStartupPrewarmResolution::Cancelled;
@@ -112,6 +129,19 @@ impl SessionTask for RegularTask {
                 Some(*prewarmed_client_session)
             }
         };
+        if let Some(resolution) = ctx.extension_data.get::<SavedProgramResolution>()
+            && let Err(error) = resolution.validate()
+        {
+            let _ = run_hooks_and_record_inputs(
+                &sess,
+                &ctx,
+                &ctx.capture_current_model_info(),
+                &input,
+                PersistContext::Standard,
+            )
+            .await;
+            return Err(error);
+        }
         Self::run_turns(
             sess,
             ctx,

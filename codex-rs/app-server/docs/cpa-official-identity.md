@@ -1,10 +1,10 @@
 # Official engine identity and managed Desktop compatibility
 
 The native-runtime branch synchronizes official `openai/codex` main at
-`f7167ac895c869c60ae00a2d7f518a9977cd1205` and retains the fork's model-only
+`672e99fed8da8e5efc3268c52cddc4fc97ffd078` and retains the fork's model-only
 master/worker extensions. Its release version is selected independently from the
-latest official stable tag, `rust-v0.166.0`, commit
-`6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`. The fork source includes unreleased
+latest official stable tag, `rust-v0.167.2`, commit
+`ce21072c90d32c40af7a55b60b2fb35c84a43a6a`. The fork source includes unreleased
 main changes and fork extensions; it is not represented as byte-identical to the
 stable release source.
 
@@ -13,10 +13,10 @@ stable release source.
 | Surface | Value | Source |
 | --- | --- | --- |
 | Committed workspace and local lock packages | `0.0.0` | Development placeholders remain committed. |
-| Build-copy engine version | `0.166.0` | `deploy/cpa-runtime/release-version`, applied by `prepare-release.py`. |
+| Build-copy engine version | `0.167.2` | `deploy/cpa-runtime/release-version`, applied by `prepare-release.py`. |
 | Cargo package and binary target | `codex-app-server` | The retained official app-server target. |
 | Installed executable | `/usr/local/bin/codex-app-server` | The service image copies that target. |
-| Version output | `codex-app-server 0.166.0\n` | Actual stamped Cargo build metadata. |
+| Version output | `codex-app-server 0.167.2\n` | Actual stamped Cargo build metadata. |
 
 Do not rename the app-server target to `codex`, add a fork suffix, or substitute a
 Desktop application version for its engine version. The official `codex-cli`
@@ -54,8 +54,8 @@ Both were verified from official platform release metadata on 2026-11-04:
 The managed compatibility profiles use these exact UA shapes:
 
 ```text
-Codex Desktop/0.166.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1027.51404)
-Codex Desktop/0.166.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1027.61615)
+Codex Desktop/0.167.2 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1027.51404)
+Codex Desktop/0.167.2 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1027.61615)
 ```
 
 The engine segment comes from the actual stamped `CARGO_PKG_VERSION`; source
@@ -128,12 +128,12 @@ compatibility scheme.
 
 ## Official reference artifacts and checks
 
-The official 0.166.0 release API reports these archive SHA256 values, verified
+The official 0.167.2 release API reports these archive SHA256 values, verified
 before the reference executables are run:
 
 | Asset | SHA256 |
 | --- | --- |
-| `codex-app-server-aarch64-apple-darwin.tar.gz` | `af848c48b91253faa5a693a71b30d963109efc2674b398aedd0ca29d13089ca4` |
+| `codex-app-server-aarch64-apple-darwin.tar.gz` | `6d42b6a34bbe05d083e66b0dec65e23db77b2c87a82435882acfda043aab1e06` |
 | `codex-app-server-x86_64-apple-darwin.tar.gz` | `2d2deadd2318b5eeb10c506962e7ec95560e41c635e5c2add120bc5bb5292921` |
 
 Reference hashes are provenance, never runtime capability gates. Compare actual
@@ -161,4 +161,4 @@ does not claim a candidate CLI build.
 Service regressions exercise actual HTTP/WS headers, connection reuse, native
 compaction input, failure boundaries, catalog/usage clients and process isolation.
 They do not establish real upstream acceptance or DeviceCheck success. Historical
-0.164.0 results remain separate and must not be reused as 0.166.0 evidence.
+0.164.0 results remain separate and must not be reused as 0.167.2 evidence.

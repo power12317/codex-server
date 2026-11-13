@@ -1,4 +1,5 @@
 use super::responses_error::parse_failed_response;
+use crate::common::ReasoningRemovalReason;
 use crate::common::ResponseEvent;
 use crate::common::ResponseStream;
 use crate::common::SafetyBuffering;
@@ -21,6 +22,7 @@ use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -385,6 +387,29 @@ impl ResponsesEventError {
     }
 }
 
+// Diagnostic fields are optional and must never make an otherwise valid response fail.
+fn reasoning_removals(response: &Value) -> Option<BTreeMap<ReasoningRemovalReason, i64>> {
+    let transformations = response.get("input_transformations")?.as_array()?;
+    let mut counts = BTreeMap::new();
+    for transformation in transformations {
+        if transformation.get("type").and_then(Value::as_str) != Some("reasoning")
+            || transformation.get("action").and_then(Value::as_str) != Some("removed")
+        {
+            continue;
+        }
+        let reason = match transformation.get("reason").and_then(Value::as_str) {
+            Some("organization_mismatch") => ReasoningRemovalReason::OrganizationMismatch,
+            Some("end_user_mismatch") => ReasoningRemovalReason::EndUserMismatch,
+            Some("model_mismatch") => ReasoningRemovalReason::ModelMismatch,
+            Some("prefix_mismatch") => ReasoningRemovalReason::PrefixMismatch,
+            Some("turn_boundary") => ReasoningRemovalReason::TurnBoundary,
+            _ => ReasoningRemovalReason::Other,
+        };
+        *counts.entry(reason).or_default() += 1;
+    }
+    Some(counts)
+}
+
 pub fn process_responses_event(
     event: ResponsesStreamEvent,
 ) -> std::result::Result<Option<ResponseEvent>, ResponsesEventError> {
@@ -505,6 +530,7 @@ pub fn process_responses_event(
                 }
             }
             if let Some(resp_val) = event.response {
+                let reasoning_removals = reasoning_removals(&resp_val);
                 let metadata = resp_val
                     .get("usage")
                     .filter(|usage| !usage.is_null())
@@ -518,6 +544,7 @@ pub fn process_responses_event(
                             response_id: resp.id,
                             token_usage: resp.usage.map(Into::into),
                             usage_metadata: resp.usage_metadata,
+                            reasoning_removals,
                             end_turn: if interrupted {
                                 Some(false)
                             } else {
@@ -770,7 +797,14 @@ pub(super) async fn process_sse_with_treatment(
                 if return_errors_immediately
                     || matches!(
                         error,
-                        ApiError::FlexUnavailable | ApiError::ResponseIncomplete(_)
+                        ApiError::FlexUnavailable
+                            | ApiError::ContextWindowExceeded
+                            | ApiError::InvalidRequest { .. }
+                            | ApiError::SessionBudgetExceeded
+                            | ApiError::InferenceHookDenied { .. }
+                            | ApiError::AccessProgramNotEnabled { .. }
+                            | ApiError::ContentPolicyViolation { .. }
+                            | ApiError::ResponseIncomplete(_)
                     )
                 {
                     let _ = tx_event.send(Err(error)).await;
@@ -966,6 +1000,7 @@ mod tests {
                 response_id,
                 token_usage,
                 usage_metadata,
+                reasoning_removals: _,
                 end_turn,
             }) => {
                 assert_eq!(response_id, "resp1");
@@ -1164,6 +1199,7 @@ mod tests {
                 response_id,
                 token_usage,
                 usage_metadata,
+                reasoning_removals: _,
                 end_turn,
             }) => {
                 assert_eq!(response_id, "resp1");
@@ -1760,6 +1796,7 @@ mod tests {
                 response_id,
                 token_usage: None,
                 usage_metadata: None,
+                reasoning_removals: None,
                 end_turn: None,
             } if response_id == "resp-1"
         );
@@ -1801,6 +1838,7 @@ mod tests {
                 response_id,
                 token_usage: None,
                 usage_metadata: None,
+                reasoning_removals: None,
                 end_turn: None,
             } if response_id == "resp-1"
         );
@@ -1837,6 +1875,7 @@ mod tests {
                 response_id,
                 token_usage: None,
                 usage_metadata: None,
+                reasoning_removals: None,
                 end_turn: None,
             } if response_id == "resp-1"
         );
@@ -1873,6 +1912,7 @@ mod tests {
                 response_id,
                 token_usage: None,
                 usage_metadata: None,
+                reasoning_removals: None,
                 end_turn: None,
             } if response_id == "resp-1"
         );

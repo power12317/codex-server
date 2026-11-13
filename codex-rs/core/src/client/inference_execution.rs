@@ -1,4 +1,4 @@
-//! Model-only single-send entry into the native request and streaming machinery.
+//! Model-only native execution with one explicit peer-size transport fallback.
 //! No tool dispatcher, session task or persisted conversation is constructed here.
 
 use super::InferenceSession;
@@ -20,7 +20,7 @@ use serde_json::Map;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Delivery observes native execution without introducing a local retry or tool loop.
+/// Delivery observes native execution without a tool loop or general retry policy.
 pub trait InferenceObserver: ResponsesObserver + TransportObserver {}
 
 impl InferenceSession {
@@ -37,6 +37,7 @@ impl InferenceSession {
     ) -> Result<()> {
         let request = InferenceRequest::parse(config, request)
             .map_err(|error| CodexErr::InvalidRequest(format!("{error:#}")))?;
+        let prewarm_only = request.controls.generate == Some(false);
         let mut configured_client = self.client.clone();
         configured_client.request_controls = Some(Arc::new(request.controls));
         let telemetry = SessionTelemetry::new(
@@ -56,26 +57,52 @@ impl InferenceSession {
         let mut client = configured_client.new_session();
         client.turn_state = self.turn_state.clone();
         let sample = async {
-            let mut stream = client
-                .stream_once(
-                    &request.prompt,
-                    model,
-                    &telemetry,
-                    request.effort,
-                    request.summary,
-                    request.service_tier,
-                    &self.metadata,
-                    &InferenceTraceContext::disabled(),
-                )
-                .await?;
-            while let Some(event) = stream.next().await {
-                if matches!(event?, ResponseEvent::Completed { .. }) {
-                    return Ok(());
+            let mut peer_size_fallback_used = false;
+            let mut expected_auth_owner = None;
+            loop {
+                let stream = client
+                    .stream_once(
+                        &request.prompt,
+                        model,
+                        &telemetry,
+                        request.effort.clone(),
+                        request.summary,
+                        request.service_tier.clone(),
+                        &self.metadata,
+                        &InferenceTraceContext::disabled(),
+                        expected_auth_owner.clone(),
+                    )
+                    .await;
+                let failure = match stream {
+                    Err(error) => error,
+                    Ok(mut stream) => loop {
+                        match stream.next().await {
+                            Some(Ok(ResponseEvent::Completed { .. })) => return Ok(()),
+                            Some(Ok(_)) => {}
+                            Some(Err(error)) => break error,
+                            None => {
+                                break CodexErr::Stream(
+                                    "stream closed before response.completed".into(),
+                                );
+                            }
+                        }
+                    },
+                };
+                // One approved exception only: a remote 1009 before any text.
+                // Local size checks, authentication failures and ordinary disconnects
+                // never reach this branch. The second HTTP failure is terminal.
+                if !prewarm_only
+                    && !peer_size_fallback_used
+                    && failure.is_peer_websocket_size_rejection()
+                {
+                    // Do not move the resend to another credential source if it changed.
+                    expected_auth_owner = client.websocket_session.auth_owner.clone();
+                    peer_size_fallback_used = true;
+                    client.try_switch_fallback_transport(&telemetry, model);
+                    continue;
                 }
+                return Err(failure);
             }
-            Err(CodexErr::Stream(
-                "stream closed before response.completed".into(),
-            ))
         };
         observe_transport(observer.clone(), observe_responses(observer, sample)).await
     }
