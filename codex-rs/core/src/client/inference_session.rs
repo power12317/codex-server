@@ -134,6 +134,17 @@ impl InferenceSession {
         scope: &str,
         source: &InferenceIdentity,
     ) -> anyhow::Result<Self> {
+        Self::new_with_provider(config, auth, installation_id, scope, source, None)
+    }
+
+    pub fn new_with_provider(
+        config: &crate::config::Config,
+        auth: Arc<AuthManager>,
+        installation_id: &str,
+        scope: &str,
+        source: &InferenceIdentity,
+        provider: Option<SharedModelProvider>,
+    ) -> anyhow::Result<Self> {
         let mapped = source.map(scope)?;
         anyhow::ensure!(
             source.turn_id.is_some(),
@@ -160,11 +171,19 @@ impl InferenceSession {
                 kind.clone(),
             ))
         });
+        let provider = provider.unwrap_or_else(|| {
+            let runtime = crate::build_runtime_auth_manager(config, auth.clone(), installation_id);
+            codex_model_provider::ProviderAuthContext {
+                credentials: auth,
+                runtime_auth: runtime.map(|runtime| (runtime, config.runtime_auth_mode)),
+            }
+            .model_provider(config.model_provider.clone())
+        });
         let client = ModelClient::new(
-            Some(auth),
+            provider,
             AgentIdentityAuthPolicy::JwtOnly,
             ThreadId::from_string(&mapped.thread_id)?,
-            config.model_provider.clone(),
+            crate::session::session::Session::new_item_id_generator(),
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,

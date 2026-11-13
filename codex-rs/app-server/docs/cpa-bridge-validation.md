@@ -869,3 +869,42 @@ No product changes were made to suppress them. Raw local logs are in
 | `suite::v2::selected_capability_stack::selected_plugin_mcp_startup_respects_explicit_mentions::structured_mention_direct`                                   | Missing local `target/debug/codex` test executable; the standalone CLI was not built.               |
 | `suite::v2::code_mode_host::code_mode_model_output_uses_structured_host_timing::wait_grpc_with_overhead`                                                    | Timed out waiting for the `codex.code_mode.host_timing` JSON log event; root cause not established. |
 | `suite::v2::code_mode_host::app_server_prewarms_flag_selected_grpc_code_mode_host_before_first_turn`                                                        | Test exceeded the 60-second nextest limit; root cause not established.                              |
+
+## 2026-11-13 official main and optional runtime identity
+
+This update merges official main `672e99fed8da8e5efc3268c52cddc4fc97ffd078`.
+Tracked workspace and local lockfile package versions remain `0.0.0`; the clean
+build copy is stamped `0.167.2`. The main service retains its HTTP sender, source
+tickets, shared credential files, complete caller tool schemas and native CLI
+identity. It does not adopt the separate branch's Desktop profile.
+
+The official `runtime_agent_instances` feature remains disabled by default.
+When enabled, model discovery, inference, Images and other first-party requests
+share the credential worker's runtime owner. Separate credential workers retain
+separate installation IDs, registrations and ephemeral signing keys. Existing
+credential refresh, rotation and disablement continue through the same
+`AuthManager`; no additional service configuration is introduced.
+
+Validation on macOS arm64 against the stamped build copy:
+
+| Check | Result |
+| --- | --- |
+| Official runtime-agent unit tests | 28 passed |
+| Inference mapping, time replacement, tools and cache TTL | 21 passed |
+| Runtime owner, credential rotation and disablement | 4 passed |
+| Service and real worker regressions | 107 passed |
+| Protocol regression tests | 326 passed; fixture writer remains ignored |
+| Stable and experimental schemas and Python SDK generation | Passed through the repository generator |
+| Standalone executable build | Passed; `codex-app-server 0.167.2` |
+| Complete official initialize comparison and real worker identity | Passed |
+
+The real worker runtime test sends Responses and Images requests from two
+credential workers through a local TLS proxy. It verifies one registration per
+worker, different installation IDs/public keys, and the correct runtime assertion
+and bearer/account headers on each request. The reference executable is the
+verified official `rust-v0.167.2` macOS arm64 release asset.
+
+The tested executable has SHA256
+`2e7eec249891946101a49abced208ef9199602dcc1232817f2eeb7f9f4a078f7`.
+These local results do not certify a Linux image. The existing multiarch image
+workflow remains responsible for the Linux build and published-image checks.

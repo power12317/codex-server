@@ -71,7 +71,9 @@ pub fn output_content() -> Vec<FunctionCallOutputContentItem> {
             detail: Some(ImageDetail::Low),
         },
         FunctionCallOutputContentItem::InputAudio {
-            audio_url: "data:audio/wav;base64,AA==".into(),
+            audio: AudioReference::Inline {
+                audio_url: "data:audio/wav;base64,AA==".into(),
+            },
         },
         FunctionCallOutputContentItem::EncryptedContent {
             encrypted_content: "encrypted-result".into(),
@@ -470,6 +472,7 @@ pub fn check_native_request_shape(request: codex_api::ResponsesApiRequest) {
         stream_options: _,
         include: _,
         prompt_cache_key: _,
+        prompt_cache_options: _,
         text: _,
         client_metadata: _,
         access_programs: _,
@@ -503,7 +506,7 @@ pub fn check_nested_native_variants(
             image: _,
             detail: _,
         } => (),
-        FunctionCallOutputContentItem::InputAudio { audio_url: _ } => (),
+        FunctionCallOutputContentItem::InputAudio { audio: _ } => (),
         FunctionCallOutputContentItem::EncryptedContent {
             encrypted_content: _,
         } => (),
@@ -559,10 +562,10 @@ pub fn native_request_history(
 ) -> Vec<ResponseItem> {
     let thread = "00000000-0000-4000-8000-000000000001";
     let client = crate::client::ModelClient::new(
-        None,
+        codex_model_provider::create_model_provider(config.model_provider.clone(), None),
         codex_login::auth::AgentIdentityAuthPolicy::JwtOnly,
         codex_protocol::ThreadId::from_string(thread).unwrap(),
-        config.model_provider.clone(),
+        crate::session::session::Session::new_item_id_generator(),
         codex_protocol::protocol::SessionSource::Cli,
         codex_login::default_client::originator().value,
         config.model_verbosity,

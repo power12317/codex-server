@@ -1,4 +1,5 @@
 use crate::session::tests::update_turn_settings_for_test;
+use codex_mcp::McpServerKey;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -398,7 +399,7 @@ fn duplicate_primary_environment(turn: &mut TurnContext) {
 
 fn mcp_tool(server: &str, namespace: &str, name: &str) -> ToolInfo {
     ToolInfo {
-        server_name: server.to_string(),
+        server_key: McpServerKey::unscoped(server),
         supports_parallel_tool_calls: false,
         server_origin: None,
         callable_name: name.to_string(),
@@ -636,6 +637,7 @@ async fn reviewer_tool_policy_respect_managed_shell_restrictions() {
                 Some(codex_config::Sourced::new(
                     codex_config::FeatureRequirementsToml {
                         entries: BTreeMap::from([(feature.key().to_string(), false)]),
+                        ..Default::default()
                     },
                     codex_config::RequirementSource::Unknown,
                 )),

@@ -21,8 +21,6 @@ use codex_http_client::StreamResponse;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::SharedModelProvider;
-use codex_model_provider::auth_provider_from_auth;
-use codex_model_provider::create_model_provider;
 use futures::StreamExt;
 use serde_json::Value;
 use serde_json::json;
@@ -35,7 +33,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 pub(crate) use upstream::record as record_request;
 
-const UPSTREAM: &str = "f7167ac895c869c60ae00a2d7f518a9977cd1205";
+const UPSTREAM: &str = "672e99fed8da8e5efc3268c52cddc4fc97ffd078";
 
 type BridgeResult<T> = std::result::Result<T, JSONRPCErrorError>;
 
@@ -59,15 +57,20 @@ impl CpaBridge {
         config_manager: crate::config_manager::ConfigManager,
         auth: Arc<AuthManager>,
         installation_id: String,
+        runtime_auth: Option<Arc<codex_core::InferenceRuntimeAuthManager>>,
         models: codex_models_manager::manager::SharedModelsManager,
         outgoing: Arc<OutgoingMessageSender>,
     ) -> Arc<Self> {
         let credential_id = auth
             .cpa_credential_file()
             .map(|file| file.credential_id.clone());
-        let provider = credential_id
-            .as_ref()
-            .map(|_| create_model_provider(config.model_provider.clone(), Some(auth.clone())));
+        let provider = credential_id.as_ref().map(|_| {
+            codex_model_provider::ProviderAuthContext {
+                credentials: auth.clone(),
+                runtime_auth: runtime_auth.map(|runtime| (runtime, config.runtime_auth_mode)),
+            }
+            .model_provider(config.model_provider.clone())
+        });
 
         Arc::new(Self {
             credential_id,
@@ -285,7 +288,7 @@ impl CpaBridge {
             .await
             .map_err(|error| failure(/*status*/ 502, &error.to_string()))?;
         // Only AuthManager acquires/refreshes credentials. No tokens cross IPC.
-        let (auth, factory) = tokio::time::timeout(
+        let (_auth, factory) = tokio::time::timeout(
             Duration::from_secs(/*secs*/ 30),
             self.auth.auth_with_http_client_factory(),
         )
@@ -313,18 +316,18 @@ impl CpaBridge {
         }
         let revision = *self.auth.auth_change_receiver().borrow();
         let image_endpoint = params.image_api == Some(CpaImageApi::Images);
-        let mut provider = if image_endpoint {
-            model_provider
-                .api_provider()
-                .await
-                .map_err(|_| failure(502, "Unable to resolve managed image provider"))?
-        } else {
-            model_provider
-                .responses_api_provider(&self.config.workspace_routing_context())
-                .await
-                .map_err(|_| failure(502, "Unable to resolve managed provider"))?
-                .provider
-        };
+        let routing = self.config.workspace_routing_context();
+        let setup = codex_model_provider::resolve_request(
+            model_provider.as_ref(),
+            None,
+            if image_endpoint { None } else { Some(&routing) },
+            factory,
+        )
+        .await
+        .map_err(|error| failure(502, &error.to_string()))?;
+        let mut provider = setup.api_provider;
+        let factory = setup.http_client_factory;
+        let request_auth = setup.api_auth;
         if *self.auth.auth_change_receiver().borrow() != revision {
             return Err(failure(
                 /*status*/ 409,
@@ -385,17 +388,13 @@ impl CpaBridge {
                         .map_err(|_| failure(400, "Invalid image turn id"))?,
                 );
             }
-            return codex_api::ImagesClient::new(
-                transport,
-                provider,
-                auth_provider_from_auth(&auth),
-            )
-            .inference(operation, &request, headers)
-            .await
-            .map_err(|error| match error {
-                ApiError::InvalidRequest { message } => adaptation_failure(&message),
-                error => api_failure(error),
-            });
+            return codex_api::ImagesClient::new(transport, provider, request_auth.clone())
+                .inference(operation, &request, headers)
+                .await
+                .map_err(|error| match error {
+                    ApiError::InvalidRequest { message } => adaptation_failure(&message),
+                    error => api_failure(error),
+                });
         }
         let model = params
             .request
@@ -434,7 +433,7 @@ impl CpaBridge {
         if params.capture_ticket_snapshot == Some(true) {
             transport.ticket_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         }
-        ResponsesClient::new(transport, provider, auth_provider_from_auth(&auth))
+        ResponsesClient::new(transport, provider, request_auth.clone())
             .stream_prepared_body(body, options)
             .await
             .map_err(api_failure)

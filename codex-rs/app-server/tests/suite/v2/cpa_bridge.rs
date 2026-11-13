@@ -973,3 +973,6 @@ async fn cpa_nested_unicode_ids_have_independent_persistent_runtimes() -> Result
     assert!(file.exists());
     Ok(())
 }
+
+#[path = "cpa_bridge/worker_runtime_auth_tests.rs"]
+mod worker_runtime_auth_tests;

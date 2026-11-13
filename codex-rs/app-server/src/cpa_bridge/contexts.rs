@@ -119,12 +119,13 @@ impl Contexts {
             source
                 .turn_id
                 .get_or_insert_with(|| uuid::Uuid::now_v7().to_string());
-            InferenceSession::new(
+            InferenceSession::new_with_provider(
                 &bridge.config,
                 bridge.auth.clone(),
                 &bridge.installation_id,
                 &scope,
                 &source,
+                bridge.provider.clone(),
             )
         };
         // Titles associate with the same logical IDs but never retain a turn context.

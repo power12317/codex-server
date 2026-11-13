@@ -512,3 +512,20 @@ The current schemas live in
 [`cpa.rs`](../codex-rs/app-server-protocol/src/protocol/v2/cpa.rs). The enclosing
 `v2` source directory is the official app-server type layout. It does not
 introduce a versioned service URL or a private protocol-number gate.
+
+
+## Optional runtime agent identity
+
+The upstream `runtime_agent_instances` feature remains disabled by default.
+Enabling that existing feature uses the official runtime registration and
+per-request assertion flow, including its existing `runtime_auth_mode` behavior.
+There is no additional service setting and no forced enablement.
+
+Each credential worker owns its installation ID, shared-file `AuthManager`,
+ephemeral signing key and runtime registration. The worker shares its runtime
+owner between model discovery, inference and first-party API clients. Different
+credentials never share that owner or signing key. Caller session/thread mappings
+remain separate from account authentication. Registration occurs when a
+first-party request, including model discovery, needs it. Constructing the
+runtime owner itself does not register or generate a key. Credential rotation and disablement
+continue to use the existing credential source and official runtime invalidation.
