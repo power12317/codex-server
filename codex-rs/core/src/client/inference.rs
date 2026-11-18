@@ -238,6 +238,7 @@ fn worker_owned_field(key: &str) -> bool {
                 | "originator"
                 | "device_id"
                 | "access_programs"
+                | "request_country"
                 | "session_id"
                 | "thread_id"
                 | "turn_id"
@@ -253,6 +254,7 @@ fn worker_owned_field(key: &str) -> bool {
                 | "context_window_id"
                 | "timezone"
                 | "current_date"
+                | "current_date_utc"
         )
 }
 
@@ -325,6 +327,7 @@ fn caller_metadata(request: &Map<String, Value>) -> anyhow::Result<HashMap<Strin
                         | "headers"
                         | "cookies"
                         | "account_id"
+                        | "request_country"
                         | "installation_id"
                         | "prompt_cache_key"
                         | "session_id"
@@ -360,7 +363,11 @@ fn caller_metadata(request: &Map<String, Value>) -> anyhow::Result<HashMap<Strin
             }
         }
         let time = super::inference_context::TimeContext::now();
-        for (key, value) in [("timezone", time.timezone), ("current_date", time.date)] {
+        for (key, value) in [
+            ("timezone", time.timezone),
+            ("current_date", time.date),
+            ("current_date_utc", time.utc_date),
+        ] {
             if metadata.contains_key(key) {
                 result.insert(key.into(), value);
             }

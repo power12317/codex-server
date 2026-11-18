@@ -23,7 +23,7 @@ async fn cpa_tool_continuation_replaces_time_in_place(timezone: &str) -> Result<
     let mut ws = connect(&home).await?;
     let old_environment = "<environment_context><current_date>2020-01-01</current_date><timezone>history-zone</timezone></environment_context>";
     let old_client = "<codex_apps_client_time_context><timezone>history-zone</timezone><current_date>2020-01-01</current_date></codex_apps_client_time_context>";
-    let current_environment = "<environment_context><cwd>C:\\work</cwd><current_date>2026-01-01</current_date><timezone>source-zone</timezone></environment_context>";
+    let current_environment = "<environment_context><cwd>C:\\work</cwd><current_date_utc>2026-01-01</current_date_utc><timezone>source-zone</timezone></environment_context>";
     let current_client = "<codex_apps_client_time_context><timezone>source-zone</timezone><current_date>2026-01-01</current_date></codex_apps_client_time_context>";
     let input = json!([
         {"role":"user", "content":old_environment},
@@ -52,7 +52,13 @@ async fn cpa_tool_continuation_replaces_time_in_place(timezone: &str) -> Result<
         assert!(!text.contains("source-zone"));
         assert!(!text.contains("2026-01-01"));
         assert_eq!(text.matches("<timezone>").count(), 1);
-        assert_eq!(text.matches("<current_date>").count(), 1);
+        let (date_tag, absent_tag) = if index == 2 {
+            ("<current_date_utc>", "<current_date>")
+        } else {
+            ("<current_date>", "<current_date_utc>")
+        };
+        assert_eq!(text.matches(date_tag).count(), 1);
+        assert!(!text.contains(absent_tag));
     }
     assert!(
         actual[2]["content"][0]["text"]

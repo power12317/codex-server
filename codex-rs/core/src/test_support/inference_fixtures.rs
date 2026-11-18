@@ -477,6 +477,7 @@ pub fn check_native_request_shape(request: codex_api::ResponsesApiRequest) {
         client_metadata: _,
         access_programs: _,
         generation: _,
+        request_country: _,
     } = request;
 }
 

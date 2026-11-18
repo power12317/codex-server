@@ -266,8 +266,9 @@ docker inspect codex-server --format '{{json .Mounts}}'
 The request adapter replaces existing date/timezone fields in the latest
 `environment_context` and `codex_apps_client_time_context` declarations, including
 when later items are tool calls/results. It does not append messages or add
-missing time fields. Older declarations, paths, OS descriptions and tool payloads
-remain intact.
+missing time fields. An existing `current_date_utc` uses the UTC date while
+`current_date` and `timezone` follow the worker's local clock. Older declarations,
+paths, OS descriptions and tool payloads remain intact.
 
 The image workflow runs [check-timezone.sh](check-timezone.sh) against both native
 architectures before publication. It verifies UTC, Singapore and Tokyo tzfile

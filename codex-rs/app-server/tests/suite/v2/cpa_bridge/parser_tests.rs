@@ -42,10 +42,10 @@ async fn native_tool_catalog_and_namespace_history_reach_wire(lite: bool) -> Res
         {"type":"function_call_output", "call_id":"prior-call", "output":"fixture result"}
     ]);
     let choice = json!({"type":"function", "namespace":"collaboration", "name":"send_message"});
-    let request = start(
-        json!({"model":"mock-model", "input":history, "tools":tools, "tool_choice":choice, "session_id":"session-a", "thread_id":"session-a", "prompt_cache_key":"cache-c"}),
-    );
-    for _ in 0..2 {
+    for country in [json!("US"), Value::Null] {
+        let request = start(
+            json!({"model":"mock-model", "input":history, "tools":tools, "tool_choice":choice, "session_id":"session-a", "thread_id":"session-a", "prompt_cache_key":"cache-c", "request_country":country, "client_metadata":{"request_country":"JP"}}),
+        );
         let (logged, returned) = exchange(&mut ws, request.clone()).await?;
         assert_eq!(returned, raw.as_bytes());
         let body: Value = serde_json::from_str(
@@ -63,6 +63,8 @@ async fn native_tool_catalog_and_namespace_history_reach_wire(lite: bool) -> Res
             .last()
             .expect("fixture response must contain the expected native fields");
         assert_eq!(actual.body_json::<Value>()?, body);
+        assert!(body.get("request_country").is_none());
+        assert!(body["client_metadata"].get("request_country").is_none());
         assert_eq!(body["tool_choice"], choice);
         let sent_tools = if lite {
             assert!(body.get("tools").is_none());
