@@ -607,11 +607,13 @@ async fn cpa_native_replaces_time_context_in_place() -> Result<()> {
         prepare_account(&upstream, &home)?;
         let _runtime = launch_with_timezone(&upstream, &home, Some(timezone)).await?;
         let mut ws = connect(&home).await?;
-        let result=exchange(&mut ws,rpc(json!({"model":"mock-model","stream":true,"input":[{"role":"user","content":"<environment_context>\n<cwd>/caller/path</cwd>\n<current_date>2000-01-01</current_date>\n<timezone>UTC</timezone>\n</environment_context>"}]}),170)).await?;
+        let result=exchange(&mut ws,rpc(json!({"model":"mock-model","stream":true,"input":[{"role":"user","content":"<environment_context>\n<cwd>/caller/path</cwd>\n<current_date_utc>2000-01-01</current_date_utc>\n<timezone>UTC</timezone>\n</environment_context>"}]}),170)).await?;
         let body = wire(&result).to_string();
         assert_eq!(body.matches("<environment_context>").count(), 1);
         assert!(body.contains(&format!("<timezone>{timezone}</timezone>")));
         assert!(!body.contains("2000-01-01"));
+        assert_eq!(body.matches("<current_date_utc>").count(), 1);
+        assert!(!body.contains("<current_date>"));
         assert!(body.contains("/caller/path"));
     }
     Ok(())

@@ -319,6 +319,9 @@ business `metadata` and opaque `turn_state` are not rewritten. See the
 [native contract](../codex-rs/app-server/docs/cpa-native-model-runtime.md)
 for the execution and identity boundary.
 
+`request_country` is reserved. The worker omits it from outgoing Responses
+requests even when the caller supplies a country code or `null`.
+
 ### Runtime date and timezone
 
 The adapter replaces existing date/timezone fields in the latest standalone
@@ -326,10 +329,11 @@ The adapter replaces existing date/timezone fields in the latest standalone
 messages. These declarations remain current across assistant/tool continuations;
 they do not need to be repeated after each tool result. Older declarations and
 other message/tool content remain intact. No context message or missing time
-field is added. Supplied flat date/timezone metadata is updated consistently.
+field is added. An existing `current_date` uses the worker's local date;
+`current_date_utc` uses its UTC date. `timezone` reflects the worker's effective
+system timezone.
 
-Values come from the worker's effective system clock and timezone. Use the
-[host timezone mount](../deploy/cpa-runtime/README.md#runtime-timezone) to follow
+Use the [host timezone mount](../deploy/cpa-runtime/README.md#runtime-timezone) to follow
 the deployment host; a container does not inherit unmounted host files merely
 because its image was rebuilt.
 

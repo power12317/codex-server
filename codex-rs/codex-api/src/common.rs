@@ -391,6 +391,8 @@ pub struct ResponsesApiRequest {
     pub access_programs: Option<AccessPrograms>,
     #[serde(flatten)]
     pub generation: ResponsesGenerationOptions,
+    #[serde(skip_serializing_if = "codex_protocol::RequestCountry::is_omitted")]
+    pub request_country: codex_protocol::RequestCountry,
 }
 
 impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
@@ -415,6 +417,7 @@ impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {
             client_metadata: request.client_metadata.clone(),
             access_programs: request.access_programs,
             generation: &request.generation,
+            request_country: &request.request_country,
         }
     }
 }
@@ -453,6 +456,8 @@ pub struct ResponseCreateWsRequest<'a> {
     pub access_programs: Option<AccessPrograms>,
     #[serde(flatten)]
     pub generation: &'a ResponsesGenerationOptions,
+    #[serde(skip_serializing_if = "codex_protocol::RequestCountry::is_omitted")]
+    pub request_country: &'a codex_protocol::RequestCountry,
 }
 
 pub fn response_create_client_metadata(

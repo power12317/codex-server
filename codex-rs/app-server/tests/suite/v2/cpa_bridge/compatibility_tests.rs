@@ -50,7 +50,8 @@ async fn cpa_native_compatible_controls_and_tool_contracts(lite: bool) -> Result
             "tool_choice":choice,"parallel_tool_calls":true,"include":[],"store":true,"background":false,"previous_response_id":null,"conversation":null,
             "text":{"format":{"type":"json_schema","name":"caller_result","strict":false,"schema":output_schema},"verbosity":"high","metadata":{"ui":true}},
             "reasoning":{"context":"current_turn","effort":"high"},"max_output_tokens":123,"temperature":0.4,"top_p":0.7,"truncation":"disabled","prompt_cache_retention":"24h","service_tier":"flex",
-            "client_metadata":{"session_id":"stable","thread_id":"child","thread_source":"third-party","ws_request_header_x_openai_internal_codex_responses_lite":"stale","ws_stream_request_start_ms":"old","arbitrary_tracking":{"display":true}}});
+            "request_country":if index % 2 == 0 { json!("US") } else { Value::Null },
+            "client_metadata":{"request_country":"JP","session_id":"stable","thread_id":"child","thread_source":"third-party","ws_request_header_x_openai_internal_codex_responses_lite":"stale","ws_stream_request_start_ms":"old","arbitrary_tracking":{"display":true}}});
         let mut request = rpc(input, 8000 + index as u64);
         request["params"]["optionalEnvelopeExtension"] = json!({"trace":true});
         let result = exchange(&mut ws, request).await?;
@@ -61,6 +62,8 @@ async fn cpa_native_compatible_controls_and_tool_contracts(lite: bool) -> Result
             result.reply
         );
         let sent = wire(&result);
+        assert!(sent.get("request_country").is_none());
+        assert!(sent["client_metadata"].get("request_country").is_none());
         assert_eq!(sent["include"], json!([]));
         assert_eq!(sent["parallel_tool_calls"], !lite);
         assert_eq!(sent["store"], true);

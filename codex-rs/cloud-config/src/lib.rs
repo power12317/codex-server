@@ -3,6 +3,9 @@
 //! This crate owns transport, caching, and refresh behavior for cloud-delivered
 //! config data. Parsing and composition remain in `codex-config`.
 
+// Rust 1.99 needs more query depth to lay out the nested backend futures.
+#![recursion_limit = "256"]
+
 mod backend;
 mod bundle_loader;
 mod cache;
@@ -13,6 +16,7 @@ mod metrics;
 mod service;
 mod validation;
 
+pub use bundle_loader::ConfigServerLoginMethod;
 pub use bundle_loader::chatgpt_config_bundle_loader;
 pub use bundle_loader::chatgpt_config_bundle_loader_for_storage;
 pub use bundle_loader::chatgpt_config_bundle_loader_for_storage_without_cache;

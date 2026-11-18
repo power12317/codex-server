@@ -2,6 +2,7 @@
 //! No tool dispatcher, session task or persisted conversation is constructed here.
 
 use super::InferenceSession;
+use super::SamplingOptions;
 use super::inference::InferenceRequest;
 use crate::config::Config;
 use codex_api::ResponseEvent;
@@ -38,6 +39,7 @@ impl InferenceSession {
         let request = InferenceRequest::parse(config, request)
             .map_err(|error| CodexErr::InvalidRequest(format!("{error:#}")))?;
         let prewarm_only = request.controls.generate == Some(false);
+        let prompt = Arc::new(request.prompt);
         let mut configured_client = self.client.clone();
         configured_client.request_controls = Some(Arc::new(request.controls));
         let telemetry = SessionTelemetry::new(
@@ -62,12 +64,14 @@ impl InferenceSession {
             loop {
                 let stream = client
                     .stream_once(
-                        &request.prompt,
+                        &prompt,
                         model,
                         &telemetry,
-                        request.effort.clone(),
-                        request.summary,
-                        request.service_tier.clone(),
+                        SamplingOptions {
+                            reasoning_effort: request.effort.clone(),
+                            reasoning_summary: request.summary,
+                            service_tier: request.service_tier.clone(),
+                        },
                         &self.metadata,
                         &InferenceTraceContext::disabled(),
                         expected_auth_owner.clone(),

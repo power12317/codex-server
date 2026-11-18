@@ -5,6 +5,7 @@ use serde_json::json;
 fn time() -> TimeContext {
     TimeContext {
         date: "2026-10-07".into(),
+        utc_date: "2026-10-06".into(),
         timezone: "Asia/Tokyo".into(),
     }
 }
@@ -29,6 +30,16 @@ fn rewrites_only_latest_context_and_preserves_paths_and_history() {
     assert_eq!(
         input[2],
         context("environment_context", "2026-10-07", "Asia/Tokyo", "user")
+    );
+}
+
+#[test]
+fn explicit_utc_date_uses_utc_day_and_preserves_local_timezone() {
+    let input = "<environment_context><cwd>/caller</cwd><current_date_utc>2025-01-01</current_date_utc><timezone>old-zone</timezone></environment_context>";
+    let expected = "<environment_context><cwd>/caller</cwd><current_date_utc>2026-10-06</current_date_utc><timezone>Asia/Tokyo</timezone></environment_context>";
+    assert_eq!(
+        time().rewrite_block(input, "environment_context"),
+        Some(expected.into())
     );
 }
 

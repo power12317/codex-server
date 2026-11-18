@@ -1154,7 +1154,7 @@ mod projection {
         };
         let permission_profile = wire_policy
             .as_ref()
-            .map(codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy)
+            .map(codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy_template)
             .unwrap_or_else(|| config.permissions.effective_permission_profile());
         client.track_turn_resolved_config(TurnResolvedConfigFact {
             turn_id: turn_id.to_owned(),

@@ -1,9 +1,11 @@
 //! Current runtime time context for CPA requests; history and caller paths stay intact.
 use chrono::Local;
+use chrono::Utc;
 use serde_json::Value;
 
 pub(super) struct TimeContext {
     pub(super) date: String,
+    pub(super) utc_date: String,
     pub(super) timezone: String,
 }
 
@@ -55,6 +57,7 @@ impl TimeContext {
             .unwrap_or_else(|| format!("UTC{utc_offset}"));
         Self {
             date: now.format("%Y-%m-%d").to_string(),
+            utc_date: now.with_timezone(&Utc).format("%Y-%m-%d").to_string(),
             timezone,
         }
     }
@@ -99,7 +102,11 @@ impl TimeContext {
             return None;
         }
         let mut inner = inner.to_owned();
-        for (field, value) in [("current_date", &self.date), ("timezone", &self.timezone)] {
+        for (field, value) in [
+            ("current_date", &self.date),
+            ("current_date_utc", &self.utc_date),
+            ("timezone", &self.timezone),
+        ] {
             let open = format!("<{field}>");
             let close = format!("</{field}>");
             if let Some(start) = inner.find(&open) {

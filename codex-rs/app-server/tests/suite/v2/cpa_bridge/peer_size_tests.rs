@@ -150,6 +150,7 @@ async fn cpa_native_peer_size_resend_boundaries(
     input["session_id"] = json!("source-session");
     input["thread_id"] = json!("source-child");
     input["turn_id"] = json!("source-turn");
+    input["request_country"] = json!("US");
     input["tools"] = json!([{"type":"function","name":"external_tool","parameters":{"type":"object","properties":{"verbatim":{"type":"string","description":"unchanged"}}}}]);
     let outcome = exchange(&mut ws, rpc(input, 9009)).await?;
     let _ = stop.send(());
@@ -162,6 +163,9 @@ async fn cpa_native_peer_size_resend_boundaries(
         expected_http,
         "only one permitted resend"
     );
+    for sent in captured.websocket.iter().chain(&captured.http) {
+        assert!(sent.get("request_country").is_none());
+    }
     if expected_http == 1 {
         let original = &captured.websocket[0];
         let fallback = &captured.http[0];

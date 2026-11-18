@@ -56,6 +56,16 @@ impl<T: HttpTransport> ResponsesClient<T> {
         }
     }
 
+    pub async fn stream_request(
+        &self,
+        request: ResponsesApiRequest,
+        options: ResponsesOptions,
+    ) -> Result<ResponseStream, ApiError> {
+        self.stream_request_with_observer(request, options, |_| {})
+            .await
+    }
+
+    /// Gives the observer a shared copy of the exact JSON before transport dispatch.
     #[instrument(
         name = "responses.stream_request",
         level = "info",
@@ -66,12 +76,13 @@ impl<T: HttpTransport> ResponsesClient<T> {
             api.path = "/responses"
         )
     )]
-    pub async fn stream_request(
+    pub async fn stream_request_with_observer(
         &self,
         request: ResponsesApiRequest,
         options: ResponsesOptions,
+        on_encoded: impl FnOnce(&bytes::Bytes),
     ) -> Result<ResponseStream, ApiError> {
-        self.stream_request_with_errors(request, options, false)
+        self.stream_request_with_errors(request, options, false, on_encoded)
             .await
     }
 
@@ -90,9 +101,10 @@ impl<T: HttpTransport> ResponsesClient<T> {
         mut self,
         request: ResponsesApiRequest,
         options: ResponsesOptions,
+        on_encoded: impl FnOnce(&bytes::Bytes),
     ) -> Result<ResponseStream, ApiError> {
         self.session = self.session.without_retries();
-        self.stream_request_with_errors(request, options, true)
+        self.stream_request_with_errors(request, options, true, on_encoded)
             .await
     }
 
@@ -101,6 +113,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         request: ResponsesApiRequest,
         options: ResponsesOptions,
         return_errors_immediately: bool,
+        on_encoded: impl FnOnce(&bytes::Bytes),
     ) -> Result<ResponseStream, ApiError> {
         let ResponsesOptions {
             session_id,
@@ -113,6 +126,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         let body = EncodedJsonBody::encode(&request)
             .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
 
+        on_encoded(body.shared_bytes());
         let mut headers = extra_headers;
         if let Some(ref thread_id) = thread_id {
             insert_header(&mut headers, "x-client-request-id", thread_id);
