@@ -94,7 +94,8 @@ impl CpaBridge {
         self.auth.reload().await;
         if result.status == "completed" {
             self.config_manager
-                .update_managed_config_loader(self.auth.clone(), &self.config);
+                .update_managed_config_loader(self.auth.clone(), &self.config)
+                .await;
             self.config_manager
                 .sync_default_client_residency_requirement()
                 .await;

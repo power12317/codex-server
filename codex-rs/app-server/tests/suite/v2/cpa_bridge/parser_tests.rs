@@ -25,6 +25,18 @@ async fn native_tool_catalog_and_namespace_history_reach_wire(lite: bool) -> Res
     std::fs::write(&catalog, serde_json::to_vec(&json!({"models":[model]}))?)?;
     let worker_config = home.path().join("state/shared.json/config.toml");
     let original = std::fs::read_to_string(&worker_config)?;
+
+    let mut enabled: toml::Table = toml::from_str(&original)?;
+    enabled
+        .entry("features")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .expect("features table")
+        .insert(
+            "connector_tool_result_passthrough".into(),
+            toml::Value::Boolean(true),
+        );
+    let original = toml::to_string(&enabled)?;
     std::fs::write(
         &worker_config,
         format!(

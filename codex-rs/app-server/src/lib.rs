@@ -609,7 +609,9 @@ pub async fn run_main_with_transport_options(
     config.validate_windows_mxc_requirement()?;
     config.auth_config().validate()?;
     let auth_manager = cpa_config::auth_manager(&config, cpa.as_ref()).await?;
-    config_manager.update_managed_config_loader(auth_manager.clone(), &config);
+    config_manager
+        .update_managed_config_loader(auth_manager.clone(), &config)
+        .await;
     config_manager
         .sync_default_client_residency_requirement()
         .await;
