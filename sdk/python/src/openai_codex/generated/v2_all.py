@@ -1307,6 +1307,16 @@ class CpaInferenceUpstreamNotification(
     ]
 
 
+class CpaSessionInstructionsFrameType(Enum):
+    response_create = "response.create"
+    response_append = "response.append"
+
+
+class CpaSessionInstructionsMode(Enum):
+    start = "start"
+    reuse = "reuse"
+
+
 class CreditsSnapshot(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -9122,6 +9132,25 @@ class ContentItem(
         | FileIdContentItem1
         | OutputTextContentItem
     )
+
+
+class CpaSessionInstructions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    baseline_digest: Annotated[str, Field(alias="baselineDigest")]
+    frame_type: Annotated[CpaSessionInstructionsFrameType | None, Field(alias="frameType")] = None
+    http_only: Annotated[
+        bool | None,
+        Field(
+            alias="httpOnly",
+            description="Preserve an already selected HTTP route for this managed request only.",
+        ),
+    ] = None
+    mode: CpaSessionInstructionsMode
+    previous_response_id: Annotated[str | None, Field(alias="previousResponseId")] = None
+    scope: str
 
 
 class ExperimentalFeature(BaseModel):

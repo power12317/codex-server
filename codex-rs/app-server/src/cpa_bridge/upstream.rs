@@ -49,6 +49,7 @@ pub(super) struct NativeObservation {
     diagnostics: UnboundedSender<Diagnostic>,
     business: UnboundedSender<Business>,
     images: bool,
+    suppress_body: std::sync::atomic::AtomicBool,
     state: Mutex<Observed>,
     analytics: std::sync::OnceLock<super::analytics::Exchange>,
 }
@@ -65,9 +66,15 @@ impl NativeObservation {
             diagnostics,
             business,
             images,
+            suppress_body: std::sync::atomic::AtomicBool::new(false),
             state: Mutex::new(Observed::default()),
             analytics: std::sync::OnceLock::new(),
         })
+    }
+
+    pub(super) fn managed(&self) {
+        self.suppress_body
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(super) fn set_analytics(&self, analytics: super::analytics::Exchange) {
@@ -91,7 +98,9 @@ impl NativeObservation {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.closed = true;
         if let Err(error) = &mut result {
-            if let (Some(original), Some(data)) = (&state.error, error.data.as_mut()) {
+            if let (Some(original), Some(data)) = (&state.error, error.data.as_mut())
+                && data["sessionInstructionsError"] != true
+            {
                 if let Some(status) = original.status {
                     data["httpStatus"] = serde_json::json!(status);
                 }
@@ -144,6 +153,10 @@ fn public_error_headers(headers: &HeaderMap) -> BTreeMap<String, Vec<String>> {
 }
 
 impl TransportObserver for NativeObservation {
+    fn suppress_request_body(&self) -> bool {
+        self.suppress_body
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
     fn websocket_connection_node(&self) -> Option<String> {
         self.state
             .lock()
@@ -173,7 +186,17 @@ impl TransportObserver for NativeObservation {
     }
     fn request(&self, transport: &str, method: &str, url: &str, headers: &HeaderMap, body: &[u8]) {
         if let Some(analytics) = self.analytics.get() {
-            analytics.request(transport, method, url, headers, body);
+            analytics.request(
+                transport,
+                method,
+                url,
+                headers,
+                if self.suppress_request_body() {
+                    b""
+                } else {
+                    body
+                },
+            );
         }
         let access_token_sha256 = headers
             .get(axum::http::header::AUTHORIZATION)
@@ -203,10 +226,15 @@ impl TransportObserver for NativeObservation {
             url: url.into(),
             method: method.into(),
             headers: wire_headers(headers),
-            body: std::str::from_utf8(body)
-                .unwrap_or("[encoded native request body]")
-                .into(),
-            body_base64: Some(base64::engine::general_purpose::STANDARD.encode(body)),
+            body: std::str::from_utf8(if self.suppress_request_body() {
+                b""
+            } else {
+                body
+            })
+            .unwrap_or("[encoded native request body]")
+            .into(),
+            body_base64: (!self.suppress_request_body())
+                .then(|| base64::engine::general_purpose::STANDARD.encode(body)),
             access_token_sha256,
             oai_lb_node: node,
         });

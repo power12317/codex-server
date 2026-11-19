@@ -23,6 +23,7 @@ enum Pending {
 
 #[derive(Clone)]
 struct StreamTarget {
+    managed: bool,
     client: Client,
     source_request_id: String,
     business_done: bool,
@@ -72,6 +73,7 @@ fn register_stream(
     streams.insert(
         internal_id.clone(),
         StreamTarget {
+            managed: false,
             client: client.clone(),
             source_request_id: source_request_id.into(),
             business_done: false,
@@ -205,10 +207,18 @@ impl Worker {
                         request_id,
                         source_request_id: _,
                     } => {
-                        if let Some(request_id) = request_id {
-                            route(&mut *streams.lock().await, &request_id, true, false);
-                        }
-                        let _ = client.send(error(id, 503, "Account runtime stopped")).await;
+                        let managed = if let Some(request_id) = request_id {
+                            route(&mut *streams.lock().await, &request_id, true, false)
+                                .is_some_and(|target| target.managed)
+                        } else {
+                            false
+                        };
+                        let failure = if managed {
+                            json!({"id":id,"error":crate::cpa_bridge::session_instructions::continuation_error(502,"upstream_websocket_lost","Account runtime stopped; the managed outcome may be unknown")})
+                        } else {
+                            error(id, 503, "Account runtime stopped")
+                        };
+                        let _ = client.send(failure).await;
                     }
                 }
             }
@@ -216,9 +226,21 @@ impl Worker {
             for (_, target) in streams {
                 let request_id = &target.source_request_id;
                 if !target.business_done {
-                    let _ = target.client.send(json!({"method":"cpa/inference/error","params":{
-                        "requestId":request_id,"httpStatus":503,"message":"Account runtime stopped","body":null,"headers":null
-                    }})).await;
+                    let params = if target.managed {
+                        let error = crate::cpa_bridge::session_instructions::continuation_error(
+                            502,
+                            "upstream_websocket_lost",
+                            "Account runtime stopped; the managed outcome may be unknown",
+                        );
+                        let data = error.data.expect("managed error data");
+                        json!({"requestId":request_id,"httpStatus":502,"message":error.message,"body":data["body"],"headers":{}})
+                    } else {
+                        json!({"requestId":request_id,"httpStatus":503,"message":"Account runtime stopped","body":null,"headers":null})
+                    };
+                    let _ = target
+                        .client
+                        .send(json!({"method":"cpa/inference/error","params":params}))
+                        .await;
                 }
                 if !target.diagnostics_done {
                     target.client.diagnostics_completed(request_id).await;
@@ -267,6 +289,10 @@ impl Worker {
             .context("requestId required")?
             .to_owned();
         let inference = message["method"] == "cpa/inference/start";
+        let managed = inference && message["params"]["sessionInstructions"].is_object();
+        let failure_client = client.clone();
+        let source_rpc_id = message["id"].clone();
+        let failure_request_id = source_request_id.clone();
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let request_id = if inference {
             register_stream(
@@ -294,6 +320,9 @@ impl Worker {
             internal
         };
         if inference {
+            if let Some(target) = self.streams.lock().await.get_mut(&request_id) {
+                target.managed = message["params"]["sessionInstructions"].is_object();
+            }
             let credential_id = self.credential_id.clone();
             let source = source_request_id.clone();
             let details = json!({"workerRequestId": request_id, "rpcId": message["id"]});
@@ -318,9 +347,25 @@ impl Worker {
         message["id"] = json!(id);
         message["params"]["requestId"] = json!(request_id);
         if let Err(error) = self.write(message).await {
-            self.pending.lock().await.remove(&id);
+            let pending = self.pending.lock().await.remove(&id);
             if inference {
                 self.streams.lock().await.remove(&request_id);
+            }
+            if managed {
+                if pending.is_some() {
+                    let scoped = crate::cpa_bridge::session_instructions::continuation_error(
+                        502,
+                        "upstream_websocket_lost",
+                        "Worker pipe disconnected; the managed outcome may be unknown",
+                    );
+                    let _ = failure_client
+                        .send(json!({"id":source_rpc_id,"error":scoped}))
+                        .await;
+                    failure_client
+                        .diagnostics_completed(&failure_request_id)
+                        .await;
+                }
+                return Ok(());
             }
             return Err(error);
         }
@@ -418,6 +463,7 @@ mod tests {
             let mut streams = HashMap::from([(
                 "r".into(),
                 StreamTarget {
+                    managed: false,
                     client,
                     source_request_id: "r".into(),
                     business_done: false,

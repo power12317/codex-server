@@ -369,7 +369,9 @@ impl ResponsesWebsocketConnection {
         on_encoded(request_text.as_ref());
         let enriched = with_tool_results(request_text.as_str(), &ws_request.tool_results);
         let request_text = WsRequestText {
-            private: enriched.is_some(),
+            private: enriched.is_some()
+                || codex_http_client::observation::transport_observer()
+                    .is_some_and(|observer| observer.suppress_request_body()),
             text: enriched.map(Utf8Bytes::from).unwrap_or(request_text),
         };
 
@@ -1187,14 +1189,21 @@ async fn send_websocket_request(
         return Err(ApiError::WebsocketMessageTooLarge);
     }
     let request_start = Instant::now();
-    if !request_text.private
-        && let Some(observer) = codex_http_client::observation::transport_observer()
+    if let Some(observer) = codex_http_client::observation::transport_observer()
+        && (!request_text.private || observer.suppress_request_body())
     {
         observer.websocket_request(
             endpoint,
-            request_text.text.as_bytes(),
+            if request_text.private {
+                b""
+            } else {
+                request_text.text.as_bytes()
+            },
             ws_stream.oai_lb_node.as_deref(),
         );
+    }
+    if let Some(observer) = codex_http_client::observation::transport_observer() {
+        observer.websocket_send_attempted();
     }
     let result = tokio::time::timeout(idle_timeout, ws_stream.send(request_text))
         .await

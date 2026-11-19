@@ -139,6 +139,9 @@ export type { CpaInferenceDiagnosticsCompletedNotification } from "./CpaInferenc
 export type { CpaInferenceErrorNotification } from "./CpaInferenceErrorNotification";
 export type { CpaInferenceEventNotification } from "./CpaInferenceEventNotification";
 export type { CpaInferenceUpstreamNotification } from "./CpaInferenceUpstreamNotification";
+export type { CpaSessionInstructions } from "./CpaSessionInstructions";
+export type { CpaSessionInstructionsFrameType } from "./CpaSessionInstructionsFrameType";
+export type { CpaSessionInstructionsMode } from "./CpaSessionInstructionsMode";
 export type { CreditsSnapshot } from "./CreditsSnapshot";
 export type { CustomGatewaySettingsParams } from "./CustomGatewaySettingsParams";
 export type { CyberAccessProgram } from "./CyberAccessProgram";

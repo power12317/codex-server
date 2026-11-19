@@ -140,8 +140,12 @@ pub(super) async fn business(
         let message = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                let mut error = failure(499,"Inference delivery cancelled");
-                if let Some(data) = error.data.as_mut() { data["body"] = json!(json!({"error":{"message":"Inference delivery cancelled","type":"delivery_cancelled"}}).to_string()); }
+                let mut error = if params.session_instructions.is_some() {
+                    super::session_instructions::continuation_error(502, "upstream_websocket_lost", "Managed delivery cancelled; its outcome may be unknown")
+                } else { failure(499,"Inference delivery cancelled") };
+                if params.session_instructions.is_none() {
+                    if let Some(data) = error.data.as_mut() { data["body"] = json!(json!({"error":{"message":"Inference delivery cancelled","type":"delivery_cancelled"}}).to_string()); }
+                }
                 break Err(error);
             }
             message = receiver.recv() => message,

@@ -130,6 +130,7 @@ pub struct InferenceSession {
     // All turns of one logical thread lease its native cache exclusively. Idle turn
     // contexts retain their ticket, never a ModelClientSession holding the socket.
     pub(super) client_gate: Arc<tokio::sync::Mutex<()>>,
+    pub(super) continuation_epoch: Arc<std::sync::atomic::AtomicU64>,
     pub(super) client: ModelClient,
     pub(super) turn_state: Arc<OnceLock<String>>,
     pub(super) metadata: CodexResponsesMetadata,
@@ -273,6 +274,7 @@ impl InferenceSession {
         Ok(Self {
             turn_state: Arc::new(OnceLock::new()),
             client_gate: Arc::new(tokio::sync::Mutex::new(())),
+            continuation_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             client,
             metadata,
         })
@@ -308,6 +310,7 @@ impl InferenceSession {
     pub fn with_model_client(mut self, previous: &Self) -> Self {
         self.client = previous.client.clone();
         self.client_gate = previous.client_gate.clone();
+        self.continuation_epoch = previous.continuation_epoch.clone();
         self
     }
 
@@ -321,6 +324,7 @@ impl InferenceSession {
         ));
         Self {
             client_gate: self.client_gate.clone(),
+            continuation_epoch: self.continuation_epoch.clone(),
             client: self.client.clone(),
             turn_state: self.turn_state.clone(),
             metadata,

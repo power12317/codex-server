@@ -211,6 +211,13 @@ impl<T: HttpTransport> ResponsesClient<T> {
         turn_state: Option<Arc<OnceLock<String>>>,
         return_errors_immediately: bool,
     ) -> Result<ResponseStream, ApiError> {
+        let body = if codex_http_client::observation::transport_observer()
+            .is_some_and(|observer| observer.suppress_request_body())
+        {
+            body.without_body_logging()
+        } else {
+            body
+        };
         let request_compression = match compression {
             Compression::None => RequestCompression::None,
             Compression::Zstd => RequestCompression::Zstd,

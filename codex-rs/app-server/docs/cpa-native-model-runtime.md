@@ -18,7 +18,7 @@ official comparison, regression coverage and delivery limits.
 Caller input is mapped to native `Prompt`, model controls and session metadata.
 `InferenceSession::execute` calls the native model client's single-attempt entry.
 The existing `request_max_retries` and `stream_max_retries` are zero for this
-model-only client. The sole resend exception is a remote WebSocket close code
+model-only client. Except for managed deltas, the sole resend exception is a remote WebSocket close code
 1009 before any text frame: exactly one HTTP resend is allowed, regardless of
 the close reason. Metadata and malformed text count as received text. Local
 `max_message_bytes` rejection, 401, disconnects and other errors never qualify.
@@ -46,8 +46,9 @@ invocation leases a native `ModelClientSession` and drops it before releasing th
 thread lease, returning the WebSocket and its previous-response cache through the
 original native lifecycle. Cached turn contexts retain their own first ticket,
 so a new turn can reuse the socket without inheriting the previous turn's ticket.
-Concurrent requests in the same logical thread serialize; independent threads
-and credentials remain concurrent. Credential isolation, synthetic turn lifetime
+Ordinary concurrent requests in the same logical thread serialize; managed
+session-instructions requests reject contention and invalidate continuation proof.
+Independent threads and credentials remain concurrent. Credential isolation, synthetic turn lifetime
 and title-request ephemerality are unchanged. Only the peer-1009 exception
 described above can resend a failed call. With runtime authentication enabled,
 the official client rebuilds WebSocket connections per request and clears its
@@ -58,7 +59,7 @@ to typed native history: message/function status, encrypted output and output-te
 are retained in the native replay types introduced by 0.163.0. Non-native display
 extensions are consumed only where the typed representation cannot carry them. Native custom-call status, namespace, call IDs, tool results, encrypted
 compaction items and `compaction_trigger` controls retain their typed semantics.
-Unknown business item types still fail explicitly. The native client alone selects a
+Unknown business item types still fail explicitly. For ordinary requests, the native client alone selects a
 full request or `previous_response_id` plus incremental input; changed model,
 tools, rules or history do not force an artificial cache hit.
 
@@ -96,6 +97,14 @@ The separate single-attempt policy below applies to this worker entry.
 This does not add handshake-header capture, HTTP SSE metadata capture, a separate
 ticket cache, or a runtime switch. Official executable names and version remain
 unchanged.
+
+Managed session instructions are opt-in and use the stricter
+[control and proof contract](../../../docs/codex-server-api.md#managed-session-instructions).
+The caller owns baseline expansion; the worker retains only socket-scoped IDs and
+digests, clears its ordinary history cache after managed execution, and never
+reconstructs a managed delta. `httpOnly: true` applies to one request and preserves
+the ordinary route for later requests. Controlled deltas never use the peer-1009
+HTTP resend exception and fail before any required reconnect.
 
 ## IPC contract and delivery
 

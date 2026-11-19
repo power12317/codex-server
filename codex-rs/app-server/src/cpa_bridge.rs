@@ -6,6 +6,7 @@ mod identity_response;
 mod images;
 mod login;
 mod response_stream;
+pub(crate) mod session_instructions;
 mod upstream;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
@@ -144,6 +145,9 @@ impl CpaBridge {
             business_tx,
             params.image_api == Some(CpaImageApi::Images),
         );
+        if params.session_instructions.is_some() {
+            observation.managed();
+        }
         delivery::diagnostics(
             self.outgoing.clone(),
             id.connection_id,
@@ -209,12 +213,12 @@ impl CpaBridge {
             let result = tokio::select! {
                 biased;
                 result = native_bridge.run(&native_params, &native_session, observation.clone()) => result,
-                _ = native_token.cancelled() => Err(failure(499, "Inference cancelled")),
+                _ = native_token.cancelled() => Err(if native_params.session_instructions.is_some() { session_instructions::continuation_error(502, "upstream_websocket_lost", "Managed inference cancelled; its outcome may be unknown") } else { failure(499, "Inference cancelled") }),
                 _ = async {
                     loop {
                         if auth_changes.changed().await.is_err() || native_bridge.bound_auth().is_err() { break; }
                     }
-                } => Err(failure(401, "Managed account changed")),
+                } => Err(if native_params.session_instructions.is_some() { session_instructions::continuation_error(502, "upstream_websocket_lost", "Managed account changed; its outcome may be unknown") } else { failure(401, "Managed account changed") }),
             };
             observation.record(if result.is_ok() {"cpa.request.completed"} else {"cpa.request.error"},
                 json!({"error":result.as_ref().err().map(|error|&error.message),
@@ -306,16 +310,35 @@ impl CpaBridge {
                     "worker":session.mapping(),"identityPolicy":"session-root-and-thread-hierarchy"}),
             );
             session
-                .execute(
+                .execute_with_session_instructions(
                     &self.config,
                     &model_info,
                     &params.request,
                     observation.clone(),
+                    params.session_instructions.as_ref().map(|control| {
+                        codex_core::InferenceSessionInstructions {
+                            scope: control.scope.clone(),
+                            http_only: control.http_only == Some(true),
+                            baseline_digest: control.baseline_digest.clone(),
+                            append: control.frame_type
+                                == Some(CpaSessionInstructionsFrameType::Append),
+                            previous_response_id: control.previous_response_id.clone(),
+                        }
+                    }),
                 )
                 .await
-                .map_err(|error| {
-                    observation.native_error(&error);
-                    native_failure(&error)
+                .map_err(|error| match error {
+                    codex_core::InferenceExecutionError::Native(error) => {
+                        observation.native_error(&error);
+                        native_failure(&error)
+                    }
+                    codex_core::InferenceExecutionError::Continuation(error) => {
+                        session_instructions::continuation_error(
+                            error.status(),
+                            error.code(),
+                            &error.to_string(),
+                        )
+                    }
                 })
         }
     }
@@ -336,6 +359,7 @@ pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
         response_identity_mapping: true,
         ticket_snapshots: Some(false),
         execution_mode: "inference-only".into(),
+        session_instructions: Some("websocket".into()),
         operations: vec![
             "responses".into(),
             "images/generations".into(),
@@ -392,6 +416,7 @@ fn native_failure(error: &codex_protocol::error::CodexErr) -> JSONRPCErrorError 
 }
 
 fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
+    session_instructions::validate(params, true)?;
     if params.capture_ticket_snapshot == Some(true) {
         return Err(failure(
             400,

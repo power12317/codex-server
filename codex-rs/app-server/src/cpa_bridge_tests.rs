@@ -36,6 +36,7 @@ fn capabilities_describe_actual_delivery_and_ticket_support() {
             "responsesWebsocket": true,
             "responseIdentityMapping": true,
             "ticketSnapshots": false,
+            "sessionInstructions": "websocket",
             "operations": ["responses", "images/generations", "images/edits"]
         })
     );

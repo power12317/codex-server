@@ -277,3 +277,44 @@ The image workflow runs [check-timezone.sh](check-timezone.sh) against both nati
 architectures before publication. It verifies UTC, Singapore and Tokyo tzfile
 mounts with `TZ` unset, and confirms the image's UTC database stays unchanged.
 These are test fixtures, not deployment defaults.
+
+## Managed instruction validation and local mock
+
+The optional [session-instructions control](../../docs/codex-server-api.md#managed-session-instructions)
+keeps baseline ownership in the caller. Main advertises `full` and retains
+HTTP/SSE; native advertises `websocket` and requires actual same-socket proof
+for deltas. `httpOnly: true` keeps a managed full request on HTTP and rejects a
+delta before any model send or new WebSocket handshake. No local conversation
+or baseline store is created. Managed request body/base64 diagnostics are hidden;
+response diagnostics retain their normal lifecycle.
+
+Run the dependency-free cross-process contract check with Node.js 22.22 or later
+and an absolute path to the real built app-server executable:
+
+```sh
+node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --keep
+node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --http --keep
+node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --http-only --keep
+```
+
+The mock launches a real master and two isolated credential workers against a
+local model server. It checks the existing ordinary route, full/delta behavior,
+zero-send/zero-handshake 409s, verbatim response IDs and diagnostic privacy.
+Native WS checks also cover proof ownership/context, missing success receipts,
+concurrency, cancellation, local size rejection and remote close/disconnect.
+`--http` disables provider WS; `--http-only` keeps provider WS support and applies
+the per-request control. Both verify full HTTP input and rejected deltas. Redirect checks preserve each
+branch's existing policy: main exposes upstream 307 responses; native follows
+normal same-origin redirects.
+
+For a separate CPA process, keep the mock and runtime available:
+
+```sh
+node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --serve --keep --port 38318
+```
+
+The first JSON line reports the loopback endpoint, mock upstream, fixture home,
+credential IDs (`a.json`, `b.json`) and capabilities. Fixtures contain fake
+credentials only. `--keep` preserves the mock request record and runtime stderr
+after shutdown. Stop with Ctrl-C. This is a local integration fixture; it does
+not validate production runtime authentication or authorize exposed access.

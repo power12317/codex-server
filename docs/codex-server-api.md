@@ -81,6 +81,7 @@ shape (version strings below are illustrative):
     "responsesWebsocket": true,
     "responseIdentityMapping": true,
     "ticketSnapshots": false,
+    "sessionInstructions": "websocket",
     "operations": ["responses", "images/generations", "images/edits"]
   }
 }
@@ -102,6 +103,7 @@ The existing main and native implementations differ as follows:
 | `diagnosticsCompleted` | `false`              | `true`                |
 | `responsesWebsocket`   | `false`              | `true`                |
 | `ticketSnapshots`      | `true`               | `false`               |
+| `sessionInstructions` | `"full"`             | `"websocket"`         |
 
 `http-body-eof` means normal HTTP body EOF; the client must parse Responses or
 Images output to determine model success. `native-terminal` means the native
@@ -226,7 +228,7 @@ name with one available to the account:
 | `sessionId`    | Nonempty caller isolation scope. Keep it stable across requests belonging to the same logical scope.                                                                                            |
 | `request`      | Business JSON for the selected operation. Ordinary Responses requires a model string; `stream` is a downstream delivery preference. Image operations use the contract below.                    |
 
-For `operation: "responses"`, pass required history in `request.input`. Non-null
+For `operation: "responses"`, pass required history in `request.input`. Outside the managed session-instructions control below, non-null
 `previous_response_id` and `conversation` require history reconstruction by the
 caller; null references are treated as absent. `generate: false` uses native WS
 prewarming and fails specifically on an HTTP-only worker without generating.
@@ -246,6 +248,91 @@ their call IDs and send results plus required history in subsequent requests.
 There is no local tool loop. Native web search and image generation run at the
 upstream service. Tool search retains its declared client/server execution mode;
 the worker does not execute client tools.
+
+### Managed session instructions
+
+Read optional `capabilities.sessionInstructions` before sending this control:
+`"full"` accepts complete inputs on the main HTTP/SSE runtime; `"websocket"`
+also supports proven same-socket deltas on the native runtime. An absent field
+means the feature is unsupported. Neither value enables a transport or creates a
+local conversation. Ordinary requests without the control keep their existing
+behavior.
+
+The caller owns baseline storage, expansion and payload rules. Expand the full
+baseline before those rules, then verify the final prefix. The worker never
+inserts, restores or stores baseline text. Add this optional field beside
+`request` in `cpa/inference/start`:
+
+```json
+{
+  "sessionInstructions": {
+    "mode": "start",
+    "scope": "OPAQUE_CALLER_AND_EXPLICIT_SESSION_SCOPE",
+    "baselineDigest": "LOWERCASE_SHA256_HEX_OR_EMPTY",
+    "frameType": "response.create",
+    "httpOnly": true
+  }
+}
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `mode` | Required `start` or `reuse`; the caller manages the baseline lifecycle. A reuse request may still carry complete input. |
+| `scope` | Required nonblank opaque caller and explicit-session scope. Include the authenticated caller identity; a session string alone is insufficient. |
+| `baselineDigest` | Required lowercase SHA-256 hexadecimal of the exact baseline text, or `""` when payload rules invalidate the prefix. Empty permits full input but never continuation. |
+| `frameType` | Optional `response.create` (default) or `response.append`. A present business `request.type` must agree. |
+| `previousResponseId` | Optional nonempty real upstream response ID. When supplied, business `request.previous_response_id` must contain the identical value. |
+| `httpOnly` | Optional boolean. `true` requires HTTP/SSE for this full request and rejects deltas before any model send or WebSocket handshake. It does not permanently alter native transport selection. |
+
+This control requires `operation: "responses"`, `sourceFormat: "openai-response"`
+and no `imageApi`. Remove the reserved business marker
+`client_metadata.cpa_session_instructions` before dispatch. Unknown control fields
+and inconsistent frame/parent values are invalid requests.
+
+Complete input uses `response.create` without a parent. Managed complete input
+is sent as complete input, never automatically converted to a history delta.
+Main always uses its existing HTTP/SSE path, including with a WebSocket-capable
+provider. Native follows its existing provider/client transport choice unless
+`httpOnly: true` explicitly selects HTTP for that request.
+Redirect handling remains branch-specific: main exposes upstream redirect
+responses; native retains its existing redirect policy and private tool-result
+origin restrictions. Request-log suppression does not change either policy.
+
+A delta uses `response.append` or an explicit parent. Native requires a proven
+successful response on the actual cached WebSocket, bound to the credential/auth
+owner, socket generation, scope, mapped session/thread/window, model, baseline
+digest and request epoch. An append may omit both parent fields and resolve only
+the last proven response on that socket. Explicit parents must match it. The
+native wire form is `response.create` with the proven `previous_response_id` and
+the caller's delta input; no history or baseline is reconstructed.
+
+Proof requires a matching `response.created` and successful terminal response.
+Cancellation, competing or intervening requests, disconnect, reconnect, changed
+ownership/context/model/digest and unknown outcomes invalidate reuse. Official
+runtime authentication may require a fresh socket on each request; a delta then
+fails before reconnect and the caller must send complete input. HTTP success
+does not establish WebSocket proof. A delta never forces WebSocket, opens a
+replacement socket, or uses the native remote-1009 HTTP resend exception.
+
+Response IDs remain exactly those returned by the upstream model. CPA must bind
+parents to the authenticated caller, selected credential and source sender chain
+before dispatch. Two independent owners can return the same literal ID; the ID
+string alone cannot prove which owner supplied it. Workers never consult another
+worker's proof. Existing selective mapping of session/thread/turn identity fields
+continues independently of response IDs.
+
+| HTTP status | `error.code` | Meaning |
+| ----------- | ------------ | ------- |
+| 409 | `previous_response_not_found` | No valid continuation proof or route; zero model sends and no replacement handshake. Resend complete input. |
+| 502 | `upstream_websocket_not_sent` | The delta frame was rejected before a model-frame send attempt. |
+| 502 | `upstream_websocket_lost` | An attempted/unknown turn, cancellation or worker loss has no reliable success. It was not replayed. |
+
+Request-scoped errors use `error.data.httpStatus`, empty `headers`, and a JSON
+**string** in `error.data.body` containing the standard `error.code`. After the
+start reply, the same status/body contract appears in `cpa/inference/error`.
+These continuation errors have no `nativeError` or credential classification.
+Managed outbound diagnostics suppress request `body` and `bodyBase64`, including
+lower WebSocket traces; response diagnostics and business bytes remain available.
 
 ### Standalone image generation and editing
 
@@ -384,7 +471,8 @@ payloads and sequence numbers are preserved. Only terminal response events wait
 for native success; there is no special tool-completion gate. The server never
 executes caller tools or fabricates their results.
 
-Each invocation makes one native model attempt, with one narrow exception: a
+Except for managed deltas, each invocation makes one native model attempt, with
+one narrow exception: a
 remote WebSocket close code 1009 before any text frame allows exactly one HTTP
 resend. The close reason may be empty or nonempty. Any received text, including
 metadata or malformed text, prevents the resend. Local `max_message_bytes`

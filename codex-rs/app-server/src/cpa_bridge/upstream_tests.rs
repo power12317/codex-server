@@ -3,6 +3,56 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]
+fn cpa_managed_request_hides_body_and_base64_but_keeps_response_diagnostics() {
+    let (diagnostics, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+    let (business, _events) = tokio::sync::mpsc::unbounded_channel();
+    let observer = NativeObservation::new("r".into(), diagnostics, business, false);
+    observer.managed();
+    observer.request(
+        "http",
+        "POST",
+        "http://fixture/v1/responses",
+        &HeaderMap::new(),
+        b"private baseline",
+    );
+    observer.response("http", 200, &HeaderMap::new());
+    let Diagnostic::Notification(request) = notifications.try_recv().unwrap() else {
+        panic!("request")
+    };
+    let value = serde_json::to_value(request).unwrap();
+    assert_eq!(value["body"], "");
+    assert!(value.get("bodyBase64").is_none());
+    let Diagnostic::Notification(response) = notifications.try_recv().unwrap() else {
+        panic!("response")
+    };
+    assert_eq!(serde_json::to_value(response).unwrap()["statusCode"], 200);
+}
+
+#[test]
+fn cpa_continuation_error_is_not_replaced_by_native_account_error() {
+    let (diagnostics, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let (business, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let observer = NativeObservation::new("r".into(), diagnostics, business, false);
+    observer.http_error(401, &HeaderMap::new(), Some("native account failure"));
+    let error = super::super::session_instructions::continuation_error(
+        502,
+        "upstream_websocket_lost",
+        "unknown managed outcome",
+    );
+    observer.finish(Err(error));
+    let Business::Finished(Err(error)) = events.try_recv().unwrap() else {
+        panic!("failure")
+    };
+    let data = error.data.unwrap();
+    assert_eq!(data["httpStatus"], 502);
+    assert_eq!(
+        serde_json::from_str::<Value>(data["body"].as_str().unwrap()).unwrap()["error"]["code"],
+        "upstream_websocket_lost"
+    );
+    assert!(data.get("nativeError").is_none());
+}
+
+#[test]
 fn cpa_single_send_streams_tool_ready_events_before_native_completion() {
     let (diagnostics, _blocked) = tokio::sync::mpsc::unbounded_channel();
     let (business, mut events) = tokio::sync::mpsc::unbounded_channel();

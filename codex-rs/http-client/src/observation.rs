@@ -8,6 +8,12 @@ use std::future::Future;
 use std::sync::Arc;
 
 pub trait TransportObserver: Send + Sync {
+    /// The model frame passed local checks and a socket write is about to be attempted.
+    fn websocket_send_attempted(&self) {}
+    /// Hide managed request contents in every transport trace.
+    fn suppress_request_body(&self) -> bool {
+        false
+    }
     /// A sanitized diagnostic snapshot after the actual WebSocket handshake.
     /// The transport retains only this node for the lifetime of that connection.
     fn websocket_connection_node(&self) -> Option<String> {

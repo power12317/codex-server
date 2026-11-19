@@ -7520,6 +7520,64 @@
       ],
       "title": "CpaInferenceUpstreamNotification"
     },
+    "CpaSessionInstructions": {
+      "additionalProperties": false,
+      "description": "Transport control only. Baseline instruction text remains caller-owned.",
+      "properties": {
+        "baselineDigest": {
+          "type": "string"
+        },
+        "frameType": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CpaSessionInstructionsFrameType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "httpOnly": {
+          "description": "Preserve an already selected HTTP route for this managed request only.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "mode": {
+          "$ref": "#/definitions/CpaSessionInstructionsMode"
+        },
+        "previousResponseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baselineDigest",
+        "mode",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "CpaSessionInstructionsFrameType": {
+      "enum": [
+        "response.create",
+        "response.append"
+      ],
+      "type": "string"
+    },
+    "CpaSessionInstructionsMode": {
+      "enum": [
+        "start",
+        "reuse"
+      ],
+      "type": "string"
+    },
     "CreditsSnapshot": {
       "properties": {
         "balance": {

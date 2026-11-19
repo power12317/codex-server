@@ -27,7 +27,11 @@
 
 mod inference;
 mod inference_context;
+mod inference_continuation;
 mod inference_execution;
+pub use inference_continuation::{
+    InferenceContinuationError, InferenceExecutionError, InferenceSessionInstructions,
+};
 mod inference_tools;
 pub use inference_execution::InferenceObserver;
 mod inference_session;
@@ -399,6 +403,7 @@ pub struct ModelClient {
 /// the previous turn's sticky-routing token into the next turn, which violates the client/server
 /// contract and can cause routing bugs.
 pub struct ModelClientSession {
+    managed_inference: Option<inference_continuation::ManagedTurn>,
     client: ModelClient,
     websocket_session: WebsocketSession,
     /// Turn state for sticky routing.
@@ -434,6 +439,8 @@ struct WebsocketContinuation {
 
 #[derive(Debug, Default)]
 struct WebsocketSession {
+    generation: Option<Uuid>,
+    managed_proof: Option<inference_continuation::ManagedProof>,
     connection: Option<ApiWebSocketConnection>,
     // Outer None means no successful handshake yet. The inner revision is optional for
     // providers without managed auth. Keep it across resets so retries compare to the last socket.
@@ -857,6 +864,7 @@ impl ModelClient {
             websocket_session.auth_owner = auth_owner;
         }
         ModelClientSession {
+            managed_inference: None,
             client: self.clone(),
             websocket_session,
             turn_state: Arc::new(OnceLock::new()),
@@ -1785,6 +1793,16 @@ impl ModelClient {
 
 impl Drop for ModelClientSession {
     fn drop(&mut self) {
+        if let Some(turn) = &self.managed_inference {
+            // Cancellation can drop execution before its normal cleanup, including
+            // after serialization but before the spawned transport starts sending.
+            self.websocket_session.last_request = None;
+            self.websocket_session.last_response_rx = None;
+            self.websocket_session.managed_proof = None;
+            if turn.attempted.load(std::sync::atomic::Ordering::SeqCst) {
+                self.websocket_session.reset(Some("other"));
+            }
+        }
         let websocket_session = std::mem::take(&mut self.websocket_session);
         self.client
             .store_cached_websocket_session(websocket_session);
@@ -2076,6 +2094,19 @@ impl ModelClientSession {
             self.turn_state = Arc::new(OnceLock::new());
         }
 
+        if (needs_new || owner_changed)
+            && self
+                .managed_inference
+                .as_ref()
+                .is_some_and(|turn| turn.control.incremental())
+        {
+            if let Some(turn) = &mut self.managed_inference {
+                turn.error = Some(InferenceContinuationError::PreviousResponseNotFound);
+            }
+            return Err(ApiError::InvalidRequest {
+                message: InferenceContinuationError::PreviousResponseNotFound.to_string(),
+            });
+        }
         if needs_new || owner_changed {
             self.websocket_session.reset(if owner_changed {
                 Some("other")
@@ -2102,6 +2133,7 @@ impl ModelClientSession {
                 )
                 .await?;
             self.websocket_session.connection = Some(new_conn);
+            self.websocket_session.generation = Some(Uuid::new_v4());
             self.websocket_session.last_connected_auth_revision = Some(auth_revision);
             self.websocket_session.parent_routing_affinity = parent_routing_affinity;
             self.websocket_session.responses_headers = responses_headers.clone();
@@ -2573,6 +2605,14 @@ impl ModelClientSession {
                 }
             }
 
+            if let Some(turn) = &mut self.managed_inference {
+                // Native presentation may prepend its own tool/current-instruction
+                // items. Validate the caller baseline at its exact retained offset.
+                let prefix_len =
+                    usize::from(model_info.use_responses_lite && !prompt.tools.is_empty())
+                        + usize::from(!prompt.base_instructions.text.is_empty());
+                turn.check_full_prefix(request.input.get(prefix_len..).unwrap_or_default());
+            }
             let mut client_metadata = self.client.build_ws_client_metadata(
                 responses_metadata,
                 include_internal,
@@ -2582,7 +2622,27 @@ impl ModelClientSession {
                 client_metadata.insert(X_CODEX_TURN_STATE_HEADER.to_string(), turn_state.clone());
             }
             let (continuation, mode, reason, previous_item_type, current_item_type) =
-                match self.prepare_websocket_request(&request) {
+                match if let Some(turn) = &self.managed_inference {
+                    if turn.control.incremental() {
+                        match turn.parent(self.websocket_session.generation, &request.model) {
+                            Ok(response_id) => Ok(WebsocketContinuation {
+                                response_id,
+                                items: request.input.clone(),
+                                from_untraced_warmup: false,
+                            }),
+                            Err(error) => {
+                                if let Some(turn) = &mut self.managed_inference {
+                                    turn.error = Some(error);
+                                }
+                                return Err(CodexErr::InvalidRequest(error.to_string()));
+                            }
+                        }
+                    } else {
+                        Err(NonIncrementalReason::NoPreviousRequest)
+                    }
+                } else {
+                    self.prepare_websocket_request(&request)
+                } {
                     Ok(continuation) => (
                         Some(continuation),
                         "incremental",
@@ -3016,7 +3076,12 @@ impl ModelClientSession {
         inference_trace: &InferenceTraceContext,
         expected_auth_owner: Option<AuthOwner>,
     ) -> Result<ResponseStream> {
-        if self.client.responses_websocket_enabled() {
+        if self.client.responses_websocket_enabled()
+            && !self
+                .managed_inference
+                .as_ref()
+                .is_some_and(|turn| turn.control.http_only)
+        {
             let outcome = self
                 .stream_responses_websocket(
                     prompt,
