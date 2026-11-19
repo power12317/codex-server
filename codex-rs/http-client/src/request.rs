@@ -18,12 +18,13 @@ pub struct EncodedJsonBody {
     trace_bytes: Option<Bytes>,
     prepared: bool,
     private: bool,
+    suppress_body_logging: bool,
 }
 
 impl fmt::Debug for EncodedJsonBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut body = f.debug_struct("EncodedJsonBody");
-        if self.private {
+        if self.private || self.suppress_body_logging {
             return body
                 .field("byte_len", &self.bytes.len())
                 .finish_non_exhaustive();
@@ -43,7 +44,15 @@ impl EncodedJsonBody {
             trace_bytes: None,
             prepared: false,
             private: false,
+            suppress_body_logging: false,
         })
+    }
+
+    /// Keep the wire body while omitting request contents from traces and Debug.
+    pub fn without_body_logging(mut self) -> Self {
+        self.suppress_body_logging = true;
+        self.trace_bytes = Some(Bytes::new());
+        self
     }
 
     /// Returns the encoded bytes currently stored by this body.
@@ -60,9 +69,14 @@ impl EncodedJsonBody {
     pub fn with_private_json(&self, json: String) -> Self {
         Self {
             bytes: Bytes::from(json),
-            trace_bytes: Some(self.bytes.clone()),
+            trace_bytes: Some(if self.suppress_body_logging {
+                Bytes::new()
+            } else {
+                self.bytes.clone()
+            }),
             prepared: false,
             private: true,
+            suppress_body_logging: self.suppress_body_logging,
         }
     }
 
@@ -163,12 +177,15 @@ impl Request {
             self.body,
             Some(RequestBody::Json(_) | RequestBody::EncodedJson(_))
         );
-        let private_trace = match &self.body {
-            Some(RequestBody::EncodedJson(body)) if body.private => body.trace_bytes.clone(),
-            _ => None,
+        let (private, suppress_body_logging, private_trace) = match &self.body {
+            Some(RequestBody::EncodedJson(body)) => (
+                body.private,
+                body.suppress_body_logging,
+                body.trace_bytes.clone(),
+            ),
+            _ => (false, false, None),
         };
-        let private = private_trace.is_some();
-        let trace_bytes = if private {
+        let trace_bytes = if private || suppress_body_logging {
             private_trace
         } else if self.compression != RequestCompression::None
             && tracing::enabled!(target: "codex_http_client::transport", tracing::Level::TRACE)
@@ -191,6 +208,7 @@ impl Request {
                 trace_bytes,
                 prepared: true,
                 private,
+                suppress_body_logging,
             })),
             (false, Some(body)) => Some(RequestBody::Raw(body)),
             (_, None) => None,
@@ -206,7 +224,9 @@ impl Request {
     /// request. Use [`Self::into_prepared`] for private JSON to retain its redacted
     /// debug representation.
     pub fn prepare_body_for_send(&self) -> Result<PreparedRequestBody, String> {
-        if self.has_private_body() {
+        if self.has_private_body()
+            || matches!(&self.body, Some(RequestBody::EncodedJson(body)) if body.suppress_body_logging)
+        {
             return Err("private JSON requires Request::into_prepared".to_string());
         }
         let wire = self.prepare_wire_body()?;

@@ -190,8 +190,24 @@ impl<T: HttpTransport> ResponsesClient<T> {
         body: Value,
         options: ResponsesOptions,
     ) -> Result<codex_client::StreamResponse, ApiError> {
+        self.stream_prepared_body_with_privacy(body, options, false)
+            .await
+    }
+
+    /// Suppress caller-owned instruction text while preserving the exact wire body.
+    pub async fn stream_prepared_body_with_privacy(
+        &self,
+        body: Value,
+        options: ResponsesOptions,
+        suppress_body: bool,
+    ) -> Result<codex_client::StreamResponse, ApiError> {
         let body =
             EncodedJsonBody::encode(&body).map_err(|error| ApiError::Stream(error.to_string()))?;
+        let body = if suppress_body {
+            body.without_body_logging()
+        } else {
+            body
+        };
         let mut headers = options.extra_headers;
         if let Some(ref thread_id) = options.thread_id {
             insert_header(&mut headers, "x-client-request-id", thread_id);

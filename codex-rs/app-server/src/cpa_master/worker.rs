@@ -11,6 +11,20 @@ use tokio::process::ChildStdin;
 use tokio::process::Command;
 use tokio::sync::oneshot;
 
+#[derive(Clone)]
+struct StreamTarget {
+    client: Client,
+    managed: bool,
+}
+impl StreamTarget {
+    async fn send(&self, message: Value) -> Result<(), mpsc::error::SendError<Value>> {
+        self.client.send(message).await
+    }
+    fn same_channel(&self, other: &Client) -> bool {
+        self.client.same_channel(other)
+    }
+}
+
 enum Pending {
     Reply(oneshot::Sender<Value>),
     Forward {
@@ -25,7 +39,7 @@ pub(super) struct Worker {
     stdin: Mutex<ChildStdin>,
     sequence: AtomicU64,
     pending: Arc<Mutex<HashMap<u64, Pending>>>,
-    streams: Arc<Mutex<HashMap<String, Client>>>,
+    streams: Arc<Mutex<HashMap<String, StreamTarget>>>,
 }
 
 impl Worker {
@@ -132,18 +146,40 @@ impl Worker {
                         client,
                         request_id,
                     } => {
-                        if let Some(request_id) = request_id {
-                            streams.lock().await.remove(&request_id);
-                        }
-                        let _ = client.send(error(id, 503, "Account runtime stopped")).await;
+                        let managed = if let Some(request_id) = request_id {
+                            streams
+                                .lock()
+                                .await
+                                .remove(&request_id)
+                                .is_some_and(|target| target.managed)
+                        } else {
+                            false
+                        };
+                        let failure = if managed {
+                            json!({"id":id,"error":crate::cpa_bridge::session_instructions::continuation_error(502,"upstream_websocket_lost","Account runtime stopped; the managed outcome may be unknown")})
+                        } else {
+                            error(id, 503, "Account runtime stopped")
+                        };
+                        let _ = client.send(failure).await;
                     }
                 }
             }
             let streams = std::mem::take(&mut *streams.lock().await);
             for (request_id, client) in streams {
-                let _ = client.send(json!({"method":"cpa/inference/error","params":{
-                    "requestId":request_id,"httpStatus":503,"message":"Account runtime stopped","body":null,"headers":null
-                }})).await;
+                let params = if client.managed {
+                    let error = crate::cpa_bridge::session_instructions::continuation_error(
+                        502,
+                        "upstream_websocket_lost",
+                        "Account runtime stopped; the managed outcome may be unknown",
+                    );
+                    let data = error.data.expect("managed error data");
+                    json!({"requestId":request_id,"httpStatus":502,"message":error.message,"body":data["body"],"headers":{}})
+                } else {
+                    json!({"requestId":request_id,"httpStatus":503,"message":"Account runtime stopped","body":null,"headers":null})
+                };
+                let _ = client
+                    .send(json!({"method":"cpa/inference/error","params":params}))
+                    .await;
             }
         });
         let response = tokio::time::timeout(Duration::from_secs(/*secs*/ 30), worker.rpc("initialize", json!({
@@ -188,13 +224,22 @@ impl Worker {
             .context("requestId required")?
             .to_owned();
         let inference = message["method"] == "cpa/inference/start";
+        let managed = inference && message["params"]["sessionInstructions"].is_object();
+        let failure_client = client.clone();
+        let source_rpc_id = message["id"].clone();
         if inference {
             let mut streams = self.streams.lock().await;
             anyhow::ensure!(
                 !streams.contains_key(&request_id),
                 "Duplicate active requestId"
             );
-            streams.insert(request_id.clone(), client.clone());
+            streams.insert(
+                request_id.clone(),
+                StreamTarget {
+                    client: client.clone(),
+                    managed: message["params"]["sessionInstructions"].is_object(),
+                },
+            );
         }
         let id = self.sequence.fetch_add(/*val*/ 1, Ordering::Relaxed);
         self.pending.lock().await.insert(
@@ -207,9 +252,22 @@ impl Worker {
         );
         message["id"] = json!(id);
         if let Err(error) = self.write(message).await {
-            self.pending.lock().await.remove(&id);
+            let pending = self.pending.lock().await.remove(&id);
             if inference {
                 self.streams.lock().await.remove(&request_id);
+            }
+            if managed {
+                if pending.is_some() {
+                    let scoped = crate::cpa_bridge::session_instructions::continuation_error(
+                        502,
+                        "upstream_websocket_lost",
+                        "Worker pipe disconnected; the managed outcome may be unknown",
+                    );
+                    let _ = failure_client
+                        .send(json!({"id":source_rpc_id,"error":scoped}))
+                        .await;
+                }
+                return Ok(());
             }
             return Err(error);
         }

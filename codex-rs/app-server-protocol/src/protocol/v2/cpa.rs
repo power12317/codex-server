@@ -38,9 +38,13 @@ pub struct CpaCapabilitiesReadResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub ticket_snapshots: Option<bool>,
+    /// Managed instruction controls: full requests or proven WebSocket deltas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub session_instructions: Option<String>,
     pub operations: Vec<String>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct CpaInferenceStartParams {
@@ -57,6 +61,10 @@ pub struct CpaInferenceStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub capture_ticket_snapshot: Option<bool>,
+    /// CPA has already expanded and validated the baseline before dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub session_instructions: Option<CpaSessionInstructions>,
     pub request: serde_json::Map<String, Value>,
 }
 
@@ -243,4 +251,62 @@ pub enum CpaInferenceUpstreamNotification {
         request_id: String,
         message: String,
     },
+}
+
+/// Transport control only. Baseline instruction text remains caller-owned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct CpaSessionInstructions {
+    pub mode: CpaSessionInstructionsMode,
+    pub scope: String,
+    pub baseline_digest: String,
+    /// Preserve an already selected HTTP route for this managed request only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub http_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_type: Option<CpaSessionInstructionsFrameType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_response_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export_to = "v2/")]
+pub enum CpaSessionInstructionsMode {
+    Start,
+    Reuse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export_to = "v2/")]
+pub enum CpaSessionInstructionsFrameType {
+    #[serde(rename = "response.create")]
+    #[ts(rename = "response.create")]
+    Create,
+    #[serde(rename = "response.append")]
+    #[ts(rename = "response.append")]
+    Append,
+}
+
+impl std::fmt::Debug for CpaInferenceStartParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut value = f.debug_struct("CpaInferenceStartParams");
+        value
+            .field("request_id", &self.request_id)
+            .field("credential_id", &self.credential_id)
+            .field("operation", &self.operation)
+            .field("source_format", &self.source_format)
+            .field("session_id", &self.session_id)
+            .field("session_instructions", &self.session_instructions);
+        if self.session_instructions.is_some() {
+            value.field("request", &"[managed request body suppressed]");
+        } else {
+            value.field("request", &self.request);
+        }
+        value.finish_non_exhaustive()
+    }
 }

@@ -3,6 +3,7 @@ mod contexts;
 mod identity_response;
 mod login;
 mod response_stream;
+pub(crate) mod session_instructions;
 mod ticket;
 mod upstream;
 use crate::outgoing_message::ConnectionId;
@@ -366,6 +367,7 @@ impl CpaBridge {
             request_id: params.request_id.clone(),
             credential_id: params.credential_id.clone(),
             ticket_model: None,
+            suppress_body: params.session_instructions.is_some(),
         };
         if image_endpoint {
             let operation = match params.operation.as_str() {
@@ -412,7 +414,13 @@ impl CpaBridge {
             &params.request,
         )
         .await
-        .map_err(|error| adaptation_failure(&format!("{error:#}")))?;
+        .map_err(|error| {
+            adaptation_failure(&if params.session_instructions.is_some() {
+                "Invalid managed inference request".into()
+            } else {
+                format!("{error:#}")
+            })
+        })?;
         let source = codex_core::InferenceIdentity::from_request(&params.request);
         upstream::record(
             &params.credential_id,
@@ -434,7 +442,7 @@ impl CpaBridge {
             transport.ticket_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         }
         ResponsesClient::new(transport, provider, request_auth.clone())
-            .stream_prepared_body(body, options)
+            .stream_prepared_body_with_privacy(body, options, params.session_instructions.is_some())
             .await
             .map_err(api_failure)
     }
@@ -532,6 +540,7 @@ pub(crate) fn capabilities() -> CpaCapabilitiesReadResponse {
         response_identity_mapping: true,
         ticket_snapshots: Some(true),
         execution_mode: "inference-only".into(),
+        session_instructions: Some("full".into()),
         operations: vec![
             "responses".into(),
             "images/generations".into(),
@@ -589,6 +598,7 @@ fn api_failure(error: ApiError) -> JSONRPCErrorError {
 }
 
 fn validate(params: &CpaInferenceStartParams) -> BridgeResult<()> {
+    session_instructions::validate(params, false)?;
     for value in [
         &params.request_id,
         &params.source_format,

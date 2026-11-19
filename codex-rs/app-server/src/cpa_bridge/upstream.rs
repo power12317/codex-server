@@ -29,6 +29,7 @@ pub(super) struct UpstreamTransport {
     pub(super) request_id: String,
     pub(super) credential_id: String,
     pub(super) ticket_model: Option<String>,
+    pub(super) suppress_body: bool,
 }
 
 impl UpstreamTransport {
@@ -99,7 +100,14 @@ impl HttpTransport for UpstreamTransport {
         {
             req.headers.insert(axum::http::header::COOKIE, cookie);
         }
-        let prepared = req.prepare_body_for_send().map_err(TransportError::Build)?;
+        let (prepared_headers, diagnostic_body) = if self.suppress_body {
+            req = req.into_prepared().map_err(TransportError::Build)?;
+            (req.headers.clone(), String::new())
+        } else {
+            let prepared = req.prepare_body_for_send().map_err(TransportError::Build)?;
+            let body = String::from_utf8_lossy(&prepared.body_bytes()).into_owned();
+            (prepared.headers, body)
+        };
         let access_token_sha256 = req
             .headers
             .get(axum::http::header::AUTHORIZATION)
@@ -107,8 +115,7 @@ impl HttpTransport for UpstreamTransport {
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|token| format!("{:x}", Sha256::digest(token.as_bytes())));
         // Keep the node from this exact outbound request, not a later cookie-jar read.
-        let request_node = prepared
-            .headers
+        let request_node = prepared_headers
             .get_all(axum::http::header::COOKIE)
             .iter()
             .filter_map(|value| value.to_str().ok())
@@ -119,8 +126,8 @@ impl HttpTransport for UpstreamTransport {
             request_id: self.request_id.clone(),
             url: req.url.clone(),
             method: req.method.to_string(),
-            headers: wire_headers(&prepared.headers),
-            body: String::from_utf8_lossy(&prepared.body_bytes()).into_owned(),
+            headers: wire_headers(&prepared_headers),
+            body: diagnostic_body,
             access_token_sha256,
             oai_lb_node: request_node.clone(),
         })
@@ -130,7 +137,7 @@ impl HttpTransport for UpstreamTransport {
                 self.request_id.clone(),
                 self.credential_id.clone(),
                 model.clone(),
-                &prepared.headers,
+                &prepared_headers,
             )
         });
         if let Some(capture) = &mut capture {
