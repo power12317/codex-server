@@ -4,8 +4,8 @@ This document describes the sole model execution path and model-only extensions 
 `codex/native-model-runtime`.
 
 The fixed source reference is official main
-`672e99fed8da8e5efc3268c52cddc4fc97ffd078`; the engine release stamp is
-`0.167.2`, selected from the latest official stable release. The source also
+`27e16c08c39de52a51af7c6105daa3821961469f`; the engine release stamp is
+`0.170.0`, selected from the latest official stable release. The source also
 contains fork extensions. Unmanaged identity retains official behavior; managed
 workers use the separately versioned Desktop compatibility profile described in
 [the identity audit](cpa-official-identity.md).
@@ -101,7 +101,7 @@ unchanged.
 
 The `cpa/*` methods extend the official app-server envelope. Native model execution
 is the only implementation; there is no execution capability switch, legacy sender or CPA
-direct model fallback. The official runtime version is `0.167.2`.
+direct model fallback. The official runtime version is `0.170.0`.
 
 The root WebSocket path is `/`; the retired versioned bridge route is not an
 alias. Official initialization, health endpoints and authentication behavior are

@@ -194,24 +194,24 @@ uses native incremental business delivery with explicit capability metadata.
 ## Runtime release identity
 
 The current upstream source is official main
-`672e99fed8da8e5efc3268c52cddc4fc97ffd078`. The release stamp is selected from
-the latest official stable tag, `rust-v0.167.2` at
-`ce21072c90d32c40af7a55b60b2fb35c84a43a6a`. Existing fork changes and previously
+`27e16c08c39de52a51af7c6105daa3821961469f`. The release stamp is selected from
+the latest official stable tag, `rust-v0.170.0` at
+`29eb79e9866b3262a777fdf8195c1b9e63684c91`. Existing fork changes and previously
 integrated upstream commits remain in the merge history. This is a fork build
 with main changes, not an unmodified official stable release archive.
 
 `release-version` selects the official client version used for the executable,
 version header and User-Agent. Committed workspace and local Cargo.lock package
 versions remain the source placeholder `0.0.0`. Docker runs `prepare-release.py`
-in its build copy to stamp the exact official release `0.167.2`, including implicit
+in its build copy to stamp the exact official release `0.170.0`, including implicit
 workspace members, before compilation. The script also accepts already prepared
 stable manifests; it does not resolve or upgrade third-party dependencies. `cpa/capabilities/read` reports the compiled runtime version and selected
 upstream main commit as informational metadata. Capabilities describe actual
 extension behavior; client identity names and official runtime version are unchanged.
 
 The official release contains two distinct targets: the `codex-cli` package
-builds `codex` (`codex-cli 0.167.2`), while the `codex-app-server` package builds
-`codex-app-server` (`codex-app-server 0.167.2`). The image uses the latter official
+builds `codex` (`codex-cli 0.170.0`), while the `codex-app-server` package builds
+`codex-app-server` (`codex-app-server 0.170.0`). The image uses the latter official
 target; it is not a renamed CLI. Managed workers separately pin the Desktop
 host release in `desktop-version`; that value is not the engine version. The supervisor's `initialize` response uses
 native client identity generation rather than a fork-specific User-Agent name.
