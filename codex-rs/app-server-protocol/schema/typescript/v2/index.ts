@@ -142,6 +142,7 @@ export type { CpaInferenceUpstreamNotification } from "./CpaInferenceUpstreamNot
 export type { CreditsSnapshot } from "./CreditsSnapshot";
 export type { CustomGatewaySettingsParams } from "./CustomGatewaySettingsParams";
 export type { CyberAccessProgram } from "./CyberAccessProgram";
+export type { DaybreakAvailability } from "./DaybreakAvailability";
 export type { DeprecationNoticeNotification } from "./DeprecationNoticeNotification";
 export type { DesktopOnboardingEntrypoint } from "./DesktopOnboardingEntrypoint";
 export type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputContentItem";
@@ -605,6 +606,7 @@ export type { ThreadRealtimeItemTranscriptDeltaNotification } from "./ThreadReal
 export type { ThreadRealtimeOrder } from "./ThreadRealtimeOrder";
 export type { ThreadRealtimeOutputAudioDeltaNotification } from "./ThreadRealtimeOutputAudioDeltaNotification";
 export type { ThreadRealtimeSdpNotification } from "./ThreadRealtimeSdpNotification";
+export type { ThreadRealtimeSessionInputReason } from "./ThreadRealtimeSessionInputReason";
 export type { ThreadRealtimeSessionOutcome } from "./ThreadRealtimeSessionOutcome";
 export type { ThreadRealtimeStartTransport } from "./ThreadRealtimeStartTransport";
 export type { ThreadRealtimeStartedNotification } from "./ThreadRealtimeStartedNotification";

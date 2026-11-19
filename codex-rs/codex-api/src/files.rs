@@ -919,7 +919,7 @@ mod tests {
         let error = upload_openai_file(
             &base_url_for(&server),
             &chatgpt_auth(),
-            &default_http_client_pool(),
+            &default_http_client_pool().with_legacy_direct_proxy_and_custom_ca_fallback(),
             "hello.txt".to_string(),
             /*file_size_bytes*/ 5,
             || async { Ok(futures::stream::iter([Ok(Bytes::from_static(b"hello"))])) },
@@ -929,7 +929,7 @@ mod tests {
         .expect_err("blob transport failure should be returned");
 
         let message = error.to_string();
-        assert!(message.contains("failed after"));
+        assert!(message.contains("failed after"), "{message}");
         assert!(message.contains("(connect,"), "{message}");
         assert!(message.contains("azure_client_request_id="));
         assert!(!message.contains("sig=secret"));

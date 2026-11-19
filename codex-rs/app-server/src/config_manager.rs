@@ -199,7 +199,7 @@ impl ConfigManager {
         Ok(())
     }
 
-    pub(crate) fn update_managed_config_loader(
+    pub(crate) async fn update_managed_config_loader(
         &self,
         auth_manager: Arc<AuthManager>,
         config: &Config,
@@ -222,7 +222,8 @@ impl ConfigManager {
                 .http_client_factory()
                 .with_network_policy(self.local_network_policy.policy()),
             config.config_layer_stack.requirements_toml(),
-        );
+        )
+        .await;
         if let Ok(mut guard) = self.cloud_config_bundle.write() {
             guard.retire_ema_policy();
             *guard = loader;
@@ -443,7 +444,7 @@ impl ConfigManager {
     ) -> std::io::Result<CloudStartupConfig> {
         let bootstrap = self.load_startup_config(cwd.clone()).await?.config;
         let auth = crate::cpa_config::auth_manager(&bootstrap, cpa).await?;
-        self.update_managed_config_loader(auth, &bootstrap);
+        self.update_managed_config_loader(auth, &bootstrap).await;
         let config = self.load_latest_config(cwd).await;
         Ok(CloudStartupConfig { bootstrap, config })
     }

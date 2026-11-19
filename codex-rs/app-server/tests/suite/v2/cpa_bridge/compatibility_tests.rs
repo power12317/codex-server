@@ -25,6 +25,18 @@ async fn cpa_native_compatible_controls_and_tool_contracts(lite: bool) -> Result
     std::fs::write(&catalog, serde_json::to_vec(&json!({"models":[model]}))?)?;
     let config_path = home.path().join("state/shared.json/config.toml");
     let original = std::fs::read_to_string(&config_path)?;
+
+    let mut enabled: toml::Table = toml::from_str(&original)?;
+    enabled
+        .entry("features")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .expect("features table")
+        .insert(
+            "connector_tool_result_passthrough".into(),
+            toml::Value::Boolean(true),
+        );
+    let original = toml::to_string(&enabled)?;
     std::fs::write(
         config_path,
         format!(

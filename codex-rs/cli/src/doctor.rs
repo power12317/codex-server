@@ -2515,6 +2515,7 @@ fn websocket_error_detail(err: &ApiError) -> String {
         | ApiError::WebsocketMessageTooLarge
         | ApiError::WebsocketPeerSizeRejected
         | ApiError::ContextWindowExceeded
+        | ApiError::SpendLimitExceeded(_)
         | ApiError::QuotaExceeded
         | ApiError::UsageNotIncluded
         | ApiError::SessionBudgetExceeded
