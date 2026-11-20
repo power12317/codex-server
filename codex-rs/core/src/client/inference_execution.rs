@@ -237,6 +237,8 @@ impl InferenceSession {
                     && !turn.control.http_only
                     && turn.attempted.load(Ordering::SeqCst)
                     && !turn.control.baseline_digest.is_empty()
+                    && let Some(connection) = &client.websocket_session.connection
+                    && !connection.is_closed().await
                     && self.continuation_epoch.load(Ordering::SeqCst) == epoch
                     && client
                         .websocket_session

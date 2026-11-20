@@ -213,7 +213,7 @@ impl InferenceSession {
                 AgentIdentityAuthPolicy::JwtOnly
             },
             ThreadId::from_string(&mapped.thread_id)?,
-            crate::session::session::Session::new_item_id_generator(),
+            codex_thread_context_ids::ThreadContextIds::for_thread(),
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,

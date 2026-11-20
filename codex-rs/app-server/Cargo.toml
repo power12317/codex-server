@@ -29,6 +29,7 @@ codex-apply-patch = { workspace = true }
 codex-agent-message-board-client = { workspace = true }
 codex-agent-message-board-extension = { workspace = true }
 codex-message-board = { workspace = true }
+codex-app-server-remote-client = { workspace = true }
 codex-agent-message-board-host = { workspace = true }
 codex-utils-process = { workspace = true }
 anyhow = { workspace = true }

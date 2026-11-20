@@ -12,12 +12,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { zstdDecompressSync } from 'node:zlib';
 
 const binary = process.argv[2];
-assert(binary, 'usage: node check-session-instructions.mjs BINARY [--serve] [--port PORT] [--keep] [--http] [--http-only]');
+assert(binary, 'usage: node check-session-instructions.mjs BINARY [--serve] [--port PORT] [--keep] [--http] [--http-only] [--upload-recovery]');
 const args = process.argv.slice(3);
 const serve = args.includes('--serve');
 const keep = serve || args.includes('--keep');
 const httpOnly = args.includes('--http');
 const controlHttpOnly = args.includes('--http-only');
+const uploadRecovery = args.includes('--upload-recovery');
+assert(!uploadRecovery || (!httpOnly && !controlHttpOnly && !serve), 'upload recovery tests require native WebSocket');
+
 const portArg = args.indexOf('--port');
 const home = await mkdtemp(join(tmpdir(), 'codex-session-contract-'));
 const baseline = 'PRIVATE_BASELINE_SESSION_CONTRACT_1264';
@@ -92,7 +95,7 @@ const upstream = createServer(async (req, res) => {
 upstream.on('upgrade', (req, socket, head) => {
   const connection = ++connectionSequence;
   const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nx-codex-websocket-max-message-bytes: 65536\r\n\r\n`);
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nx-codex-websocket-max-message-bytes: ${uploadRecovery ? 16 * 1024 * 1024 : 65536}\r\n\r\n`);
   sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => {});
   let pending = head;
   let fragments = [];
@@ -115,6 +118,26 @@ upstream.on('upgrade', (req, socket, head) => {
       if (opcode === 8) { socket.end(frame(bytes, 8)); return; }
       if (opcode === 9) { socket.write(frame(bytes, 10)); continue; }
       if (opcode !== 1 && opcode !== 0) continue;
+      if (uploadRecovery && opcode === 1 && !final) {
+        const prefix = bytes.subarray(0, 8192).toString();
+        const parent = prefix.match(/"previous_response_id":"(resp-\d+)"/)?.[1];
+        assert(parent, 'first fragment carries the proven parent');
+        const matchesParent = prefix.includes('recover-upload-current');
+        assert(matchesParent || prefix.includes('recover-upload-wrong-parent'));
+        const id = `resp-${++responseSequence}`;
+        const response = { id, previous_response_id: matchesParent ? parent : 'wrong-parent' };
+        requests.push({ transport: 'websocket', connection, id, parent, partial: true });
+        // Reply after the first fragment. Closing without reading the rest
+        // forces the worker to use the replies already buffered during upload.
+        const created = frame(JSON.stringify({ type: 'response.created', response }));
+        const completed = frame(JSON.stringify({
+          type: 'response.completed', response: { ...response, status: 'completed', output: [] },
+        }));
+        socket.write(Buffer.concat([created, completed]));
+        socket.pause();
+        close(1000);
+        return;
+      }
       fragments.push(bytes);
       if (!final) continue;
       const body = JSON.parse(Buffer.concat(fragments).toString()); fragments = [];
@@ -244,6 +267,39 @@ try {
   if (serve) {
     client.close();
     await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); child.once('exit', resolve); });
+  } else if (uploadRecovery) {
+    assert.equal(client.caps.sessionInstructions, 'websocket');
+    for (const matchesParent of [true, false]) {
+      const parent = success(await client.exchange(input('seed-upload', true)));
+      const before = requests.length;
+      const handshakesBefore = connectionSequence;
+      const label = matchesParent ? 'recover-upload-current' : 'recover-upload-wrong-parent';
+      const recovered = await client.exchange(input(label + 'R'.repeat(12 * 1024 * 1024)), {
+        append: true, parent,
+      });
+      const sent = requests.at(-1);
+      assert.equal(requests.length, before + 1, 'partial create is the sole model send');
+      assert.equal(connectionSequence, handshakesBefore, 'delta stays on its proven socket');
+      assert.equal(sent.partial, true);
+      assert.equal(sent.parent, parent);
+      if (matchesParent) {
+        assert.equal(success(recovered), sent.id, 'correlated completion survives the failed upload');
+      } else {
+        failure(recovered, 'upstream_websocket_lost', 502);
+        assert.equal(recovered.body, '', 'unrelated buffered replies never reach business delivery');
+      }
+      const requestLogs = recovered.logs.filter(log => log.kind === 'request');
+      assert.equal(requestLogs.length, 1);
+      assert.equal(requestLogs[0].body, '');
+      assert.equal(requestLogs[0].bodyBase64, undefined);
+      failure(await client.exchange(input('after-retired-socket'), { append: true, parent: sent.id }),
+        'previous_response_not_found', 409);
+    }
+    await writeFile(join(home, 'mock-requests.json'), JSON.stringify(requests, null, 2), { mode: 0o600 });
+    client.close();
+    console.log(JSON.stringify({ result: 'passed', capability: client.caps.sessionInstructions,
+      cases: 'partial-upload/current-completion/wrong-parent/no-replay/retired-socket-409/privacy',
+      modelSends: requests.length, home }));
   } else {
     const native = client.caps.sessionInstructions === 'websocket' && !httpOnly && !controlHttpOnly;
     success(await client.exchange(input('ordinary-route-probe'), { managed: false }));

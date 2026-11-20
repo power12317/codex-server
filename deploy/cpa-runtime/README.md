@@ -194,24 +194,24 @@ uses native incremental business delivery with explicit capability metadata.
 ## Runtime release identity
 
 The current upstream source is official main
-`27e16c08c39de52a51af7c6105daa3821961469f`. The release stamp is selected from
-the latest official stable tag, `rust-v0.170.0` at
-`29eb79e9866b3262a777fdf8195c1b9e63684c91`. Existing fork changes and previously
+`bb5b9c6240136de8ff4d30215e2341c44559aa04`. The release stamp is selected from
+the latest official stable tag, `rust-v0.171.0` at
+`ccf9be8cc458bd6b8336fe84d68d8893f2691a5e`. Existing fork changes and previously
 integrated upstream commits remain in the merge history. This is a fork build
 with main changes, not an unmodified official stable release archive.
 
 `release-version` selects the official client version used for the executable,
 version header and User-Agent. Committed workspace and local Cargo.lock package
 versions remain the source placeholder `0.0.0`. Docker runs `prepare-release.py`
-in its build copy to stamp the exact official release `0.170.0`, including implicit
+in its build copy to stamp the exact official release `0.171.0`, including implicit
 workspace members, before compilation. The script also accepts already prepared
 stable manifests; it does not resolve or upgrade third-party dependencies. `cpa/capabilities/read` reports the compiled runtime version and selected
 upstream main commit as informational metadata. Capabilities describe actual
 extension behavior; client identity names and official runtime version are unchanged.
 
 The official release contains two distinct targets: the `codex-cli` package
-builds `codex` (`codex-cli 0.170.0`), while the `codex-app-server` package builds
-`codex-app-server` (`codex-app-server 0.170.0`). The image uses the latter official
+builds `codex` (`codex-cli 0.171.0`), while the `codex-app-server` package builds
+`codex-app-server` (`codex-app-server 0.171.0`). The image uses the latter official
 target; it is not a renamed CLI. Managed workers separately pin the Desktop
 host release in `desktop-version`; that value is not the engine version. The supervisor's `initialize` response uses
 native client identity generation rather than a fork-specific User-Agent name.
@@ -295,6 +295,7 @@ and an absolute path to the real built app-server executable:
 node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --keep
 node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --http --keep
 node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --http-only --keep
+node deploy/cpa-runtime/check-session-instructions.mjs /absolute/path/codex-app-server --upload-recovery --keep
 ```
 
 The mock launches a real master and two isolated credential workers against a
@@ -302,6 +303,8 @@ local model server. It checks the existing ordinary route, full/delta behavior,
 zero-send/zero-handshake 409s, verbatim response IDs and diagnostic privacy.
 Native WS checks also cover proof ownership/context, missing success receipts,
 concurrency, cancellation, local size rejection and remote close/disconnect.
+`--upload-recovery` cuts off an upload after the first fragment and checks
+correlated completion, wrong-parent rejection, diagnostics and retired sockets.
 `--http` disables provider WS; `--http-only` keeps provider WS support and applies
 the per-request control. Both verify full HTTP input and rejected deltas. Redirect checks preserve each
 branch's existing policy: main exposes upstream 307 responses; native follows

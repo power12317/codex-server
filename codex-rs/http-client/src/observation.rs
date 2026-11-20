@@ -1,6 +1,6 @@
 //! Read-only, task-scoped observations of native transport activity.
 //!
-//! These callbacks cannot change requests, retry decisions or response consumption.
+//! These callbacks cannot rewrite requests or authorize retries.
 //! Background response readers must capture the observer before spawning their task.
 
 use http::HeaderMap;
@@ -8,8 +8,12 @@ use std::future::Future;
 use std::sync::Arc;
 
 pub trait TransportObserver: Send + Sync {
-    /// The model frame passed local checks and a socket write is about to be attempted.
+    /// The first model frame entered the socket sink, possibly with a partial I/O write.
     fn websocket_send_attempted(&self) {}
+    /// Require current-turn correlation before delivering recovered WebSocket replies.
+    fn requires_correlated_websocket_recovery(&self) -> bool {
+        false
+    }
     /// Hide managed request contents in every transport trace.
     fn suppress_request_body(&self) -> bool {
         false

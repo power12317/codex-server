@@ -1,10 +1,10 @@
 # Official engine identity and managed Desktop compatibility
 
 The native-runtime branch synchronizes official `openai/codex` main at
-`27e16c08c39de52a51af7c6105daa3821961469f` and retains the fork's model-only
+`bb5b9c6240136de8ff4d30215e2341c44559aa04` and retains the fork's model-only
 master/worker extensions. Its release version is selected independently from the
-latest official stable tag, `rust-v0.170.0`, commit
-`29eb79e9866b3262a777fdf8195c1b9e63684c91`. The fork source includes unreleased
+latest official stable tag, `rust-v0.171.0`, commit
+`ccf9be8cc458bd6b8336fe84d68d8893f2691a5e`. The fork source includes unreleased
 main changes and fork extensions; it is not represented as byte-identical to the
 stable release source.
 
@@ -13,10 +13,10 @@ stable release source.
 | Surface | Value | Source |
 | --- | --- | --- |
 | Committed workspace and local lock packages | `0.0.0` | Development placeholders remain committed. |
-| Build-copy engine version | `0.170.0` | `deploy/cpa-runtime/release-version`, applied by `prepare-release.py`. |
+| Build-copy engine version | `0.171.0` | `deploy/cpa-runtime/release-version`, applied by `prepare-release.py`. |
 | Cargo package and binary target | `codex-app-server` | The retained official app-server target. |
 | Installed executable | `/usr/local/bin/codex-app-server` | The service image copies that target. |
-| Version output | `codex-app-server 0.170.0\n` | Actual stamped Cargo build metadata. |
+| Version output | `codex-app-server 0.171.0\n` | Actual stamped Cargo build metadata. |
 
 Do not rename the app-server target to `codex`, add a fork suffix, or substitute a
 Desktop application version for its engine version. The official `codex-cli`
@@ -59,8 +59,8 @@ the previous platform pins, and is historical evidence rather than the current p
 The managed compatibility profiles use these exact UA shapes:
 
 ```text
-Codex Desktop/0.170.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1117.31558)
-Codex Desktop/0.170.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1111.71704)
+Codex Desktop/0.171.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1117.31558)
+Codex Desktop/0.171.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1111.71704)
 ```
 
 The engine segment comes from the actual stamped `CARGO_PKG_VERSION`; source
@@ -133,8 +133,8 @@ compatibility scheme.
 
 ## Official reference artifacts and checks
 
-The current `rust-v0.170.0` app-server arm64 macOS archive was checked against
-the release API SHA256: `5d34b7aaad8d7c9d4089dde5fc3534c8d5edccdaa9af15182e731eee02e9b7bd`.
+The current `rust-v0.171.0` app-server arm64 macOS archive was checked against
+the release API SHA256: `75690f1cc2ebd2ba71923dd52a69c3bf8bdbe6e0bc6c4861bb949cf977378b46`.
 The 0.167.2 archives below are retained as historical provenance, not evidence
 for the current release.
 

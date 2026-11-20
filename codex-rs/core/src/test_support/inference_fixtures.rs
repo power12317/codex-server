@@ -562,7 +562,7 @@ pub fn native_request_history(
         codex_model_provider::create_model_provider(config.model_provider.clone(), None),
         codex_login::auth::AgentIdentityAuthPolicy::JwtOnly,
         codex_protocol::ThreadId::from_string(thread).unwrap(),
-        crate::session::session::Session::new_item_id_generator(),
+        codex_thread_context_ids::ThreadContextIds::for_thread(),
         codex_protocol::protocol::SessionSource::Cli,
         codex_login::default_client::originator().value,
         config.model_verbosity,

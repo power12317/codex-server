@@ -4,8 +4,8 @@ This document describes the sole model execution path and model-only extensions 
 `codex/native-model-runtime`.
 
 The fixed source reference is official main
-`27e16c08c39de52a51af7c6105daa3821961469f`; the engine release stamp is
-`0.170.0`, selected from the latest official stable release. The source also
+`bb5b9c6240136de8ff4d30215e2341c44559aa04`; the engine release stamp is
+`0.171.0`, selected from the latest official stable release. The source also
 contains fork extensions. Unmanaged identity retains official behavior; managed
 workers use the separately versioned Desktop compatibility profile described in
 [the identity audit](cpa-official-identity.md).
@@ -106,11 +106,18 @@ reconstructs a managed delta. `httpOnly: true` applies to one request and preser
 the ordinary route for later requests. Controlled deltas never use the peer-1009
 HTTP resend exception and fail before any required reconnect.
 
+The Responses WebSocket reads peer replies during a blocked upload and processes
+buffered replies after a write error. Managed turns recover events only after
+the first create write and a matching response-created receipt. The stream
+retires the failed socket after delivering any correlated completion, so that
+completion cannot establish continuation proof. Managed deltas keep the
+single-send rule and the existing request-specific error mapping.
+
 ## IPC contract and delivery
 
 The `cpa/*` methods extend the official app-server envelope. Native model execution
 is the only implementation; there is no execution capability switch, legacy sender or CPA
-direct model fallback. The official runtime version is `0.170.0`.
+direct model fallback. The official runtime version is `0.171.0`.
 
 The root WebSocket path is `/`; the retired versioned bridge route is not an
 alias. Official initialization, health endpoints and authentication behavior are

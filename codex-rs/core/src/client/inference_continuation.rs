@@ -246,6 +246,9 @@ impl codex_http_client::observation::TransportObserver for ManagedTransport {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.observer.websocket_send_attempted();
     }
+    fn requires_correlated_websocket_recovery(&self) -> bool {
+        true
+    }
     fn suppress_request_body(&self) -> bool {
         self.observer.suppress_request_body()
     }
