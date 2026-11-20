@@ -4,6 +4,7 @@ use crate::responses_metadata::CodexResponsesRequestKind;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;
+use uuid::Uuid;
 
 /// Business identities supplied by the caller, independent of worker authentication.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -183,7 +184,7 @@ impl InferenceSession {
             provider,
             AgentIdentityAuthPolicy::JwtOnly,
             ThreadId::from_string(&mapped.thread_id)?,
-            crate::session::session::Session::new_item_id_generator(),
+            codex_thread_context_ids::ThreadContextIds::for_thread(),
             session_source,
             codex_login::default_client::originator().value,
             config.model_verbosity,

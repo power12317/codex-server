@@ -1,14 +1,12 @@
-/*
-This module implements the remote app-server client transport.
-
-It owns the remote connection lifecycle, including the initialize/initialized
-handshake, JSON-RPC request/response routing, server-request resolution, and
-notification streaming. Remote connections always carry WebSocket frames, over
-either TCP WebSocket URLs or local Unix sockets. The rest of the crate uses the
-same `AppServerEvent` surface for both in-process and remote transports, so
-callers such as the TUI can switch between them without changing their
-higher-level session logic.
-*/
+//! This module implements the remote app-server client transport.
+//!
+//! It owns the remote connection lifecycle, including the initialize/initialized
+//! handshake, JSON-RPC request/response routing, server-request resolution, and
+//! notification streaming. Remote connections always carry WebSocket frames, over
+//! either TCP WebSocket URLs or local Unix sockets. The rest of the crate uses the
+//! same `AppServerEvent` surface for both in-process and remote transports, so
+//! callers such as the TUI can switch between them without changing their
+//! higher-level session logic.
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -21,6 +19,8 @@ use crate::AppServerEvent;
 use crate::RequestResult;
 use crate::SHUTDOWN_TIMEOUT;
 use crate::TypedRequestError;
+use crate::WEBSOCKET_COMPRESSION_HEADER;
+use crate::ZSTD_STREAM_PROTOCOL;
 use crate::decode_typed_response;
 use crate::remote_websocket::RemoteWebSocket;
 use crate::remote_websocket::WebSocketHandshake;
@@ -39,8 +39,6 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::Result as JsonRpcResult;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
-use codex_app_server_transport::WEBSOCKET_COMPRESSION_HEADER;
-use codex_app_server_transport::ZSTD_STREAM_PROTOCOL;
 use codex_uds::UnixStream;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
@@ -95,7 +93,8 @@ pub struct RemoteAppServerConnectArgs {
     pub channel_capacity: usize,
 }
 impl RemoteAppServerConnectArgs {
-    pub(crate) fn initialize_params(&self) -> InitializeParams {
+    /// Builds the existing initialize handshake for this connection.
+    pub fn initialize_params(&self) -> InitializeParams {
         let capabilities = InitializeCapabilities {
             required_human_approval: self.required_human_approval,
             explicit_gateway_oauth: false,
@@ -121,7 +120,8 @@ impl RemoteAppServerConnectArgs {
     }
 }
 
-pub(crate) fn websocket_url_supports_auth_token(url: &Url) -> bool {
+/// Whether the endpoint permits bearer authentication without exposing it remotely in plaintext.
+pub fn websocket_url_supports_auth_token(url: &Url) -> bool {
     match (url.scheme(), url.host()) {
         ("wss", Some(_)) => true,
         ("ws", Some(url::Host::Domain(domain))) => domain.eq_ignore_ascii_case("localhost"),
@@ -174,7 +174,8 @@ pub struct RemoteAppServerClient {
 #[derive(Clone)]
 pub struct RemoteAppServerRequestHandle {
     command_tx: mpsc::Sender<RemoteClientCommand>,
-    pub(crate) platform_os: Option<String>,
+    /// Operating system reported by the app-server that serves these requests.
+    pub platform_os: Option<String>,
 }
 
 enum SocketPeerPolicy {
@@ -613,10 +614,13 @@ impl RemoteAppServerClient {
         } = self;
         let mut worker_handle = worker_handle;
         let (response_tx, response_rx) = oneshot::channel();
-        if command_tx
-            .send(RemoteClientCommand::Shutdown { response_tx })
-            .await
-            .is_ok()
+        // A worker stalled on a socket write may leave the command queue full.
+        // Bound admission too, so shutdown can reach the worker abort below.
+        if let Ok(Ok(())) = timeout(
+            SHUTDOWN_TIMEOUT,
+            command_tx.send(RemoteClientCommand::Shutdown { response_tx }),
+        )
+        .await
             && let Ok(Ok(close_result)) = timeout(SHUTDOWN_TIMEOUT, response_rx).await
         {
             close_result?;
@@ -633,7 +637,7 @@ impl RemoteAppServerClient {
 }
 
 impl RemoteAppServerRequestHandle {
-    pub(crate) async fn resolve_server_request(
+    pub async fn resolve_server_request(
         &self,
         request_id: RequestId,
         result: JsonRpcResult,
@@ -660,7 +664,7 @@ impl RemoteAppServerRequestHandle {
         })?
     }
 
-    pub(crate) async fn reject_server_request(
+    pub async fn reject_server_request(
         &self,
         request_id: RequestId,
         error: JSONRPCErrorError,
@@ -1071,6 +1075,37 @@ fn websocket_close_error_is_already_closed(err: &TungsteniteError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_aborts_worker_when_command_queue_is_full() {
+        let (command_tx, command_rx) = mpsc::channel(1);
+        let (_event_tx, event_rx) = mpsc::unbounded_channel::<AppServerEvent>();
+        let (response_tx, _response_rx) = oneshot::channel();
+        assert!(
+            command_tx
+                .try_send(RemoteClientCommand::Shutdown { response_tx })
+                .is_ok()
+        );
+        let worker_handle = tokio::spawn(async move {
+            // Retain the full queue while simulating a stalled socket write.
+            std::future::pending::<()>().await;
+            drop(command_rx);
+        });
+        let worker_abort_handle = worker_handle.abort_handle();
+        let client = RemoteAppServerClient {
+            command_tx,
+            event_rx,
+            pending_events: VecDeque::new(),
+            metadata: RemoteServerMetadata::default(),
+            worker_handle,
+        };
+
+        timeout(SHUTDOWN_TIMEOUT * 3, client.shutdown())
+            .await
+            .expect("shutdown must not wait indefinitely for command queue space")
+            .expect("shutdown should abort a stalled worker");
+        assert!(worker_abort_handle.is_finished());
+    }
 
     #[tokio::test]
     async fn shutdown_tolerates_worker_exit_after_command_is_queued() {
