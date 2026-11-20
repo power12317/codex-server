@@ -408,6 +408,7 @@ impl ChatWidget {
             ServerNotification::ServerRequestResolved(_)
             | ServerNotification::AccountUpdated(_)
             | ServerNotification::CpaInferenceUpstream(_)
+            | ServerNotification::CpaInferenceTicket(_)
             | ServerNotification::CpaInferenceBody(_)
             | ServerNotification::CpaInferenceCompleted(_)
             | ServerNotification::CpaInferenceError(_)

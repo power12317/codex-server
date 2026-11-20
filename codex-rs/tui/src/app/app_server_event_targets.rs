@@ -203,6 +203,7 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::SkillsChanged(_)
         | ServerNotification::AccountUpdated(_)
         | ServerNotification::CpaInferenceUpstream(_)
+        | ServerNotification::CpaInferenceTicket(_)
         | ServerNotification::CpaInferenceBody(_)
         | ServerNotification::CpaInferenceCompleted(_)
         | ServerNotification::CpaInferenceError(_)
