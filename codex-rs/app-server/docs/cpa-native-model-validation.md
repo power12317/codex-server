@@ -584,8 +584,10 @@ starts with empty routing state. Logs and JSON traces for these probes are under
 This update merges official main `672e99fed8da8e5efc3268c52cddc4fc97ffd078`
 while retaining the native model-only execution path. Source workspace and local
 lockfile package versions stay `0.0.0`; build copies use official stable
-`0.167.2`. Managed Desktop host pins remain macOS `26.1027.61615` and Windows
-`26.1027.51404`, with the existing User-Agent, platform and attestation behavior.
+`0.167.2`. At that validation date, managed Desktop host pins were macOS
+`26.1027.61615` and Windows `26.1027.51404`, with the existing User-Agent, platform
+and attestation behavior. For the current pins, use the deployment version files
+and [current identity reference](cpa-official-identity.md#managed-desktop-profiles).
 
 The official `runtime_agent_instances` feature stays disabled by default. When
 enabled, each credential worker shares its runtime registration across native

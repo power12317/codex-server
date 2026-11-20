@@ -15,7 +15,11 @@ fn expected_ua(system: &str) -> String {
     let host = if system == "windows" {
         "26.1027.51404"
     } else {
-        "26.1027.61615"
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../deploy/cpa-runtime/desktop-version"
+        ))
+        .trim()
     };
     format!(
         "Codex Desktop/{} ({os}; x86_64) dumb (Codex Desktop; {host})",
