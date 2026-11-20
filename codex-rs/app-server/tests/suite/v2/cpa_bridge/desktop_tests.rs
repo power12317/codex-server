@@ -13,7 +13,11 @@ fn expected_ua(system: &str) -> String {
         "Mac OS 15.3.1"
     };
     let host = if system == "windows" {
-        "26.1027.51404"
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../deploy/cpa-runtime/desktop-windows-version"
+        ))
+        .trim()
     } else {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

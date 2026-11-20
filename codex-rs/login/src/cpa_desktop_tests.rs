@@ -90,7 +90,11 @@ fn cpa_desktop_platform_status_and_host_engine_versions_are_distinct() {
     ] {
         let identity = fixture(system);
         let host = if system == "windows" {
-            "26.1027.51404"
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../deploy/cpa-runtime/desktop-windows-version"
+            ))
+            .trim()
         } else {
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),

@@ -39,12 +39,13 @@ client's headers nor the physical server's ARM architecture selects the profile.
 
 Desktop host versions are pinned per platform, independently from the engine:
 `deploy/cpa-runtime/desktop-version` is the Mac x64 host **26.1111.71704**;
-`deploy/cpa-runtime/desktop-windows-version` is the Windows host **26.1027.51404**.
-The macOS pin was updated to `26.1111.71704` on 2026-11-20 at the repository
-owner's request. Production code and macOS test expectations independently read
-the macOS version file; the engine version and fixed platform profile are unchanged.
+`deploy/cpa-runtime/desktop-windows-version` is the Windows host **26.1117.31558**.
+The macOS and Windows pins were updated to `26.1111.71704` and `26.1117.31558`
+on 2026-11-20 at the repository owner's request. Production code and test
+expectations independently read the corresponding version files; the engine
+version and fixed platform profiles are unchanged.
 The following release metadata records the earlier 2026-11-04 audit, including
-the previous macOS pin, and is historical evidence rather than the current pin:
+the previous platform pins, and is historical evidence rather than the current pins:
 
 - [Windows Store update metadata](https://persistent.oaistatic.com/codex-app-prod/windows-store-update.json):
   `releaseVersion=26.1027.51404`, `packageIdentity=OpenAI.Codex`,
@@ -58,7 +59,7 @@ the previous macOS pin, and is historical evidence rather than the current pin:
 The managed compatibility profiles use these exact UA shapes:
 
 ```text
-Codex Desktop/0.170.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1027.51404)
+Codex Desktop/0.170.0 (Windows 10.0.19044; x86_64) dumb (Codex Desktop; 26.1117.31558)
 Codex Desktop/0.170.0 (Mac OS 15.3.1; x86_64) dumb (Codex Desktop; 26.1111.71704)
 ```
 
